@@ -94,6 +94,7 @@ impl VulkanContext {
         unsafe { Ok(entry.create_instance(&instance_create_info, None)?) }
     }
 
+    /// Pick the first physical device that supports the graphics queue families.
     fn pick_physical_device(instance: &Instance) -> vk::PhysicalDevice {
         let devices = unsafe { instance.enumerate_physical_devices().unwrap() };
         let device = devices
@@ -112,6 +113,8 @@ impl VulkanContext {
         Self::find_queue_families(instance, device).is_some()
     }
 
+    /// Find a queue family with at least one graphics queue from `device`.
+    /// Return `None`if it could not find one.
     fn find_queue_families(instance: &Instance, device: vk::PhysicalDevice) -> Option<u32> {
         let props = unsafe { instance.get_physical_device_queue_family_properties(device) };
         props
@@ -123,6 +126,8 @@ impl VulkanContext {
             .map(|(idx, _)| idx as _)
     }
 
+    /// Create the logical device to interact with `device` and a graphics queue.
+    /// Return a tuple containing the logical device and the queue.
     fn create_logical_device_with_graphics_queue(
         instance: &Instance,
         device: vk::PhysicalDevice,
