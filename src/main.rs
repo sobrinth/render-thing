@@ -2,7 +2,7 @@ mod debug;
 
 use std::error::Error;
 use std::ffi::{CStr, CString};
-use ash::{vk, Entry, Instance};
+use ash::{vk, Device, Entry, Instance};
 use ash::ext::debug_utils;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
@@ -18,6 +18,8 @@ struct VulkanContext {
     instance: Instance,
     debug_report_callback: Option<(debug_utils::Instance, vk::DebugUtilsMessengerEXT)>,
     _physical_device: vk::PhysicalDevice,
+    device: Device,
+    _graphics_queue: vk::Queue,
 }
 
 #[derive(Default)]
@@ -44,12 +46,15 @@ impl VulkanContext {
         let instance = Self::create_instance(&entry, window).unwrap();
         let debug_report_callback = setup_debug_messenger(&entry, &instance);
         let physical_device = Self::pick_physical_device(&instance);
+        let (device, graphics_queue) = Self::create_logical_device_with_graphics_queue(&instance, physical_device);
 
         Self {
             _entry: entry,
             instance,
             debug_report_callback,
             _physical_device: physical_device,
+            device,
+            _graphics_queue: graphics_queue,
         }
     }
 
@@ -117,10 +122,36 @@ impl VulkanContext {
             })
             .map(|(idx, _)| idx as _)
     }
+
+    fn create_logical_device_with_graphics_queue(
+        instance: &Instance,
+        device: vk::PhysicalDevice,
+    ) -> (Device, vk::Queue) {
+        let queue_family_index = Self::find_queue_families(instance, device).unwrap();
+        let queue_priorities = [1.0_f32];
+        let queue_create_infos = [vk::DeviceQueueCreateInfo::default()
+            .queue_family_index(queue_family_index)
+            .queue_priorities(&queue_priorities)];
+        
+        let device_features = vk::PhysicalDeviceFeatures::default();
+        
+        let device_create_info = vk::DeviceCreateInfo::default()
+            .queue_create_infos(&queue_create_infos)
+            .enabled_features(&device_features);
+        
+        let device = unsafe {
+            instance
+                .create_device(device, &device_create_info, None)
+                .expect("Failed to create logical device.")
+        };
+        let graphics_queue = unsafe { device.get_device_queue(queue_family_index, 0) };
+        (device, graphics_queue)
+    }
 }
 impl Drop for VulkanContext {
     fn drop(&mut self) {
         unsafe {
+            self.device.destroy_device(None);
             if let Some((report, callback)) = self.debug_report_callback.take() {
                 report.destroy_debug_utils_messenger(callback, None);
             }
