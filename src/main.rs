@@ -13,7 +13,7 @@ use winit::raw_window_handle::{HasDisplayHandle};
 use winit::window::{Window, WindowId};
 use crate::debug::{check_validation_layer_support, get_layer_names_and_pointers, setup_debug_messenger, ENABLE_VALIDATION_LAYERS};
 
-struct VulkanApp {
+struct VulkanContext {
     _entry: Entry,
     instance: Instance,
     debug_report_callback: Option<(debug_utils::Instance, vk::DebugUtilsMessengerEXT)>,
@@ -23,7 +23,7 @@ struct VulkanApp {
 #[derive(Default)]
 struct App {
     window: Option<Window>,
-    vulkan: Option<VulkanApp>,
+    vulkan: Option<VulkanContext>,
 }
 
 fn main() {
@@ -36,7 +36,7 @@ fn main() {
     event_loop.run_app(&mut app).unwrap();
 }
 
-impl VulkanApp {
+impl VulkanContext {
     fn new(window: &Window) -> Self {
         log::debug!("Creating Vulkan context.");
 
@@ -118,7 +118,7 @@ impl VulkanApp {
             .map(|(idx, _)| idx as _)
     }
 }
-impl Drop for VulkanApp {
+impl Drop for VulkanContext {
     fn drop(&mut self) {
         unsafe {
             if let Some((report, callback)) = self.debug_report_callback.take() {
@@ -139,7 +139,7 @@ impl ApplicationHandler for App {
             )
             .unwrap();
 
-        self.vulkan = Some(VulkanApp::new(&window));
+        self.vulkan = Some(VulkanContext::new(&window));
         self.window = Some(window);
     }
 
