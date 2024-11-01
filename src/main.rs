@@ -1,11 +1,15 @@
 mod debug;
 
-use std::error::Error;
-use std::ffi::{CStr, CString};
-use ash::{vk, Device, Entry, Instance};
+use crate::debug::{
+    check_validation_layer_support, get_layer_names_and_pointers, setup_debug_messenger,
+    ENABLE_VALIDATION_LAYERS,
+};
 use ash::ext::debug_utils;
 use ash::khr::surface;
 use ash::vk::SurfaceKHR;
+use ash::{vk, Device, Entry, Instance};
+use std::error::Error;
+use std::ffi::{CStr, CString};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
@@ -13,7 +17,6 @@ use winit::event_loop::ControlFlow::Poll;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::{Window, WindowId};
-use crate::debug::{check_validation_layer_support, get_layer_names_and_pointers, setup_debug_messenger, ENABLE_VALIDATION_LAYERS};
 
 struct VulkanContext {
     _entry: Entry,
@@ -23,7 +26,7 @@ struct VulkanContext {
     device: Device,
     _graphics_queue: vk::Queue,
     surface: surface::Instance,
-    surface_khr: vk::SurfaceKHR,
+    surface_khr: SurfaceKHR,
     _present_queue: vk::Queue,
 }
 
@@ -58,13 +61,20 @@ impl VulkanContext {
                 window.display_handle().unwrap().as_raw(),
                 window.window_handle().unwrap().as_raw(),
                 None,
-            ).unwrap()
+            )
+            .unwrap()
         };
 
         let debug_report_callback = setup_debug_messenger(&entry, &instance);
 
         let physical_device = Self::pick_physical_device(&instance, &surface, surface_khr);
-        let (device, graphics_queue, present_queue) = Self::create_logical_device_with_graphics_queue(&instance, &surface, surface_khr, physical_device);
+        let (device, graphics_queue, present_queue) =
+            Self::create_logical_device_with_graphics_queue(
+                &instance,
+                &surface,
+                surface_khr,
+                physical_device,
+            );
 
         Self {
             _entry: entry,
@@ -93,15 +103,16 @@ impl VulkanContext {
             .engine_version(vk::make_api_version(0, 1, 0, 0))
             .api_version(vk::make_api_version(0, 1, 0, 0));
 
-        let mut extension_names = ash_window::enumerate_required_extensions(window.display_handle().unwrap().as_raw())
-            .unwrap().to_vec();
+        let mut extension_names =
+            ash_window::enumerate_required_extensions(window.display_handle().unwrap().as_raw())
+                .unwrap()
+                .to_vec();
 
         if ENABLE_VALIDATION_LAYERS {
             extension_names.push(debug_utils::NAME.as_ptr());
         }
 
         let (_layer_names, layer_names_ptrs) = get_layer_names_and_pointers();
-
 
         let mut instance_create_info = vk::InstanceCreateInfo::default()
             .application_info(&app_info)
@@ -168,8 +179,11 @@ impl VulkanContext {
                 graphics = Some(index);
             }
 
-            let present_support =
-                unsafe { surface.get_physical_device_surface_support(device, index, surface_khr).unwrap() };
+            let present_support = unsafe {
+                surface
+                    .get_physical_device_surface_support(device, index, surface_khr)
+                    .unwrap()
+            };
 
             if present_support && present.is_none() {
                 present = Some(index);
@@ -264,7 +278,12 @@ impl ApplicationHandler for App {
         self.window = Some(window);
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _window_id: WindowId,
+        event: WindowEvent,
+    ) {
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();

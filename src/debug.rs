@@ -1,6 +1,6 @@
-﻿use std::ffi::{c_char, c_void, CStr, CString};
-use ash::{vk, Entry, Instance};
 use ash::ext::debug_utils;
+use ash::{vk, Entry, Instance};
+use std::ffi::{c_char, c_void, CStr, CString};
 
 #[cfg(debug_assertions)]
 pub const ENABLE_VALIDATION_LAYERS: bool = true;
@@ -33,13 +33,9 @@ pub fn get_layer_names_and_pointers() -> (Vec<CString>, Vec<*const c_char>) {
         .iter()
         .map(|n| CString::new(*n).unwrap())
         .collect::<Vec<_>>();
-    let layer_names_ptrs = layer_names
-        .iter()
-        .map(|n| n.as_ptr())
-        .collect::<Vec<_>>();
+    let layer_names_ptrs = layer_names.iter().map(|n| n.as_ptr()).collect::<Vec<_>>();
     (layer_names, layer_names_ptrs)
 }
-
 
 /// Check if the required validation set in `REQUIRED_LAYERS`
 /// are supported by the Vulkan instance.
