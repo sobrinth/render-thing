@@ -1,0 +1,10 @@
+[package]
+name = "vulkan-rust"
+version = "0.1.0"
+authors = ["Dominik Baumann <hey@sobrinth.com>"]
+edition = "2021"
+
+[dependencies]
+log = "0.4"
+env_logger = "0.11"
+ash = "0.38"
