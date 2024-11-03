@@ -6,7 +6,7 @@ use cgmath::{BaseFloat, Matrix4, Rad};
 /// It inverts the projected y-axis. And set the depth range to 0..1
 /// instead of -1..1. Mind the vertex winding order though.
 #[rustfmt::skip]
-pub fn perspective<S, F>(fovy: F, aspect: S, near: S, far: S) -> Matrix4<S>
+pub(crate) fn perspective<S, F>(fovy: F, aspect: S, near: S, far: S) -> Matrix4<S>
 where
     S: BaseFloat,
     F: Into<Rad<S>>,

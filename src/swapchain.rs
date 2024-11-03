@@ -1,14 +1,14 @@
 use ash::khr::surface;
 use ash::vk;
 
-pub struct SwapchainSupportDetails {
-    pub capabilities: vk::SurfaceCapabilitiesKHR,
-    pub formats: Vec<vk::SurfaceFormatKHR>,
-    pub present_modes: Vec<vk::PresentModeKHR>,
+pub(crate) struct SwapchainSupportDetails {
+    pub(crate) capabilities: vk::SurfaceCapabilitiesKHR,
+    pub(crate) formats: Vec<vk::SurfaceFormatKHR>,
+    pub(crate) present_modes: Vec<vk::PresentModeKHR>,
 }
 
 impl SwapchainSupportDetails {
-    pub fn new(
+    pub(crate) fn new(
         device: vk::PhysicalDevice,
         surface: &surface::Instance,
         surface_khr: vk::SurfaceKHR,
@@ -38,7 +38,7 @@ impl SwapchainSupportDetails {
         }
     }
 
-    pub fn get_ideal_swapchain_properties(
+    pub(crate) fn get_ideal_swapchain_properties(
         &self,
         preferred_dimensions: [u32; 2],
     ) -> SwapchainProperties {
@@ -113,8 +113,8 @@ impl SwapchainSupportDetails {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct SwapchainProperties {
-    pub format: vk::SurfaceFormatKHR,
-    pub present_mode: vk::PresentModeKHR,
-    pub extent: vk::Extent2D,
+pub(crate) struct SwapchainProperties {
+    pub(crate) format: vk::SurfaceFormatKHR,
+    pub(crate) present_mode: vk::PresentModeKHR,
+    pub(crate) extent: vk::Extent2D,
 }

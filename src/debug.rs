@@ -3,11 +3,11 @@ use ash::{vk, Entry, Instance};
 use std::ffi::{c_char, c_void, CStr, CString};
 
 #[cfg(debug_assertions)]
-pub const ENABLE_VALIDATION_LAYERS: bool = true;
+pub(crate) const ENABLE_VALIDATION_LAYERS: bool = true;
 #[cfg(not(debug_assertions))]
-pub const ENABLE_VALIDATION_LAYERS: bool = false;
+pub(crate) const ENABLE_VALIDATION_LAYERS: bool = false;
 
-pub const REQUIRED_LAYERS: [&str; 1] = ["VK_LAYER_KHRONOS_validation"];
+pub(crate) const REQUIRED_LAYERS: [&str; 1] = ["VK_LAYER_KHRONOS_validation"];
 
 unsafe extern "system" fn vulkan_debug_callback(
     flag: vk::DebugUtilsMessageSeverityFlagsEXT,
@@ -28,7 +28,7 @@ unsafe extern "system" fn vulkan_debug_callback(
 }
 /// Get the pointers to the validation layers names.
 /// Also return the corresponding `CString` to avoid dangling pointers.
-pub fn get_layer_names_and_pointers() -> (Vec<CString>, Vec<*const c_char>) {
+pub(crate) fn get_layer_names_and_pointers() -> (Vec<CString>, Vec<*const c_char>) {
     let layer_names = REQUIRED_LAYERS
         .iter()
         .map(|n| CString::new(*n).unwrap())
@@ -43,7 +43,7 @@ pub fn get_layer_names_and_pointers() -> (Vec<CString>, Vec<*const c_char>) {
 /// # Panics
 ///
 /// Panic if at least one of the layers is not supported.
-pub fn check_validation_layer_support(entry: &Entry) {
+pub(crate) fn check_validation_layer_support(entry: &Entry) {
     let supported_layers = unsafe { entry.enumerate_instance_layer_properties().unwrap() };
     for required in REQUIRED_LAYERS.iter() {
         let found = supported_layers.iter().any(|l| {
@@ -59,7 +59,7 @@ pub fn check_validation_layer_support(entry: &Entry) {
 }
 
 /// Set up the debug message if validation layers are enabled
-pub fn setup_debug_messenger(
+pub(crate) fn setup_debug_messenger(
     entry: &Entry,
     instance: &Instance,
 ) -> Option<(debug_utils::Instance, vk::DebugUtilsMessengerEXT)> {
