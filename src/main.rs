@@ -8,7 +8,7 @@ use crate::debug::{
 use crate::swapchain::SwapchainProperties;
 use ash::ext::debug_utils;
 use ash::khr::{surface, swapchain as khr_swapchain};
-use ash::vk::{SurfaceKHR, SwapchainKHR};
+use ash::vk::{RenderPass, SurfaceKHR, SwapchainKHR};
 use ash::{vk, Device, Entry, Instance};
 use std::error::Error;
 use std::ffi::{CStr, CString};
@@ -41,6 +41,7 @@ struct VulkanContext {
     swapchain_image_views: Vec<vk::ImageView>,
     pipeline_layout: vk::PipelineLayout,
     render_pass: vk::RenderPass,
+    pipeline: vk::Pipeline,
 }
 
 #[derive(Default)]
@@ -102,7 +103,7 @@ impl VulkanContext {
 
         let render_pass = Self::create_render_pass(&device, swapchain_properties);
 
-        let layout = Self::create_pipeline(&device, swapchain_properties);
+        let (pipeline, layout) = Self::create_pipeline(&device, swapchain_properties, render_pass);
 
         Self {
             _entry: entry,
@@ -121,6 +122,7 @@ impl VulkanContext {
             swapchain_image_views,
             pipeline_layout: layout,
             render_pass,
+            pipeline,
         }
     }
 
@@ -439,7 +441,8 @@ impl VulkanContext {
     fn create_pipeline(
         device: &Device,
         swapchain_properties: SwapchainProperties,
-    ) -> vk::PipelineLayout {
+        render_pass: RenderPass,
+    ) -> (vk::Pipeline, vk::PipelineLayout) {
         // Vertex & Fragment Shaders
         let vertex_source = Self::read_shader_from_file("shaders/shader.vert.spv");
         let fragment_source = Self::read_shader_from_file("shaders/shader.frag.spv");
@@ -448,11 +451,22 @@ impl VulkanContext {
         let fragment_shader_module = Self::create_shader_module(device, &fragment_source);
 
         // Vertex input & topology
-        let _vertex_input_create_info = vk::PipelineVertexInputStateCreateInfo::default();
+        let entry_point_name = CString::new("main").unwrap();
+        let vertex_shader_state_info = vk::PipelineShaderStageCreateInfo::default()
+            .stage(vk::ShaderStageFlags::VERTEX)
+            .module(vertex_shader_module)
+            .name(&entry_point_name);
+        let fragment_shader_state_info = vk::PipelineShaderStageCreateInfo::default()
+            .stage(vk::ShaderStageFlags::FRAGMENT)
+            .module(fragment_shader_module)
+            .name(&entry_point_name);
+        let shader_states_infos = [vertex_shader_state_info, fragment_shader_state_info];
+
+        let vertex_input_info = vk::PipelineVertexInputStateCreateInfo::default();
         // .vertex_binding_descriptions() Default for now, because the vertices are hardcoded in shader
         // .vertex_attribute_descriptions() Same
 
-        let _input_assembly_create_info = vk::PipelineInputAssemblyStateCreateInfo::default()
+        let input_assembly_info = vk::PipelineInputAssemblyStateCreateInfo::default()
             .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
             .primitive_restart_enable(false);
 
@@ -473,12 +487,12 @@ impl VulkanContext {
         };
         let scissors = [scissor];
 
-        let _viewport_create_info = vk::PipelineViewportStateCreateInfo::default()
+        let viewport_info = vk::PipelineViewportStateCreateInfo::default()
             .viewports(&viewports)
             .scissors(&scissors);
 
         // Rasterizer
-        let _rasterizer_create_info = vk::PipelineRasterizationStateCreateInfo::default()
+        let rasterizer_info = vk::PipelineRasterizationStateCreateInfo::default()
             .depth_clamp_enable(false)
             .rasterizer_discard_enable(false)
             .polygon_mode(vk::PolygonMode::FILL)
@@ -491,7 +505,7 @@ impl VulkanContext {
             .depth_bias_slope_factor(0.0);
 
         // Multisampling
-        let _multisampling_create_info = vk::PipelineMultisampleStateCreateInfo::default()
+        let multisampling_info = vk::PipelineMultisampleStateCreateInfo::default()
             .sample_shading_enable(false)
             .rasterization_samples(vk::SampleCountFlags::TYPE_1)
             .min_sample_shading(1.0)
@@ -511,30 +525,47 @@ impl VulkanContext {
             .alpha_blend_op(vk::BlendOp::ADD);
         let color_blend_attachments = [color_blend_attachment];
 
-        let _color_blending_info = vk::PipelineColorBlendStateCreateInfo::default()
+        let color_blending_info = vk::PipelineColorBlendStateCreateInfo::default()
             .logic_op_enable(false)
             .logic_op(vk::LogicOp::COPY)
             .attachments(&color_blend_attachments)
             .blend_constants([0.0, 0.0, 0.0, 0.0]);
 
         // Pipeline layout
-        let pipeline_layout = {
-            let pipeline_layout_info = vk::PipelineLayoutCreateInfo::default();
+        let layout = {
+            let layout_info = vk::PipelineLayoutCreateInfo::default();
             // .set_layouts() //there are no uniforms yet
             // .push_constant_ranges() // no push constants yet
 
-            unsafe {
-                device
-                    .create_pipeline_layout(&pipeline_layout_info, None)
-                    .unwrap()
-            }
+            unsafe { device.create_pipeline_layout(&layout_info, None).unwrap() }
+        };
+
+        let pipeline_info = vk::GraphicsPipelineCreateInfo::default()
+            .stages(&shader_states_infos)
+            .vertex_input_state(&vertex_input_info)
+            .input_assembly_state(&input_assembly_info)
+            .viewport_state(&viewport_info)
+            .rasterization_state(&rasterizer_info)
+            .multisample_state(&multisampling_info)
+            // .depth_stencil_state()
+            .color_blend_state(&color_blending_info)
+            // .dynamic_state()
+            .layout(layout)
+            .render_pass(render_pass)
+            .subpass(0);
+        let pipeline_infos = [pipeline_info];
+
+        let pipeline = unsafe {
+            device
+                .create_graphics_pipelines(vk::PipelineCache::null(), &pipeline_infos, None)
+                .unwrap()[0]
         };
 
         unsafe {
             device.destroy_shader_module(vertex_shader_module, None);
             device.destroy_shader_module(fragment_shader_module, None);
         }
-        pipeline_layout
+        (pipeline, layout)
     }
 
     fn read_shader_from_file<P: AsRef<std::path::Path>>(path: P) -> Vec<u32> {
@@ -581,6 +612,7 @@ impl VulkanContext {
 impl Drop for VulkanContext {
     fn drop(&mut self) {
         unsafe {
+            self.device.destroy_pipeline(self.pipeline, None);
             self.device
                 .destroy_pipeline_layout(self.pipeline_layout, None);
             self.device.destroy_render_pass(self.render_pass, None);
