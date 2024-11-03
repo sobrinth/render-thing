@@ -1037,6 +1037,16 @@ impl ApplicationHandler for App {
 
     fn about_to_wait(&mut self, _: &ActiveEventLoop) {
         let app = self.vulkan.as_mut().unwrap();
+        let window = self.window.as_ref().unwrap();
+
+        if app.dirty_swapchain {
+            let size = window.inner_size();
+            if size.width > 0 && size.height > 0 {
+                app.recreate_swapchain();
+            } else {
+                return;
+            }
+        }
         app.dirty_swapchain = app.draw_frame();
     }
 
