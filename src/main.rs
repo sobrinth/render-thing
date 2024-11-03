@@ -41,6 +41,8 @@ struct VulkanContext {
     swapchain_framebuffers: Vec<vk::Framebuffer>,
     command_pool: vk::CommandPool,
     _command_buffers: Vec<vk::CommandBuffer>,
+    image_available_semaphore: vk::Semaphore,
+    render_finished_semaphore: vk::Semaphore,
 }
 
 #[derive(Default)]
@@ -123,6 +125,9 @@ impl VulkanContext {
             pipeline,
         );
 
+        let (image_available_semaphore, render_finished_semaphore) =
+            Self::create_semaphores(&device);
+
         Self {
             _entry: entry,
             instance,
@@ -144,6 +149,8 @@ impl VulkanContext {
             swapchain_framebuffers: framebuffers,
             command_pool,
             _command_buffers: command_buffers,
+            image_available_semaphore,
+            render_finished_semaphore,
         }
     }
 
@@ -758,11 +765,27 @@ impl VulkanContext {
                 .unwrap()
         }
     }
+
+    fn create_semaphores(device: &Device) -> (vk::Semaphore, vk::Semaphore) {
+        let image_available = {
+            let semaphore_info = vk::SemaphoreCreateInfo::default();
+            unsafe { device.create_semaphore(&semaphore_info, None).unwrap() }
+        };
+        let render_finished = {
+            let semaphore_info = vk::SemaphoreCreateInfo::default();
+            unsafe { device.create_semaphore(&semaphore_info, None).unwrap() }
+        };
+        (image_available, render_finished)
+    }
 }
 
 impl Drop for VulkanContext {
     fn drop(&mut self) {
         unsafe {
+            self.device
+                .destroy_semaphore(self.render_finished_semaphore, None);
+            self.device
+                .destroy_semaphore(self.image_available_semaphore, None);
             self.device.destroy_command_pool(self.command_pool, None);
             self.swapchain_framebuffers
                 .iter()
