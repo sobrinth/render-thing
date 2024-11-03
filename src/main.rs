@@ -436,7 +436,15 @@ impl VulkanContext {
 
         let vertex_shader_module = Self::create_shader_module(device, &vertex_source);
         let fragment_shader_module = Self::create_shader_module(device, &fragment_source);
-
+        
+        let _vertex_input_create_info = vk::PipelineVertexInputStateCreateInfo::default();
+            // .vertex_binding_descriptions() Default for now, because the vertices are hardcoded in shader
+            // .vertex_attribute_descriptions() Same
+        
+        let _input_assembly_create_info = vk::PipelineInputAssemblyStateCreateInfo::default()
+            .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
+            .primitive_restart_enable(false);
+        
         unsafe {
             device.destroy_shader_module(vertex_shader_module, None);
             device.destroy_shader_module(fragment_shader_module, None);
