@@ -98,6 +98,8 @@ impl VulkanContext {
         let swapchain_image_views =
             Self::create_swapchain_image_views(&device, &images, swapchain_properties);
 
+        let _pipeline = Self::create_pipeline(&device);
+
         Self {
             _entry: entry,
             instance,
@@ -404,7 +406,7 @@ impl VulkanContext {
         swapchain_format: SwapchainProperties,
     ) -> Vec<vk::ImageView> {
         swapchain_images
-            .into_iter()
+            .iter()
             .map(|image| {
                 let create_info = vk::ImageViewCreateInfo::default()
                     .image(*image)
@@ -426,6 +428,29 @@ impl VulkanContext {
                 unsafe { device.create_image_view(&create_info, None).unwrap() }
             })
             .collect::<Vec<_>>()
+    }
+
+    fn create_pipeline(device: &Device) {
+        let vertex_source = Self::read_shader_from_file("shaders/shader.vert.spv");
+        let fragment_source = Self::read_shader_from_file("shaders/shader.frag.spv");
+
+        let vertex_shader_module = Self::create_shader_module(device, &vertex_source);
+        let fragment_shader_module = Self::create_shader_module(device, &fragment_source);
+
+        unsafe {
+            device.destroy_shader_module(vertex_shader_module, None);
+            device.destroy_shader_module(fragment_shader_module, None);
+        }
+    }
+
+    fn read_shader_from_file<P: AsRef<std::path::Path>>(path: P) -> Vec<u32> {
+        let mut file = std::fs::File::open(path).unwrap();
+        ash::util::read_spv(&mut file).unwrap()
+    }
+
+    fn create_shader_module(device: &Device, shader_source: &[u32]) -> vk::ShaderModule {
+        let create_info = vk::ShaderModuleCreateInfo::default().code(shader_source);
+        unsafe { device.create_shader_module(&create_info, None).unwrap() }
     }
 }
 

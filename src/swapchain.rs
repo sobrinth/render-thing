@@ -1,6 +1,5 @@
 use ash::khr::surface;
 use ash::vk;
-use ash::vk::SurfaceFormatKHR;
 
 pub struct SwapchainSupportDetails {
     pub capabilities: vk::SurfaceCapabilitiesKHR,
@@ -61,7 +60,7 @@ impl SwapchainSupportDetails {
         available_formats: &[vk::SurfaceFormatKHR],
     ) -> vk::SurfaceFormatKHR {
         if available_formats.len() == 1 && available_formats[0].format == vk::Format::UNDEFINED {
-            return SurfaceFormatKHR {
+            return vk::SurfaceFormatKHR {
                 format: vk::Format::B8G8R8A8_UNORM,
                 color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
             };
