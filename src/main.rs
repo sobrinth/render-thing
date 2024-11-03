@@ -85,13 +85,13 @@ impl VulkanContext {
 
         let debug_report_callback = setup_debug_messenger(&entry, &instance);
 
-        let physical_device = Self::pick_physical_device(&instance, &surface, surface_khr);
+        let (physical_device, queue_family_indices) =
+            Self::pick_physical_device(&instance, &surface, surface_khr);
         let (device, graphics_queue, present_queue) =
             Self::create_logical_device_with_graphics_queue(
                 &instance,
-                &surface,
-                surface_khr,
                 physical_device,
+                queue_family_indices,
             );
 
         let (swapchain, swapchain_khr, swapchain_properties, images) =
@@ -101,6 +101,7 @@ impl VulkanContext {
                 &device,
                 &surface,
                 surface_khr,
+                queue_family_indices,
             );
         let swapchain_image_views =
             Self::create_swapchain_image_views(&device, &images, swapchain_properties);
@@ -116,8 +117,7 @@ impl VulkanContext {
             swapchain_properties,
         );
 
-        let command_pool =
-            Self::create_command_pool(&device, &instance, &surface, surface_khr, physical_device);
+        let command_pool = Self::create_command_pool(&device, queue_family_indices);
 
         let command_buffers = Self::create_and_register_command_buffers(
             &device,
@@ -170,7 +170,7 @@ impl VulkanContext {
         // wait for available fence
         unsafe {
             self.device
-                .wait_for_fences(&wait_fences, true, std::u64::MAX)
+                .wait_for_fences(&wait_fences, true, u64::MAX)
                 .unwrap();
             self.device.reset_fences(&wait_fences).unwrap();
         };
@@ -270,11 +270,14 @@ impl VulkanContext {
     /// - At least one queue family with one queue supporting graphics.
     /// - At least one queue family with one queue supporting presentation to `surface_khr`.
     /// - Swapchain extension support. (VK_KHR_swapchain)
+    ///
+    /// # Returns
+    /// A tuple containing the physical device and the queue family indices.
     fn pick_physical_device(
         instance: &Instance,
         surface: &surface::Instance,
         surface_khr: vk::SurfaceKHR,
-    ) -> vk::PhysicalDevice {
+    ) -> (vk::PhysicalDevice, QueueFamilyIndices) {
         let devices = unsafe { instance.enumerate_physical_devices().unwrap() };
         let device = devices
             .into_iter()
@@ -285,7 +288,13 @@ impl VulkanContext {
         log::debug!("Selected physical device: {:?}", unsafe {
             CStr::from_ptr(props.device_name.as_ptr())
         });
-        device
+
+        let (graphics, present) = Self::find_queue_families(instance, surface, surface_khr, device);
+        let queue_family_indices = QueueFamilyIndices {
+            graphics_index: graphics.unwrap(),
+            present_index: present.unwrap(),
+        };
+        (device, queue_family_indices)
     }
 
     fn is_device_suitable(
@@ -382,14 +391,11 @@ impl VulkanContext {
     /// Return a tuple containing the logical device, the graphics queue and the presentation queue.
     fn create_logical_device_with_graphics_queue(
         instance: &Instance,
-        surface: &surface::Instance,
-        surface_khr: vk::SurfaceKHR,
         device: vk::PhysicalDevice,
+        queue_family_indices: QueueFamilyIndices,
     ) -> (Device, vk::Queue, vk::Queue) {
-        let (graphics_family_index, present_family_index) =
-            Self::find_queue_families(instance, surface, surface_khr, device);
-        let graphics_family_index = graphics_family_index.unwrap();
-        let present_family_index = present_family_index.unwrap();
+        let graphics_family_index = queue_family_indices.graphics_index;
+        let present_family_index = queue_family_indices.present_index;
 
         let queue_priorities = [1.0_f32];
 
@@ -442,6 +448,7 @@ impl VulkanContext {
         device: &Device,
         surface: &surface::Instance,
         surface_khr: vk::SurfaceKHR,
+        queue_family_indices: QueueFamilyIndices,
     ) -> (
         khr_swapchain::Device,
         vk::SwapchainKHR,
@@ -473,9 +480,9 @@ impl VulkanContext {
             image_count,
         );
 
-        let (graphics, present) =
-            Self::find_queue_families(instance, surface, surface_khr, physical_device);
-        let families_indices = [graphics.unwrap(), present.unwrap()];
+        let graphics = queue_family_indices.graphics_index;
+        let present = queue_family_indices.present_index;
+        let families_indices = [graphics, present];
 
         let create_info = {
             let mut default = vk::SwapchainCreateInfoKHR::default()
@@ -487,12 +494,12 @@ impl VulkanContext {
                 .image_array_layers(1)
                 .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT);
 
-            default = match (graphics, present) {
-                (Some(graphics), Some(present)) if graphics != present => default
+            default = if graphics != present {
+                default
                     .image_sharing_mode(vk::SharingMode::CONCURRENT)
-                    .queue_family_indices(&families_indices),
-                (Some(_), Some(_)) => default.image_sharing_mode(vk::SharingMode::EXCLUSIVE),
-                _ => panic!("Failed to create swapchain."),
+                    .queue_family_indices(&families_indices)
+            } else {
+                default.image_sharing_mode(vk::SharingMode::EXCLUSIVE)
             };
 
             default
@@ -828,16 +835,10 @@ impl VulkanContext {
 
     fn create_command_pool(
         device: &Device,
-        instance: &Instance,
-        surface: &surface::Instance,
-        surface_khr: vk::SurfaceKHR,
-        physical_device: vk::PhysicalDevice,
+        queue_family_indices: QueueFamilyIndices,
     ) -> vk::CommandPool {
-        let (graphics_family, _) =
-            Self::find_queue_families(instance, surface, surface_khr, physical_device);
-
         let command_pool_info = vk::CommandPoolCreateInfo::default()
-            .queue_family_index(graphics_family.unwrap())
+            .queue_family_index(queue_family_indices.graphics_index)
             .flags(vk::CommandPoolCreateFlags::empty());
 
         unsafe {
@@ -953,4 +954,10 @@ impl ApplicationHandler for App {
     fn exiting(&mut self, _: &ActiveEventLoop) {
         self.vulkan.as_ref().unwrap().wait_gpu_idle();
     }
+}
+
+#[derive(Clone, Copy)]
+struct QueueFamilyIndices {
+    graphics_index: u32,
+    present_index: u32,
 }
