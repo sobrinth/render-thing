@@ -38,6 +38,7 @@ struct VulkanContext {
     swapchain_khr: SwapchainKHR,
     _swapchain_properties: SwapchainProperties,
     _images: Vec<vk::Image>,
+    swapchain_image_views: Vec<vk::ImageView>,
 }
 
 #[derive(Default)]
@@ -94,6 +95,8 @@ impl VulkanContext {
                 &surface,
                 surface_khr,
             );
+        let swapchain_image_views =
+            Self::create_swapchain_image_views(&device, &images, swapchain_properties);
 
         Self {
             _entry: entry,
@@ -109,6 +112,7 @@ impl VulkanContext {
             swapchain_khr,
             _swapchain_properties: swapchain_properties,
             _images: images,
+            swapchain_image_views,
         }
     }
 
@@ -392,11 +396,45 @@ impl VulkanContext {
         let images = unsafe { swapchain.get_swapchain_images(swapchain_khr).unwrap() };
         (swapchain, swapchain_khr, swapchain_properties, images)
     }
+
+    /// Create one image view for each image of the swapchain.
+    fn create_swapchain_image_views(
+        device: &Device,
+        swapchain_images: &[vk::Image],
+        swapchain_format: SwapchainProperties,
+    ) -> Vec<vk::ImageView> {
+        swapchain_images
+            .into_iter()
+            .map(|image| {
+                let create_info = vk::ImageViewCreateInfo::default()
+                    .image(*image)
+                    .view_type(vk::ImageViewType::TYPE_2D)
+                    .format(swapchain_format.format.format)
+                    .components(vk::ComponentMapping {
+                        r: vk::ComponentSwizzle::IDENTITY,
+                        g: vk::ComponentSwizzle::IDENTITY,
+                        b: vk::ComponentSwizzle::IDENTITY,
+                        a: vk::ComponentSwizzle::IDENTITY,
+                    })
+                    .subresource_range(vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    });
+                unsafe { device.create_image_view(&create_info, None).unwrap() }
+            })
+            .collect::<Vec<_>>()
+    }
 }
 
 impl Drop for VulkanContext {
     fn drop(&mut self) {
         unsafe {
+            self.swapchain_image_views
+                .iter()
+                .for_each(|v| self.device.destroy_image_view(*v, None));
             self.swapchain.destroy_swapchain(self.swapchain_khr, None);
             self.device.destroy_device(None);
             self.surface.destroy_surface(self.surface_khr, None);
