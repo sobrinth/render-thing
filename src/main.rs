@@ -5,7 +5,7 @@ mod swapchain;
 use crate::debug::*;
 use crate::swapchain::*;
 
-use crate::static_data::{VERTEX_SIZE, VERTICES};
+use crate::static_data::{INDICES, VERTEX_SIZE, VERTICES};
 use ash::ext::debug_utils;
 use ash::khr::{surface, swapchain as khr_swapchain};
 use ash::{vk, Device, Entry, Instance};
@@ -51,6 +51,8 @@ struct VulkanContext {
     transient_command_pool: vk::CommandPool,
     vertex_buffer: vk::Buffer,
     vertex_buffer_memory: vk::DeviceMemory,
+    index_buffer: vk::Buffer,
+    index_buffer_memory: vk::DeviceMemory,
     command_buffers: Vec<vk::CommandBuffer>,
     in_flight_frames: InFlightFrames,
 }
@@ -148,6 +150,13 @@ impl VulkanContext {
             graphics_queue,
         );
 
+        let (index_buffer, index_buffer_memory) = Self::create_index_buffer(
+            &device,
+            memory_properties,
+            transient_command_pool,
+            graphics_queue,
+        );
+
         let command_buffers = Self::create_and_register_command_buffers(
             &device,
             command_pool,
@@ -155,6 +164,7 @@ impl VulkanContext {
             render_pass,
             swapchain_properties,
             vertex_buffer,
+            index_buffer,
             pipeline,
         );
 
@@ -186,6 +196,8 @@ impl VulkanContext {
             transient_command_pool,
             vertex_buffer,
             vertex_buffer_memory,
+            index_buffer,
+            index_buffer_memory,
             command_buffers,
             in_flight_frames,
         }
@@ -817,6 +829,7 @@ impl VulkanContext {
         render_pass: vk::RenderPass,
         swapchain_properties: SwapchainProperties,
         vertex_buffer: vk::Buffer,
+        index_buffer: vk::Buffer,
         graphics_pipeline: vk::Pipeline,
     ) -> Vec<vk::CommandBuffer> {
         let allocate_info = vk::CommandBufferAllocateInfo::default()
@@ -885,8 +898,13 @@ impl VulkanContext {
                 let offsets = [0];
                 unsafe { device.cmd_bind_vertex_buffers(buffer, 0, &vertex_buffer, &offsets) };
 
+                // bind index buffer
+                unsafe {
+                    device.cmd_bind_index_buffer(buffer, index_buffer, 0, vk::IndexType::UINT16)
+                };
+
                 // draw
-                unsafe { device.cmd_draw(buffer, 3, 1, 0, 0) };
+                unsafe { device.cmd_draw_indexed(buffer, INDICES.len() as _, 1, 0, 0, 0) };
 
                 // end render pass
                 unsafe { device.cmd_end_render_pass(buffer) };
@@ -993,6 +1011,7 @@ impl VulkanContext {
             render_pass,
             properties,
             self.vertex_buffer,
+            self.index_buffer,
             pipeline,
         );
 
@@ -1009,19 +1028,53 @@ impl VulkanContext {
         self.resize_dimensions = None;
     }
 
-    /// Create a vertex buffer and its gpu memory.
-    ///
-    /// This function internally creates a host visible staging buffer and
-    /// a device local buffer. The vertex data is first copied from the cpu
-    /// to the staging buffer. Then we copy vertex data from the staging buffer
-    /// to the final buffer using a one-time command buffer.
     fn create_vertex_buffer(
         device: &Device,
         mem_properties: vk::PhysicalDeviceMemoryProperties,
         command_pool: vk::CommandPool,
         transfer_queue: vk::Queue,
     ) -> (vk::Buffer, vk::DeviceMemory) {
-        let size = (VERTICES.len() * VERTEX_SIZE) as vk::DeviceSize;
+        Self::create_device_local_buffer_with_data::<u32, _>(
+            device,
+            mem_properties,
+            command_pool,
+            transfer_queue,
+            vk::BufferUsageFlags::VERTEX_BUFFER,
+            &VERTICES,
+        )
+    }
+
+    fn create_index_buffer(
+        device: &Device,
+        mem_properties: vk::PhysicalDeviceMemoryProperties,
+        command_pool: vk::CommandPool,
+        transfer_queue: vk::Queue,
+    ) -> (vk::Buffer, vk::DeviceMemory) {
+        Self::create_device_local_buffer_with_data::<u16, _>(
+            device,
+            mem_properties,
+            command_pool,
+            transfer_queue,
+            vk::BufferUsageFlags::INDEX_BUFFER,
+            &INDICES,
+        )
+    }
+
+    /// Create a buffer and its gpu memory and fill it.
+    ///
+    /// This function internally creates a host visible staging buffer and
+    /// a device local buffer. The vertex data is first copied from the cpu
+    /// to the staging buffer. Then we copy vertex data from the staging buffer
+    /// to the final buffer using a one-time command buffer.
+    fn create_device_local_buffer_with_data<A, T: Copy>(
+        device: &Device,
+        mem_properties: vk::PhysicalDeviceMemoryProperties,
+        command_pool: vk::CommandPool,
+        transfer_queue: vk::Queue,
+        usage: vk::BufferUsageFlags,
+        data: &[T],
+    ) -> (vk::Buffer, vk::DeviceMemory) {
+        let size = size_of_val(data) as vk::DeviceSize;
         let (staging_buffer, staging_memory, staging_mem_size) = Self::create_buffer(
             device,
             mem_properties,
@@ -1034,9 +1087,8 @@ impl VulkanContext {
             let data_ptr = device
                 .map_memory(staging_memory, 0, size, vk::MemoryMapFlags::empty())
                 .unwrap();
-            let mut align =
-                ash::util::Align::new(data_ptr, align_of::<u32>() as _, staging_mem_size);
-            align.copy_from_slice(&VERTICES);
+            let mut align = ash::util::Align::new(data_ptr, align_of::<A>() as _, staging_mem_size);
+            align.copy_from_slice(data);
             device.unmap_memory(staging_memory);
         };
 
@@ -1044,7 +1096,7 @@ impl VulkanContext {
             device,
             mem_properties,
             size,
-            vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::VERTEX_BUFFER,
+            vk::BufferUsageFlags::TRANSFER_DST | usage,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
         );
 
@@ -1215,6 +1267,8 @@ impl Drop for VulkanContext {
         self.cleanup_swapchain();
         self.in_flight_frames.destroy(&self.device);
         unsafe {
+            self.device.destroy_buffer(self.index_buffer, None);
+            self.device.free_memory(self.index_buffer_memory, None);
             self.device.destroy_buffer(self.vertex_buffer, None);
             self.device.free_memory(self.vertex_buffer_memory, None);
             self.device
