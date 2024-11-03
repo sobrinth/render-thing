@@ -444,8 +444,8 @@ impl VulkanContext {
         render_pass: RenderPass,
     ) -> (vk::Pipeline, vk::PipelineLayout) {
         // Vertex & Fragment Shaders
-        let vertex_source = Self::read_shader_from_file("shaders/shader.vert.spv");
-        let fragment_source = Self::read_shader_from_file("shaders/shader.frag.spv");
+        let vertex_source = Self::read_shader_from_file("assets/shaders/shader.vert.spv");
+        let fragment_source = Self::read_shader_from_file("assets/shaders/shader.frag.spv");
 
         let vertex_shader_module = Self::create_shader_module(device, &vertex_source);
         let fragment_shader_module = Self::create_shader_module(device, &fragment_source);
@@ -569,6 +569,7 @@ impl VulkanContext {
     }
 
     fn read_shader_from_file<P: AsRef<std::path::Path>>(path: P) -> Vec<u32> {
+        log::debug!("Loading shader file {}", path.as_ref().display());
         let mut file = std::fs::File::open(path).unwrap();
         ash::util::read_spv(&mut file).unwrap()
     }
