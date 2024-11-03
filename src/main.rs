@@ -7,7 +7,7 @@ use crate::debug::{
 };
 use ash::ext::debug_utils;
 use ash::khr::{surface, swapchain as khr_swapchain};
-use ash::vk::SurfaceKHR;
+use ash::vk::{SurfaceKHR, SwapchainKHR};
 use ash::{vk, Device, Entry, Instance};
 use std::error::Error;
 use std::ffi::{CStr, CString};
@@ -19,6 +19,10 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::{Window, WindowId};
 use swapchain::SwapchainSupportDetails;
+use crate::swapchain::SwapchainProperties;
+
+const WIDTH: u32 = 800;
+const HEIGHT: u32 = 600;
 
 struct VulkanContext {
     _entry: Entry,
@@ -30,6 +34,10 @@ struct VulkanContext {
     surface: surface::Instance,
     surface_khr: SurfaceKHR,
     _present_queue: vk::Queue,
+    swapchain: khr_swapchain::Device,
+    swapchain_khr: SwapchainKHR,
+    _swapchain_properties: SwapchainProperties,
+    _images: Vec<vk::Image>,
 }
 
 #[derive(Default)]
@@ -78,6 +86,14 @@ impl VulkanContext {
                 physical_device,
             );
 
+        let (swapchain, swapchain_khr, swapchain_properties, images) = Self::create_swapchain_and_images(
+            &instance,
+            physical_device,
+            &device,
+            &surface,
+            surface_khr,
+        );
+
         Self {
             _entry: entry,
             instance,
@@ -88,6 +104,10 @@ impl VulkanContext {
             surface,
             surface_khr,
             _present_queue: present_queue,
+            swapchain,
+            swapchain_khr,
+            _swapchain_properties: swapchain_properties,
+            _images: images
         }
     }
 
@@ -133,7 +153,7 @@ impl VulkanContext {
     /// # Requirements
     /// - At least one queue family with one queue supporting graphics.
     /// - At least one queue family with one queue supporting presentation to `surface_khr`.
-    /// - Swapchain extension support. (VK_KHR_swapchain) 
+    /// - Swapchain extension support. (VK_KHR_swapchain)
     fn pick_physical_device(
         instance: &Instance,
         surface: &surface::Instance,
@@ -276,7 +296,7 @@ impl VulkanContext {
                 })
                 .collect::<Vec<_>>()
         };
-        
+
         let device_extensions = Self::get_required_device_extensions();
         let device_extensions_ptrs = device_extensions
             .iter()
@@ -300,12 +320,80 @@ impl VulkanContext {
 
         (device, graphics_queue, present_queue)
     }
+
+    /// Create the swapchain with optimal settings possible with `device`
+    fn create_swapchain_and_images(
+        instance: &Instance,
+        physical_device: vk::PhysicalDevice,
+        device: &Device,
+        surface: &surface::Instance,
+        surface_khr: SurfaceKHR,
+    ) -> (khr_swapchain::Device, SwapchainKHR, SwapchainProperties, Vec<vk::Image>) {
+        let details = SwapchainSupportDetails::new(physical_device, surface, surface_khr);
+        let swapchain_properties = details.get_ideal_swapchain_properties([WIDTH, HEIGHT]);
+
+        let format = swapchain_properties.format;
+        let present_mode = swapchain_properties.present_mode;
+        let extent = swapchain_properties.extent;
+
+        let image_count = {
+            let max = details.capabilities.max_image_count;
+            let mut preferred = details.capabilities.min_image_count + 1;
+            if max > 0 && preferred > max {
+                preferred = max;
+            }
+            preferred
+        };
+
+        log::debug!(
+            "Creating swapchain.\n\tFormat: {:?}\n\tColorSpace: {:?}\n\tPresentMode: {:?}\n\tExtent: {:?}\n\tImageCount: {}",
+            format.format,
+            format.color_space,
+            present_mode,
+            extent,
+            image_count,
+        );
+
+        let (graphics, present) = Self::find_queue_families(instance, surface, surface_khr, physical_device);
+        let families_indices = [graphics.unwrap(), present.unwrap()];
+
+        let create_info = {
+            let mut default = vk::SwapchainCreateInfoKHR::default()
+                .surface(surface_khr)
+                .min_image_count(image_count)
+                .image_format(format.format)
+                .image_color_space(format.color_space)
+                .image_extent(extent)
+                .image_array_layers(1)
+                .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT);
+
+            default = match (graphics, present) {
+                (Some(graphics), Some(present)) if graphics != present => default
+                    .image_sharing_mode(vk::SharingMode::CONCURRENT)
+                    .queue_family_indices(&families_indices),
+                (Some(_), Some(_)) => default.image_sharing_mode(vk::SharingMode::EXCLUSIVE),
+                _ => panic!("Failed to create swapchain."),
+            };
+
+            default
+                .pre_transform(details.capabilities.current_transform)
+                .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
+                .present_mode(present_mode)
+                .clipped(true)
+        };
+
+        let swapchain = khr_swapchain::Device::new(instance, device);
+        let swapchain_khr = unsafe { swapchain.create_swapchain(&create_info, None).unwrap() };
+        let images = unsafe { swapchain.get_swapchain_images(swapchain_khr).unwrap() };
+        (swapchain, swapchain_khr, swapchain_properties, images)
+    }
 }
 
 
 impl Drop for VulkanContext {
     fn drop(&mut self) {
         unsafe {
+            self.swapchain.destroy_swapchain(self.swapchain_khr, None);
             self.device.destroy_device(None);
             self.surface.destroy_surface(self.surface_khr, None);
             if let Some((report, callback)) = self.debug_report_callback.take() {
@@ -322,7 +410,7 @@ impl ApplicationHandler for App {
             .create_window(
                 Window::default_attributes()
                     .with_title("Vulkan App with Ash")
-                    .with_inner_size(PhysicalSize::new(800, 600)),
+                    .with_inner_size(PhysicalSize::new(WIDTH, HEIGHT)),
             )
             .unwrap();
 
