@@ -147,8 +147,12 @@ impl VulkanContext {
         }
     }
 
-    fn run(&mut self) {
-        log::info!("Running vulkan application");
+    pub fn draw_frame(&mut self) {
+        log::trace!("Drawing frame.");
+    }
+
+    pub fn wait_gpu_idle(&self) {
+        unsafe { self.device.device_wait_idle().unwrap() }
     }
 
     fn create_instance(entry: &Entry, window: &Window) -> Result<Instance, Box<dyn Error>> {
@@ -807,5 +811,15 @@ impl ApplicationHandler for App {
             }
             _ => (),
         }
+    }
+
+    fn about_to_wait(&mut self, _: &ActiveEventLoop) {
+        let app = self.vulkan.as_mut().unwrap();
+
+        app.draw_frame();
+    }
+
+    fn exiting(&mut self, _: &ActiveEventLoop) {
+        self.vulkan.as_ref().unwrap().wait_gpu_idle();
     }
 }
