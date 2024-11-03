@@ -39,6 +39,7 @@ struct VulkanContext {
     _swapchain_properties: SwapchainProperties,
     _images: Vec<vk::Image>,
     swapchain_image_views: Vec<vk::ImageView>,
+    pipeline_layout: vk::PipelineLayout,
 }
 
 #[derive(Default)]
@@ -98,7 +99,7 @@ impl VulkanContext {
         let swapchain_image_views =
             Self::create_swapchain_image_views(&device, &images, swapchain_properties);
 
-        let _pipeline = Self::create_pipeline(&device, swapchain_properties);
+        let layout = Self::create_pipeline(&device, swapchain_properties);
 
         Self {
             _entry: entry,
@@ -115,6 +116,7 @@ impl VulkanContext {
             _swapchain_properties: swapchain_properties,
             _images: images,
             swapchain_image_views,
+            pipeline_layout: layout,
         }
     }
 
@@ -430,7 +432,7 @@ impl VulkanContext {
             .collect::<Vec<_>>()
     }
 
-    fn create_pipeline(device: &Device, swapchain_properties: SwapchainProperties) {
+    fn create_pipeline(device: &Device, swapchain_properties: SwapchainProperties) -> vk::PipelineLayout {
         // Vertex & Fragment Shaders
         let vertex_source = Self::read_shader_from_file("shaders/shader.vert.spv");
         let fragment_source = Self::read_shader_from_file("shaders/shader.frag.spv");
@@ -508,11 +510,23 @@ impl VulkanContext {
             .attachments(&color_blend_attachments)
             .blend_constants([0.0, 0.0, 0.0, 0.0]);
         
+        // Pipeline layout
+        let pipeline_layout = {
+            let pipeline_layout_info = vk::PipelineLayoutCreateInfo::default();
+                // .set_layouts() //there are no uniforms yet
+                // .push_constant_ranges() // no push constants yet
+            
+            unsafe {
+                device.create_pipeline_layout(&pipeline_layout_info, None)
+                    .unwrap()
+            }
+        };
         
         unsafe {
             device.destroy_shader_module(vertex_shader_module, None);
             device.destroy_shader_module(fragment_shader_module, None);
         }
+        pipeline_layout
     }
 
     fn read_shader_from_file<P: AsRef<std::path::Path>>(path: P) -> Vec<u32> {
@@ -529,6 +543,7 @@ impl VulkanContext {
 impl Drop for VulkanContext {
     fn drop(&mut self) {
         unsafe {
+            self.device.destroy_pipeline_layout(self.pipeline_layout, None);
             self.swapchain_image_views
                 .iter()
                 .for_each(|v| self.device.destroy_image_view(*v, None));
