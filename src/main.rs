@@ -5,12 +5,14 @@ use crate::debug::{
     check_validation_layer_support, get_layer_names_and_pointers, setup_debug_messenger,
     ENABLE_VALIDATION_LAYERS,
 };
+use crate::swapchain::SwapchainProperties;
 use ash::ext::debug_utils;
 use ash::khr::{surface, swapchain as khr_swapchain};
 use ash::vk::{SurfaceKHR, SwapchainKHR};
 use ash::{vk, Device, Entry, Instance};
 use std::error::Error;
 use std::ffi::{CStr, CString};
+use swapchain::SwapchainSupportDetails;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
@@ -18,8 +20,6 @@ use winit::event_loop::ControlFlow::Poll;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::{Window, WindowId};
-use swapchain::SwapchainSupportDetails;
-use crate::swapchain::SwapchainProperties;
 
 const WIDTH: u32 = 800;
 const HEIGHT: u32 = 600;
@@ -72,7 +72,7 @@ impl VulkanContext {
                 window.window_handle().unwrap().as_raw(),
                 None,
             )
-                .unwrap()
+            .unwrap()
         };
 
         let debug_report_callback = setup_debug_messenger(&entry, &instance);
@@ -86,13 +86,14 @@ impl VulkanContext {
                 physical_device,
             );
 
-        let (swapchain, swapchain_khr, swapchain_properties, images) = Self::create_swapchain_and_images(
-            &instance,
-            physical_device,
-            &device,
-            &surface,
-            surface_khr,
-        );
+        let (swapchain, swapchain_khr, swapchain_properties, images) =
+            Self::create_swapchain_and_images(
+                &instance,
+                physical_device,
+                &device,
+                &surface,
+                surface_khr,
+            );
 
         Self {
             _entry: entry,
@@ -107,7 +108,7 @@ impl VulkanContext {
             swapchain,
             swapchain_khr,
             _swapchain_properties: swapchain_properties,
-            _images: images
+            _images: images,
         }
     }
 
@@ -172,7 +173,6 @@ impl VulkanContext {
         device
     }
 
-
     fn is_device_suitable(
         instance: &Instance,
         surface: &surface::Instance,
@@ -189,7 +189,6 @@ impl VulkanContext {
         };
         graphics.is_some() && present.is_some() && extension_support && is_swapchain_usable
     }
-
 
     fn check_device_extension_support(instance: &Instance, device: vk::PhysicalDevice) -> bool {
         let required_extension = Self::get_required_device_extensions();
@@ -328,7 +327,12 @@ impl VulkanContext {
         device: &Device,
         surface: &surface::Instance,
         surface_khr: SurfaceKHR,
-    ) -> (khr_swapchain::Device, SwapchainKHR, SwapchainProperties, Vec<vk::Image>) {
+    ) -> (
+        khr_swapchain::Device,
+        SwapchainKHR,
+        SwapchainProperties,
+        Vec<vk::Image>,
+    ) {
         let details = SwapchainSupportDetails::new(physical_device, surface, surface_khr);
         let swapchain_properties = details.get_ideal_swapchain_properties([WIDTH, HEIGHT]);
 
@@ -354,7 +358,8 @@ impl VulkanContext {
             image_count,
         );
 
-        let (graphics, present) = Self::find_queue_families(instance, surface, surface_khr, physical_device);
+        let (graphics, present) =
+            Self::find_queue_families(instance, surface, surface_khr, physical_device);
         let families_indices = [graphics.unwrap(), present.unwrap()];
 
         let create_info = {
@@ -388,7 +393,6 @@ impl VulkanContext {
         (swapchain, swapchain_khr, swapchain_properties, images)
     }
 }
-
 
 impl Drop for VulkanContext {
     fn drop(&mut self) {

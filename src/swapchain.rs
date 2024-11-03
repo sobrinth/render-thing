@@ -1,5 +1,5 @@
-﻿use ash::vk;
 use ash::khr::surface;
+use ash::vk;
 use ash::vk::SurfaceFormatKHR;
 
 pub struct SwapchainSupportDetails {
@@ -9,7 +9,11 @@ pub struct SwapchainSupportDetails {
 }
 
 impl SwapchainSupportDetails {
-    pub fn new(device: vk::PhysicalDevice, surface: &surface::Instance, surface_khr: vk::SurfaceKHR) -> Self {
+    pub fn new(
+        device: vk::PhysicalDevice,
+        surface: &surface::Instance,
+        surface_khr: vk::SurfaceKHR,
+    ) -> Self {
         let capabilities = unsafe {
             surface
                 .get_physical_device_surface_capabilities(device, surface_khr)
@@ -35,7 +39,10 @@ impl SwapchainSupportDetails {
         }
     }
 
-    pub fn get_ideal_swapchain_properties(&self, preferred_dimensions: [u32; 2]) -> SwapchainProperties {
+    pub fn get_ideal_swapchain_properties(
+        &self,
+        preferred_dimensions: [u32; 2],
+    ) -> SwapchainProperties {
         let format = Self::choose_swapchain_surface_format(&self.formats);
         let present_mode = Self::choose_swapchain_present_mode(&self.present_modes);
         let extent = Self::choose_swapchain_extent(self.capabilities, preferred_dimensions);
@@ -50,7 +57,9 @@ impl SwapchainSupportDetails {
     ///
     /// Will choose B8G8R8A8_UNORM/SRGB_NONLINEAR if possible or
     /// the first available otherwise.
-    fn choose_swapchain_surface_format(available_formats: &[vk::SurfaceFormatKHR]) -> vk::SurfaceFormatKHR {
+    fn choose_swapchain_surface_format(
+        available_formats: &[vk::SurfaceFormatKHR],
+    ) -> vk::SurfaceFormatKHR {
         if available_formats.len() == 1 && available_formats[0].format == vk::Format::UNDEFINED {
             return SurfaceFormatKHR {
                 format: vk::Format::B8G8R8A8_UNORM,
@@ -78,7 +87,9 @@ impl SwapchainSupportDetails {
             vk::PresentModeKHR::MAILBOX
         } else if available_present_modes.contains(&vk::PresentModeKHR::FIFO) {
             vk::PresentModeKHR::FIFO
-        } else { vk::PresentModeKHR::IMMEDIATE }
+        } else {
+            vk::PresentModeKHR::IMMEDIATE
+        }
     }
 
     /// Choose the swapchain extent.
