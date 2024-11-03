@@ -39,6 +39,8 @@ struct VulkanContext {
     render_pass: vk::RenderPass,
     pipeline: vk::Pipeline,
     swapchain_framebuffers: Vec<vk::Framebuffer>,
+    command_pool: vk::CommandPool,
+    _command_buffers: Vec<vk::CommandBuffer>,
 }
 
 #[derive(Default)]
@@ -109,6 +111,18 @@ impl VulkanContext {
             swapchain_properties,
         );
 
+        let command_pool =
+            Self::create_command_pool(&device, &instance, &surface, surface_khr, physical_device);
+
+        let command_buffers = Self::create_and_register_command_buffers(
+            &device,
+            command_pool,
+            &framebuffers,
+            render_pass,
+            swapchain_properties,
+            pipeline,
+        );
+
         Self {
             _entry: entry,
             instance,
@@ -128,6 +142,8 @@ impl VulkanContext {
             render_pass,
             pipeline,
             swapchain_framebuffers: framebuffers,
+            command_pool,
+            _command_buffers: command_buffers,
         }
     }
 
@@ -635,11 +651,115 @@ impl VulkanContext {
             })
             .collect()
     }
+
+    fn create_and_register_command_buffers(
+        device: &Device,
+        pool: vk::CommandPool,
+        framebuffers: &[vk::Framebuffer],
+        render_pass: vk::RenderPass,
+        swapchain_properties: SwapchainProperties,
+        graphics_pipeline: vk::Pipeline,
+    ) -> Vec<vk::CommandBuffer> {
+        let allocate_info = vk::CommandBufferAllocateInfo::default()
+            .command_pool(pool)
+            .level(vk::CommandBufferLevel::PRIMARY)
+            .command_buffer_count(framebuffers.len() as _);
+
+        let buffers = unsafe { device.allocate_command_buffers(&allocate_info).unwrap() };
+
+        buffers
+            .iter()
+            .zip(framebuffers.iter())
+            .for_each(|(buffer, framebuffer)| {
+                let buffer = *buffer;
+
+                // begin command buffer
+                {
+                    let command_buffer_begin_info = vk::CommandBufferBeginInfo::default()
+                        .flags(vk::CommandBufferUsageFlags::SIMULTANEOUS_USE);
+                    // .inheritance_info() // null since it's a primary command buffer
+
+                    unsafe {
+                        device
+                            .begin_command_buffer(buffer, &command_buffer_begin_info)
+                            .unwrap()
+                    }
+                }
+
+                // begin render pass
+                {
+                    let clear_values = [vk::ClearValue {
+                        color: vk::ClearColorValue {
+                            float32: [0.0, 0.0, 0.0, 1.0],
+                        },
+                    }];
+
+                    let render_pass_begin_info = vk::RenderPassBeginInfo::default()
+                        .render_pass(render_pass)
+                        .framebuffer(*framebuffer)
+                        .render_area(vk::Rect2D {
+                            offset: vk::Offset2D { x: 0, y: 0 },
+                            extent: swapchain_properties.extent,
+                        })
+                        .clear_values(&clear_values);
+
+                    unsafe {
+                        device.cmd_begin_render_pass(
+                            buffer,
+                            &render_pass_begin_info,
+                            vk::SubpassContents::INLINE,
+                        );
+                    };
+                }
+
+                // bind pipeline
+                unsafe {
+                    device.cmd_bind_pipeline(
+                        buffer,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        graphics_pipeline,
+                    )
+                };
+
+                // draw
+                unsafe { device.cmd_draw(buffer, 3, 1, 0, 0) };
+
+                // end render pass
+                unsafe { device.cmd_end_render_pass(buffer) };
+
+                // end command buffer
+                unsafe { device.end_command_buffer(buffer).unwrap() }
+            });
+
+        buffers
+    }
+
+    fn create_command_pool(
+        device: &Device,
+        instance: &Instance,
+        surface: &surface::Instance,
+        surface_khr: vk::SurfaceKHR,
+        physical_device: vk::PhysicalDevice,
+    ) -> vk::CommandPool {
+        let (graphics_family, _) =
+            Self::find_queue_families(instance, surface, surface_khr, physical_device);
+
+        let command_pool_info = vk::CommandPoolCreateInfo::default()
+            .queue_family_index(graphics_family.unwrap())
+            .flags(vk::CommandPoolCreateFlags::empty());
+
+        unsafe {
+            device
+                .create_command_pool(&command_pool_info, None)
+                .unwrap()
+        }
+    }
 }
 
 impl Drop for VulkanContext {
     fn drop(&mut self) {
         unsafe {
+            self.device.destroy_command_pool(self.command_pool, None);
             self.swapchain_framebuffers
                 .iter()
                 .for_each(|f| self.device.destroy_framebuffer(*f, None));
