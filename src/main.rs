@@ -1,9 +1,11 @@
 mod debug;
+mod static_data;
 mod swapchain;
 
 use crate::debug::*;
 use crate::swapchain::*;
 
+use crate::static_data::{VERTEX_SIZE, VERTICES};
 use ash::ext::debug_utils;
 use ash::khr::{surface, swapchain as khr_swapchain};
 use ash::{vk, Device, Entry, Instance};
@@ -46,6 +48,8 @@ struct VulkanContext {
     pipeline: vk::Pipeline,
     swapchain_framebuffers: Vec<vk::Framebuffer>,
     command_pool: vk::CommandPool,
+    vertex_buffer: vk::Buffer,
+    vertex_buffer_memory: vk::DeviceMemory,
     command_buffers: Vec<vk::CommandBuffer>,
     in_flight_frames: InFlightFrames,
 }
@@ -89,6 +93,10 @@ impl VulkanContext {
 
         let (physical_device, queue_family_indices) =
             Self::pick_physical_device(&instance, &surface, surface_khr);
+
+        let memory_properties =
+            unsafe { instance.get_physical_device_memory_properties(physical_device) };
+
         let (device, graphics_queue, present_queue) =
             Self::create_logical_device_with_graphics_queue(
                 &instance,
@@ -122,12 +130,16 @@ impl VulkanContext {
 
         let command_pool = Self::create_command_pool(&device, queue_family_indices);
 
+        let (vertex_buffer, vertex_buffer_memory) =
+            Self::create_vertex_buffer(&device, memory_properties);
+
         let command_buffers = Self::create_and_register_command_buffers(
             &device,
             command_pool,
             &framebuffers,
             render_pass,
             swapchain_properties,
+            vertex_buffer,
             pipeline,
         );
 
@@ -156,6 +168,8 @@ impl VulkanContext {
             pipeline,
             swapchain_framebuffers: framebuffers,
             command_pool,
+            vertex_buffer,
+            vertex_buffer_memory,
             command_buffers,
             in_flight_frames,
         }
@@ -596,9 +610,12 @@ impl VulkanContext {
             .name(&entry_point_name);
         let shader_states_infos = [vertex_shader_state_info, fragment_shader_state_info];
 
-        let vertex_input_info = vk::PipelineVertexInputStateCreateInfo::default();
-        // .vertex_binding_descriptions() Default for now, because the vertices are hardcoded in shader
-        // .vertex_attribute_descriptions() Same
+        let vertex_binding_descs = [Vertex::get_binding_description()];
+        let vertex_attribute_descs = Vertex::get_attribute_descriptions();
+
+        let vertex_input_info = vk::PipelineVertexInputStateCreateInfo::default()
+            .vertex_binding_descriptions(&vertex_binding_descs)
+            .vertex_attribute_descriptions(&vertex_attribute_descs);
 
         let input_assembly_info = vk::PipelineInputAssemblyStateCreateInfo::default()
             .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
@@ -783,6 +800,7 @@ impl VulkanContext {
         framebuffers: &[vk::Framebuffer],
         render_pass: vk::RenderPass,
         swapchain_properties: SwapchainProperties,
+        vertex_buffer: vk::Buffer,
         graphics_pipeline: vk::Pipeline,
     ) -> Vec<vk::CommandBuffer> {
         let allocate_info = vk::CommandBufferAllocateInfo::default()
@@ -845,6 +863,11 @@ impl VulkanContext {
                         graphics_pipeline,
                     )
                 };
+
+                // bind vertex buffer
+                let vertex_buffer = [vertex_buffer];
+                let offsets = [0];
+                unsafe { device.cmd_bind_vertex_buffers(buffer, 0, &vertex_buffer, &offsets) };
 
                 // draw
                 unsafe { device.cmd_draw(buffer, 3, 1, 0, 0) };
@@ -952,6 +975,7 @@ impl VulkanContext {
             &framebuffers,
             render_pass,
             properties,
+            self.vertex_buffer,
             pipeline,
         );
 
@@ -966,6 +990,69 @@ impl VulkanContext {
         self.swapchain_framebuffers = framebuffers;
         self.command_buffers = command_buffers;
         self.resize_dimensions = None;
+    }
+
+    fn create_vertex_buffer(
+        device: &Device,
+        mem_properties: vk::PhysicalDeviceMemoryProperties,
+    ) -> (vk::Buffer, vk::DeviceMemory) {
+        let buffer_info = vk::BufferCreateInfo::default()
+            .size((VERTICES.len() * VERTEX_SIZE) as _)
+            .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+        let buffer = unsafe { device.create_buffer(&buffer_info, None).unwrap() };
+
+        let mem_requirements = unsafe { device.get_buffer_memory_requirements(buffer) };
+        let mem_type = Self::find_memory_type(
+            mem_requirements,
+            mem_properties,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+        );
+
+        let alloc_info = vk::MemoryAllocateInfo::default()
+            .allocation_size(mem_requirements.size)
+            .memory_type_index(mem_type);
+        let memory = unsafe { device.allocate_memory(&alloc_info, None).unwrap() };
+
+        unsafe {
+            device.bind_buffer_memory(buffer, memory, 0).unwrap();
+
+            let data_ptr = device
+                .map_memory(memory, 0, buffer_info.size, vk::MemoryMapFlags::empty())
+                .unwrap();
+            let mut align = ash::util::Align::new(
+                data_ptr,
+                std::mem::align_of::<u32>() as _,
+                mem_requirements.size,
+            );
+            align.copy_from_slice(&VERTICES);
+            device.unmap_memory(memory);
+
+            (buffer, memory)
+        }
+    }
+
+    /// Find a memory type in `mem_properties` that is suitable
+    /// for `requirements` and supports `required_properties`.
+    ///
+    /// # Returns
+    ///
+    /// The index of the memory type from `mem_properties`.
+    fn find_memory_type(
+        requirements: vk::MemoryRequirements,
+        mem_properties: vk::PhysicalDeviceMemoryProperties,
+        required_properties: vk::MemoryPropertyFlags,
+    ) -> u32 {
+        for i in 0..mem_properties.memory_type_count {
+            if requirements.memory_type_bits & (1 << i) != 0
+                && mem_properties.memory_types[i as usize]
+                    .property_flags
+                    .contains(required_properties)
+            {
+                return i;
+            }
+        }
+        panic!("Failed to find suitable memory type.")
     }
 
     fn cleanup_swapchain(&mut self) {
@@ -993,6 +1080,8 @@ impl Drop for VulkanContext {
         self.cleanup_swapchain();
         self.in_flight_frames.destroy(&self.device);
         unsafe {
+            self.device.destroy_buffer(self.vertex_buffer, None);
+            self.device.free_memory(self.vertex_buffer_memory, None);
             self.device.destroy_command_pool(self.command_pool, None);
             self.device.destroy_device(None);
             self.surface.destroy_surface(self.surface_khr, None);
@@ -1035,6 +1124,8 @@ impl ApplicationHandler for App {
         }
     }
 
+    /// This is not the ideal place to drive rendering from.
+    /// Should really be done with the RedrawRequested Event, but here we are for now.
     fn about_to_wait(&mut self, _: &ActiveEventLoop) {
         let app = self.vulkan.as_mut().unwrap();
         let window = self.window.as_ref().unwrap();
@@ -1104,5 +1195,32 @@ impl Iterator for InFlightFrames {
         self.current_frame = (self.current_frame + 1) % self.sync_objects.len();
 
         Some(next)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Vertex {
+    pos: [f32; 2],
+    color: [f32; 3],
+}
+impl Vertex {
+    fn get_binding_description() -> vk::VertexInputBindingDescription {
+        vk::VertexInputBindingDescription::default()
+            .binding(0)
+            .stride(VERTEX_SIZE as _)
+            .input_rate(vk::VertexInputRate::VERTEX)
+    }
+    fn get_attribute_descriptions() -> [vk::VertexInputAttributeDescription; 2] {
+        let position_desc = vk::VertexInputAttributeDescription::default()
+            .binding(0)
+            .location(0)
+            .format(vk::Format::R32G32_SFLOAT)
+            .offset(0);
+        let color_desc = vk::VertexInputAttributeDescription::default()
+            .binding(0)
+            .location(1)
+            .format(vk::Format::R32G32B32_SFLOAT)
+            .offset(8);
+        [position_desc, color_desc]
     }
 }

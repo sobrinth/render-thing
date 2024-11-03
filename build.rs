@@ -11,7 +11,9 @@ fn main() {
     if !should_skip_shader_compilation() {
         compile_shaders();
     }
-    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo::rerun-if-changed=build.rs");
+    println!("cargo::rerun-if-changed=assets/shaders/shader.frag");
+    println!("cargo::rerun-if-changed=assets/shaders/shader.vert");
 }
 
 fn should_skip_shader_compilation() -> bool {
