@@ -42,10 +42,7 @@ struct VulkanContext {
     swapchain_framebuffers: Vec<vk::Framebuffer>,
     command_pool: vk::CommandPool,
     command_buffers: Vec<vk::CommandBuffer>,
-    image_available_semaphores: Vec<vk::Semaphore>,
-    render_finished_semaphores: Vec<vk::Semaphore>,
-    in_flight_fences: Vec<vk::Fence>,
-    current_frame: usize,
+    in_flight_frames: InFlightFrames,
 }
 
 #[derive(Default)]
@@ -128,8 +125,7 @@ impl VulkanContext {
             pipeline,
         );
 
-        let (image_available_semaphores, render_finished_semaphores, in_flight_fences) =
-            Self::create_sync_objects(&device);
+        let in_flight_frames = Self::create_sync_objects(&device);
 
         Self {
             _entry: entry,
@@ -152,19 +148,18 @@ impl VulkanContext {
             swapchain_framebuffers: framebuffers,
             command_pool,
             command_buffers,
-            image_available_semaphores,
-            render_finished_semaphores,
-            in_flight_fences,
-            current_frame: 0,
+            in_flight_frames,
         }
     }
 
     pub fn draw_frame(&mut self) {
         log::trace!("Drawing frame.");
 
-        let image_available_semaphore = self.image_available_semaphores[self.current_frame];
-        let render_finished_semaphore = self.render_finished_semaphores[self.current_frame];
-        let in_flight_fence = self.in_flight_fences[self.current_frame];
+        let sync_objects = self.in_flight_frames.next().unwrap();
+
+        let image_available_semaphore = sync_objects.image_available_semaphore;
+        let render_finished_semaphore = sync_objects.render_finished_semaphore;
+        let in_flight_fence = sync_objects.fence;
         let wait_fences = [in_flight_fence];
 
         // wait for available fence
@@ -224,7 +219,6 @@ impl VulkanContext {
                     .unwrap();
             }
         }
-        self.current_frame += (1 + self.current_frame) % MAX_FRAMES_IN_FLIGHT as usize;
     }
 
     pub fn wait_gpu_idle(&self) {
@@ -848,53 +842,41 @@ impl VulkanContext {
         }
     }
 
-    fn create_sync_objects(
-        device: &Device,
-    ) -> (Vec<vk::Semaphore>, Vec<vk::Semaphore>, Vec<vk::Fence>) {
-        let mut image_available_semaphores = Vec::new();
-        let mut render_finished_semaphores = Vec::new();
-        let mut in_flight_fences = Vec::new();
+    fn create_sync_objects(device: &Device) -> InFlightFrames {
+        let mut sync_objects_vec = Vec::new();
 
         for _ in 0..MAX_FRAMES_IN_FLIGHT {
-            let image_available = {
+            let image_available_semaphore = {
                 let semaphore_info = vk::SemaphoreCreateInfo::default();
                 unsafe { device.create_semaphore(&semaphore_info, None).unwrap() }
             };
-            image_available_semaphores.push(image_available);
 
-            let render_finished = {
+            let render_finished_semaphore = {
                 let semaphore_info = vk::SemaphoreCreateInfo::default();
                 unsafe { device.create_semaphore(&semaphore_info, None).unwrap() }
             };
-            render_finished_semaphores.push(render_finished);
 
-            let in_flight = {
+            let in_flight_fence = {
                 let fence_info =
                     vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
                 unsafe { device.create_fence(&fence_info, None).unwrap() }
             };
-            in_flight_fences.push(in_flight);
+
+            let sync_objects = SyncObjects {
+                image_available_semaphore,
+                render_finished_semaphore,
+                fence: in_flight_fence,
+            };
+            sync_objects_vec.push(sync_objects);
         }
-        (
-            image_available_semaphores,
-            render_finished_semaphores,
-            in_flight_fences,
-        )
+        InFlightFrames::new(sync_objects_vec)
     }
 }
 
 impl Drop for VulkanContext {
     fn drop(&mut self) {
         unsafe {
-            self.in_flight_fences
-                .iter()
-                .for_each(|f| self.device.destroy_fence(*f, None));
-            self.render_finished_semaphores
-                .iter()
-                .for_each(|s| self.device.destroy_semaphore(*s, None));
-            self.image_available_semaphores
-                .iter()
-                .for_each(|s| self.device.destroy_semaphore(*s, None));
+            self.in_flight_frames.destroy(&self.device);
             self.device.destroy_command_pool(self.command_pool, None);
             self.swapchain_framebuffers
                 .iter()
@@ -960,4 +942,50 @@ impl ApplicationHandler for App {
 struct QueueFamilyIndices {
     graphics_index: u32,
     present_index: u32,
+}
+
+#[derive(Clone, Copy)]
+struct SyncObjects {
+    image_available_semaphore: vk::Semaphore,
+    render_finished_semaphore: vk::Semaphore,
+    fence: vk::Fence,
+}
+
+impl SyncObjects {
+    fn destroy(&self, device: &Device) {
+        unsafe {
+            device.destroy_semaphore(self.image_available_semaphore, None);
+            device.destroy_semaphore(self.render_finished_semaphore, None);
+            device.destroy_fence(self.fence, None);
+        }
+    }
+}
+
+struct InFlightFrames {
+    sync_objects: Vec<SyncObjects>,
+    current_frame: usize,
+}
+
+impl InFlightFrames {
+    fn new(sync_objects: Vec<SyncObjects>) -> Self {
+        Self {
+            sync_objects,
+            current_frame: 0,
+        }
+    }
+
+    fn destroy(&self, device: &Device) {
+        self.sync_objects.iter().for_each(|o| o.destroy(&device));
+    }
+}
+
+impl Iterator for InFlightFrames {
+    type Item = SyncObjects;
+    fn next(&mut self) -> Option<Self::Item> {
+        let next = self.sync_objects[self.current_frame];
+
+        self.current_frame = (self.current_frame + 1) % self.sync_objects.len();
+
+        Some(next)
+    }
 }
