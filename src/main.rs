@@ -1,4 +1,5 @@
 mod debug;
+mod math;
 mod static_data;
 mod swapchain;
 
@@ -9,8 +10,10 @@ use crate::static_data::{INDICES, VERTEX_SIZE, VERTICES};
 use ash::ext::debug_utils;
 use ash::khr::{surface, swapchain as khr_swapchain};
 use ash::{vk, Device, Entry, Instance};
+use cgmath::{Deg, Matrix4, Point3, Vector3};
 use std::error::Error;
 use std::ffi::{CStr, CString};
+use std::time::Instant;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
@@ -25,6 +28,7 @@ const MAX_FRAMES_IN_FLIGHT: u32 = 2;
 
 struct VulkanContext {
     _entry: Entry,
+    start_instant: Instant,
 
     resize_dimensions: Option<[u32; 2]>,
     dirty_swapchain: bool,
@@ -45,6 +49,7 @@ struct VulkanContext {
     swapchain_image_views: Vec<vk::ImageView>,
     pipeline_layout: vk::PipelineLayout,
     render_pass: vk::RenderPass,
+    descriptor_set_layout: vk::DescriptorSetLayout,
     pipeline: vk::Pipeline,
     swapchain_framebuffers: Vec<vk::Framebuffer>,
     command_pool: vk::CommandPool,
@@ -53,6 +58,8 @@ struct VulkanContext {
     vertex_buffer_memory: vk::DeviceMemory,
     index_buffer: vk::Buffer,
     index_buffer_memory: vk::DeviceMemory,
+    uniform_buffers: Vec<vk::Buffer>,
+    uniform_buffer_memories: Vec<vk::DeviceMemory>,
     command_buffers: Vec<vk::CommandBuffer>,
     in_flight_frames: InFlightFrames,
 }
@@ -122,7 +129,14 @@ impl VulkanContext {
 
         let render_pass = Self::create_render_pass(&device, swapchain_properties);
 
-        let (pipeline, layout) = Self::create_pipeline(&device, swapchain_properties, render_pass);
+        let descriptor_set_layout = Self::create_descriptor_set_layout(&device);
+
+        let (pipeline, layout) = Self::create_pipeline(
+            &device,
+            swapchain_properties,
+            render_pass,
+            descriptor_set_layout,
+        );
 
         let framebuffers = Self::create_framebuffers(
             &device,
@@ -157,6 +171,9 @@ impl VulkanContext {
             graphics_queue,
         );
 
+        let (uniform_buffers, uniform_buffer_memories) =
+            Self::create_uniform_buffers(&device, memory_properties, images.len());
+
         let command_buffers = Self::create_and_register_command_buffers(
             &device,
             command_pool,
@@ -172,6 +189,7 @@ impl VulkanContext {
 
         Self {
             _entry: entry,
+            start_instant: Instant::now(),
             resize_dimensions: None,
             dirty_swapchain: false,
             instance,
@@ -190,6 +208,7 @@ impl VulkanContext {
             swapchain_image_views,
             pipeline_layout: layout,
             render_pass,
+            descriptor_set_layout,
             pipeline,
             swapchain_framebuffers: framebuffers,
             command_pool,
@@ -198,6 +217,8 @@ impl VulkanContext {
             vertex_buffer_memory,
             index_buffer,
             index_buffer_memory,
+            uniform_buffers,
+            uniform_buffer_memories,
             command_buffers,
             in_flight_frames,
         }
@@ -239,6 +260,8 @@ impl VulkanContext {
         };
 
         unsafe { self.device.reset_fences(&wait_fences).unwrap() }
+
+        self.update_uniform_buffers(image_index);
 
         let wait_semaphores = [image_available_semaphore];
         let signal_semaphores = [render_finished_semaphore];
@@ -508,6 +531,17 @@ impl VulkanContext {
         (device, graphics_queue, present_queue)
     }
 
+    fn create_descriptor_set_layout(device: &Device) -> vk::DescriptorSetLayout {
+        let bindings = [UniformBufferObject::get_descriptor_set_layout_bindings()];
+        let layout_info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings);
+
+        unsafe {
+            device
+                .create_descriptor_set_layout(&layout_info, None)
+                .unwrap()
+        }
+    }
+
     /// Create the swapchain with optimal settings possible with `device`
     fn create_swapchain_and_images(
         instance: &Instance,
@@ -618,6 +652,7 @@ impl VulkanContext {
         device: &Device,
         swapchain_properties: SwapchainProperties,
         render_pass: vk::RenderPass,
+        descriptor_set_layout: vk::DescriptorSetLayout,
     ) -> (vk::Pipeline, vk::PipelineLayout) {
         // Vertex & Fragment Shaders
         let vertex_source = Self::read_shader_from_file("assets/shaders/shader.vert.spv");
@@ -712,8 +747,9 @@ impl VulkanContext {
 
         // Pipeline layout
         let layout = {
-            let layout_info = vk::PipelineLayoutCreateInfo::default();
-            // .set_layouts() //there are no uniforms yet
+            let layouts = [descriptor_set_layout];
+            let layout_info = vk::PipelineLayoutCreateInfo::default()
+                .set_layouts(&layouts);
             // .push_constant_ranges() // no push constants yet
 
             unsafe { device.create_pipeline_layout(&layout_info, None).unwrap() }
@@ -916,6 +952,38 @@ impl VulkanContext {
         buffers
     }
 
+    fn update_uniform_buffers(&mut self, current_image: u32) {
+        let elapsed = self.start_instant.elapsed();
+        let elapsed = elapsed.as_secs_f32() + (elapsed.subsec_millis() as f32) / 1_000f32;
+
+        let aspect = self.swapchain_properties.extent.width as f32
+            / self.swapchain_properties.extent.height as f32;
+
+        let ubo = UniformBufferObject {
+            model: Matrix4::from_angle_z(Deg(90.0 * elapsed)),
+            view: Matrix4::look_at(
+                Point3::new(2.0, 2.0, 2.0),
+                Point3::new(0.0, 0.0, 0.0),
+                Vector3::new(0.0, 0.0, 0.0),
+            ),
+            proj: math::perspective(Deg(45.0), aspect, 0.1, 10.0),
+        };
+        let ubos = [ubo];
+
+        let buffer_mem = self.uniform_buffer_memories[current_image as usize];
+        let size = size_of::<UniformBufferObject>() as vk::DeviceSize;
+
+        unsafe {
+            let data_ptr = self
+                .device
+                .map_memory(buffer_mem, 0, size, vk::MemoryMapFlags::empty())
+                .unwrap();
+            let mut align = ash::util::Align::new(data_ptr, align_of::<f32>() as _, size);
+            align.copy_from_slice(&ubos);
+            self.device.unmap_memory(buffer_mem);
+        }
+    }
+
     fn create_command_pool(
         device: &Device,
         queue_family_indices: QueueFamilyIndices,
@@ -995,7 +1063,12 @@ impl VulkanContext {
 
         let render_pass = Self::create_render_pass(&self.device, properties);
 
-        let (pipeline, layout) = Self::create_pipeline(&self.device, properties, render_pass);
+        let (pipeline, layout) = Self::create_pipeline(
+            &self.device,
+            properties,
+            render_pass,
+            self.descriptor_set_layout,
+        );
 
         let framebuffers = Self::create_framebuffers(
             &self.device,
@@ -1066,6 +1139,10 @@ impl VulkanContext {
     /// a device local buffer. The vertex data is first copied from the cpu
     /// to the staging buffer. Then we copy vertex data from the staging buffer
     /// to the final buffer using a one-time command buffer.
+    ///
+    /// # Inputs
+    /// A - Memory alignment of data
+    /// T - Type of data
     fn create_device_local_buffer_with_data<A, T: Copy>(
         device: &Device,
         mem_properties: vk::PhysicalDeviceMemoryProperties,
@@ -1115,6 +1192,29 @@ impl VulkanContext {
         }
 
         (buffer, memory)
+    }
+
+    fn create_uniform_buffers(
+        device: &Device,
+        device_mem_properties: vk::PhysicalDeviceMemoryProperties,
+        count: usize,
+    ) -> (Vec<vk::Buffer>, Vec<vk::DeviceMemory>) {
+        let size = size_of::<UniformBufferObject>() as vk::DeviceSize;
+        let mut buffers = Vec::new();
+        let mut memories = Vec::new();
+
+        for _ in 0..count {
+            let (buffer, memory, _) = Self::create_buffer(
+                device,
+                device_mem_properties,
+                size,
+                vk::BufferUsageFlags::UNIFORM_BUFFER,
+                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            );
+            buffers.push(buffer);
+            memories.push(memory);
+        }
+        (buffers, memories)
     }
 
     /// Create a buffer and allocate its memory.
@@ -1267,6 +1367,14 @@ impl Drop for VulkanContext {
         self.cleanup_swapchain();
         self.in_flight_frames.destroy(&self.device);
         unsafe {
+            self.device
+                .destroy_descriptor_set_layout(self.descriptor_set_layout, None);
+            self.uniform_buffer_memories.iter().for_each(|m| {
+                self.device.free_memory(*m, None);
+            });
+            self.uniform_buffers.iter().for_each(|m| {
+                self.device.destroy_buffer(*m, None);
+            });
             self.device.destroy_buffer(self.index_buffer, None);
             self.device.free_memory(self.index_buffer_memory, None);
             self.device.destroy_buffer(self.vertex_buffer, None);
@@ -1414,5 +1522,23 @@ impl Vertex {
             .format(vk::Format::R32G32B32_SFLOAT)
             .offset(8);
         [position_desc, color_desc]
+    }
+}
+
+#[derive(Clone, Copy)]
+#[allow(dead_code)]
+struct UniformBufferObject {
+    model: Matrix4<f32>,
+    view: Matrix4<f32>,
+    proj: Matrix4<f32>,
+}
+
+impl UniformBufferObject {
+    fn get_descriptor_set_layout_bindings<'a>() -> vk::DescriptorSetLayoutBinding<'a> {
+       vk::DescriptorSetLayoutBinding::default()
+            .binding(0)
+            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+            .descriptor_count(1)
+            .stage_flags(vk::ShaderStageFlags::VERTEX)
     }
 }
