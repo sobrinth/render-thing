@@ -98,7 +98,7 @@ impl VulkanContext {
         let swapchain_image_views =
             Self::create_swapchain_image_views(&device, &images, swapchain_properties);
 
-        let _pipeline = Self::create_pipeline(&device);
+        let _pipeline = Self::create_pipeline(&device, swapchain_properties);
 
         Self {
             _entry: entry,
@@ -430,21 +430,44 @@ impl VulkanContext {
             .collect::<Vec<_>>()
     }
 
-    fn create_pipeline(device: &Device) {
+    fn create_pipeline(device: &Device, swapchain_properties: SwapchainProperties) {
+        // Vertex & Fragment Shaders
         let vertex_source = Self::read_shader_from_file("shaders/shader.vert.spv");
         let fragment_source = Self::read_shader_from_file("shaders/shader.frag.spv");
 
         let vertex_shader_module = Self::create_shader_module(device, &vertex_source);
         let fragment_shader_module = Self::create_shader_module(device, &fragment_source);
-        
+
+        // Vertex input & topology
         let _vertex_input_create_info = vk::PipelineVertexInputStateCreateInfo::default();
-            // .vertex_binding_descriptions() Default for now, because the vertices are hardcoded in shader
-            // .vertex_attribute_descriptions() Same
-        
+        // .vertex_binding_descriptions() Default for now, because the vertices are hardcoded in shader
+        // .vertex_attribute_descriptions() Same
+
         let _input_assembly_create_info = vk::PipelineInputAssemblyStateCreateInfo::default()
             .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
             .primitive_restart_enable(false);
-        
+
+        // Viewport & Scissors
+        let viewport = vk::Viewport {
+            x: 0.0,
+            y: 0.0,
+            width: swapchain_properties.extent.width as _,
+            height: swapchain_properties.extent.height as _,
+            min_depth: 0.0,
+            max_depth: 1.0,
+        };
+        let viewports = [viewport];
+
+        let scissor = vk::Rect2D {
+            offset: vk::Offset2D { x: 0, y: 0 },
+            extent: swapchain_properties.extent,
+        };
+        let scissors = [scissor];
+
+        let _viewport_create_info = vk::PipelineViewportStateCreateInfo::default()
+            .viewports(&viewports)
+            .scissors(&scissors);
+
         unsafe {
             device.destroy_shader_module(vertex_shader_module, None);
             device.destroy_shader_module(fragment_shader_module, None);
