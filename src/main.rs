@@ -1,18 +1,14 @@
 mod debug;
 mod swapchain;
 
-use crate::debug::{
-    check_validation_layer_support, get_layer_names_and_pointers, setup_debug_messenger,
-    ENABLE_VALIDATION_LAYERS,
-};
-use crate::swapchain::SwapchainProperties;
+use crate::debug::*;
+use crate::swapchain::*;
+
 use ash::ext::debug_utils;
 use ash::khr::{surface, swapchain as khr_swapchain};
-use ash::vk::{RenderPass, SurfaceKHR, SwapchainKHR};
 use ash::{vk, Device, Entry, Instance};
 use std::error::Error;
 use std::ffi::{CStr, CString};
-use swapchain::SwapchainSupportDetails;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
@@ -32,10 +28,10 @@ struct VulkanContext {
     device: Device,
     _graphics_queue: vk::Queue,
     surface: surface::Instance,
-    surface_khr: SurfaceKHR,
+    surface_khr: vk::SurfaceKHR,
     _present_queue: vk::Queue,
     swapchain: khr_swapchain::Device,
-    swapchain_khr: SwapchainKHR,
+    swapchain_khr: vk::SwapchainKHR,
     _swapchain_properties: SwapchainProperties,
     _images: Vec<vk::Image>,
     swapchain_image_views: Vec<vk::ImageView>,
@@ -172,7 +168,7 @@ impl VulkanContext {
     fn pick_physical_device(
         instance: &Instance,
         surface: &surface::Instance,
-        surface_khr: SurfaceKHR,
+        surface_khr: vk::SurfaceKHR,
     ) -> vk::PhysicalDevice {
         let devices = unsafe { instance.enumerate_physical_devices().unwrap() };
         let device = devices
@@ -190,7 +186,7 @@ impl VulkanContext {
     fn is_device_suitable(
         instance: &Instance,
         surface: &surface::Instance,
-        surface_khr: SurfaceKHR,
+        surface_khr: vk::SurfaceKHR,
         device: vk::PhysicalDevice,
     ) -> bool {
         let (graphics, present) = Self::find_queue_families(instance, surface, surface_khr, device);
@@ -240,7 +236,7 @@ impl VulkanContext {
     fn find_queue_families(
         instance: &Instance,
         surface: &surface::Instance,
-        surface_khr: SurfaceKHR,
+        surface_khr: vk::SurfaceKHR,
         device: vk::PhysicalDevice,
     ) -> (Option<u32>, Option<u32>) {
         let mut graphics = None;
@@ -282,7 +278,7 @@ impl VulkanContext {
     fn create_logical_device_with_graphics_queue(
         instance: &Instance,
         surface: &surface::Instance,
-        surface_khr: SurfaceKHR,
+        surface_khr: vk::SurfaceKHR,
         device: vk::PhysicalDevice,
     ) -> (Device, vk::Queue, vk::Queue) {
         let (graphics_family_index, present_family_index) =
@@ -340,10 +336,10 @@ impl VulkanContext {
         physical_device: vk::PhysicalDevice,
         device: &Device,
         surface: &surface::Instance,
-        surface_khr: SurfaceKHR,
+        surface_khr: vk::SurfaceKHR,
     ) -> (
         khr_swapchain::Device,
-        SwapchainKHR,
+        vk::SwapchainKHR,
         SwapchainProperties,
         Vec<vk::Image>,
     ) {
@@ -441,7 +437,7 @@ impl VulkanContext {
     fn create_pipeline(
         device: &Device,
         swapchain_properties: SwapchainProperties,
-        render_pass: RenderPass,
+        render_pass: vk::RenderPass,
     ) -> (vk::Pipeline, vk::PipelineLayout) {
         // Vertex & Fragment Shaders
         let vertex_source = Self::read_shader_from_file("assets/shaders/shader.vert.spv");
