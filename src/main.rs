@@ -1,16 +1,18 @@
 mod debug;
 mod math;
+mod primitives;
 mod static_data;
 mod swapchain;
 
 use crate::debug::*;
+use crate::static_data::{INDICES, VERTICES};
 use crate::swapchain::*;
 
-use crate::static_data::{INDICES, VERTEX_SIZE, VERTICES};
 use ash::ext::debug_utils;
 use ash::khr::{surface, swapchain as khr_swapchain};
 use ash::{vk, Device, Entry, Instance};
 use cgmath::{Deg, Matrix4, Point3, Vector3};
+use primitives::{UniformBufferObject, Vertex};
 use std::error::Error;
 use std::ffi::{CStr, CString};
 use std::time::Instant;
@@ -238,7 +240,7 @@ impl VulkanContext {
         }
     }
 
-    pub fn draw_frame(&mut self) -> bool {
+    pub(crate) fn draw_frame(&mut self) -> bool {
         log::trace!("Drawing frame.");
 
         let sync_objects = self.in_flight_frames.next().unwrap();
@@ -331,7 +333,7 @@ impl VulkanContext {
         false
     }
 
-    pub fn wait_gpu_idle(&self) {
+    pub(crate) fn wait_gpu_idle(&self) {
         unsafe { self.device.device_wait_idle().unwrap() }
     }
 
@@ -729,15 +731,15 @@ impl VulkanContext {
 
         // Vertex input & topology
         let entry_point_name = CString::new("main").unwrap();
-        let vertex_shader_state_info = vk::PipelineShaderStageCreateInfo::default()
+        let vertex_shader_stage_info = vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::VERTEX)
             .module(vertex_shader_module)
             .name(&entry_point_name);
-        let fragment_shader_state_info = vk::PipelineShaderStageCreateInfo::default()
+        let fragment_shader_stage_info = vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::FRAGMENT)
             .module(fragment_shader_module)
             .name(&entry_point_name);
-        let shader_states_infos = [vertex_shader_state_info, fragment_shader_state_info];
+        let shader_stage_infos = [vertex_shader_stage_info, fragment_shader_stage_info];
 
         let vertex_binding_descs = [Vertex::get_binding_description()];
         let vertex_attribute_descs = Vertex::get_attribute_descriptions();
@@ -821,7 +823,7 @@ impl VulkanContext {
         };
 
         let pipeline_info = vk::GraphicsPipelineCreateInfo::default()
-            .stages(&shader_states_infos)
+            .stages(&shader_stage_infos)
             .vertex_input_state(&vertex_input_info)
             .input_assembly_state(&input_assembly_info)
             .viewport_state(&viewport_info)
@@ -1570,51 +1572,5 @@ impl Iterator for InFlightFrames {
         self.current_frame = (self.current_frame + 1) % self.sync_objects.len();
 
         Some(next)
-    }
-}
-
-#[derive(Clone, Copy)]
-#[allow(dead_code)]
-struct Vertex {
-    pos: [f32; 2],
-    color: [f32; 3],
-}
-impl Vertex {
-    fn get_binding_description() -> vk::VertexInputBindingDescription {
-        vk::VertexInputBindingDescription::default()
-            .binding(0)
-            .stride(VERTEX_SIZE as _)
-            .input_rate(vk::VertexInputRate::VERTEX)
-    }
-    fn get_attribute_descriptions() -> [vk::VertexInputAttributeDescription; 2] {
-        let position_desc = vk::VertexInputAttributeDescription::default()
-            .binding(0)
-            .location(0)
-            .format(vk::Format::R32G32_SFLOAT)
-            .offset(0);
-        let color_desc = vk::VertexInputAttributeDescription::default()
-            .binding(0)
-            .location(1)
-            .format(vk::Format::R32G32B32_SFLOAT)
-            .offset(8);
-        [position_desc, color_desc]
-    }
-}
-
-#[derive(Clone, Copy)]
-#[allow(dead_code)]
-struct UniformBufferObject {
-    model: Matrix4<f32>,
-    view: Matrix4<f32>,
-    proj: Matrix4<f32>,
-}
-
-impl UniformBufferObject {
-    fn get_descriptor_set_layout_bindings<'a>() -> vk::DescriptorSetLayoutBinding<'a> {
-        vk::DescriptorSetLayoutBinding::default()
-            .binding(0)
-            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-            .descriptor_count(1)
-            .stage_flags(vk::ShaderStageFlags::VERTEX)
     }
 }
