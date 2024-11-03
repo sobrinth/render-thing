@@ -38,6 +38,7 @@ struct VulkanContext {
     pipeline_layout: vk::PipelineLayout,
     render_pass: vk::RenderPass,
     pipeline: vk::Pipeline,
+    swapchain_framebuffers: Vec<vk::Framebuffer>,
 }
 
 #[derive(Default)]
@@ -101,6 +102,13 @@ impl VulkanContext {
 
         let (pipeline, layout) = Self::create_pipeline(&device, swapchain_properties, render_pass);
 
+        let framebuffers = Self::create_framebuffers(
+            &device,
+            &swapchain_image_views,
+            render_pass,
+            swapchain_properties,
+        );
+
         Self {
             _entry: entry,
             instance,
@@ -119,6 +127,7 @@ impl VulkanContext {
             pipeline_layout: layout,
             render_pass,
             pipeline,
+            swapchain_framebuffers: framebuffers,
         }
     }
 
@@ -604,11 +613,36 @@ impl VulkanContext {
 
         unsafe { device.create_render_pass(&render_pass_info, None).unwrap() }
     }
+
+    fn create_framebuffers(
+        device: &Device,
+        image_views: &[vk::ImageView],
+        render_pass: vk::RenderPass,
+        swapchain_properties: SwapchainProperties,
+    ) -> Vec<vk::Framebuffer> {
+        // Create a framebuffer for each image view
+        image_views
+            .iter()
+            .map(|v| [*v])
+            .map(|attachments| {
+                let framebuffer_info = vk::FramebufferCreateInfo::default()
+                    .render_pass(render_pass)
+                    .attachments(&attachments)
+                    .width(swapchain_properties.extent.width)
+                    .height(swapchain_properties.extent.height)
+                    .layers(1);
+                unsafe { device.create_framebuffer(&framebuffer_info, None).unwrap() }
+            })
+            .collect()
+    }
 }
 
 impl Drop for VulkanContext {
     fn drop(&mut self) {
         unsafe {
+            self.swapchain_framebuffers
+                .iter()
+                .for_each(|f| self.device.destroy_framebuffer(*f, None));
             self.device.destroy_pipeline(self.pipeline, None);
             self.device
                 .destroy_pipeline_layout(self.pipeline_layout, None);
