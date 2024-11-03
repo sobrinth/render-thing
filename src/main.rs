@@ -40,6 +40,7 @@ struct VulkanContext {
     _images: Vec<vk::Image>,
     swapchain_image_views: Vec<vk::ImageView>,
     pipeline_layout: vk::PipelineLayout,
+    render_pass: vk::RenderPass,
 }
 
 #[derive(Default)]
@@ -99,6 +100,8 @@ impl VulkanContext {
         let swapchain_image_views =
             Self::create_swapchain_image_views(&device, &images, swapchain_properties);
 
+        let render_pass = Self::create_render_pass(&device, swapchain_properties);
+
         let layout = Self::create_pipeline(&device, swapchain_properties);
 
         Self {
@@ -117,6 +120,7 @@ impl VulkanContext {
             _images: images,
             swapchain_image_views,
             pipeline_layout: layout,
+            render_pass,
         }
     }
 
@@ -432,7 +436,10 @@ impl VulkanContext {
             .collect::<Vec<_>>()
     }
 
-    fn create_pipeline(device: &Device, swapchain_properties: SwapchainProperties) -> vk::PipelineLayout {
+    fn create_pipeline(
+        device: &Device,
+        swapchain_properties: SwapchainProperties,
+    ) -> vk::PipelineLayout {
         // Vertex & Fragment Shaders
         let vertex_source = Self::read_shader_from_file("shaders/shader.vert.spv");
         let fragment_source = Self::read_shader_from_file("shaders/shader.frag.spv");
@@ -491,7 +498,7 @@ impl VulkanContext {
             // .sample_mask() // null
             .alpha_to_coverage_enable(false)
             .alpha_to_one_enable(false);
-        
+
         // Color blending
         let color_blend_attachment = vk::PipelineColorBlendAttachmentState::default()
             .color_write_mask(vk::ColorComponentFlags::RGBA)
@@ -503,25 +510,26 @@ impl VulkanContext {
             .dst_alpha_blend_factor(vk::BlendFactor::ZERO)
             .alpha_blend_op(vk::BlendOp::ADD);
         let color_blend_attachments = [color_blend_attachment];
-        
+
         let _color_blending_info = vk::PipelineColorBlendStateCreateInfo::default()
             .logic_op_enable(false)
             .logic_op(vk::LogicOp::COPY)
             .attachments(&color_blend_attachments)
             .blend_constants([0.0, 0.0, 0.0, 0.0]);
-        
+
         // Pipeline layout
         let pipeline_layout = {
             let pipeline_layout_info = vk::PipelineLayoutCreateInfo::default();
-                // .set_layouts() //there are no uniforms yet
-                // .push_constant_ranges() // no push constants yet
-            
+            // .set_layouts() //there are no uniforms yet
+            // .push_constant_ranges() // no push constants yet
+
             unsafe {
-                device.create_pipeline_layout(&pipeline_layout_info, None)
+                device
+                    .create_pipeline_layout(&pipeline_layout_info, None)
                     .unwrap()
             }
         };
-        
+
         unsafe {
             device.destroy_shader_module(vertex_shader_module, None);
             device.destroy_shader_module(fragment_shader_module, None);
@@ -538,12 +546,44 @@ impl VulkanContext {
         let create_info = vk::ShaderModuleCreateInfo::default().code(shader_source);
         unsafe { device.create_shader_module(&create_info, None).unwrap() }
     }
+
+    fn create_render_pass(
+        device: &Device,
+        swapchain_properties: SwapchainProperties,
+    ) -> vk::RenderPass {
+        let attachment_desc = vk::AttachmentDescription::default()
+            .format(swapchain_properties.format.format)
+            .samples(vk::SampleCountFlags::TYPE_1)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::STORE)
+            .initial_layout(vk::ImageLayout::UNDEFINED)
+            .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
+        let attachment_descs = [attachment_desc];
+
+        let attachment_ref = vk::AttachmentReference::default()
+            .attachment(0)
+            .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+        let attachment_refs = [attachment_ref];
+
+        let subpass_desc = vk::SubpassDescription::default()
+            .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+            .color_attachments(&attachment_refs);
+        let subpass_descs = [subpass_desc];
+
+        let render_pass_info = vk::RenderPassCreateInfo::default()
+            .attachments(&attachment_descs)
+            .subpasses(&subpass_descs);
+
+        unsafe { device.create_render_pass(&render_pass_info, None).unwrap() }
+    }
 }
 
 impl Drop for VulkanContext {
     fn drop(&mut self) {
         unsafe {
-            self.device.destroy_pipeline_layout(self.pipeline_layout, None);
+            self.device
+                .destroy_pipeline_layout(self.pipeline_layout, None);
+            self.device.destroy_render_pass(self.render_pass, None);
             self.swapchain_image_views
                 .iter()
                 .for_each(|v| self.device.destroy_image_view(*v, None));
