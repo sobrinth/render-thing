@@ -1,11 +1,12 @@
 mod debug;
+mod swapchain;
 
 use crate::debug::{
     check_validation_layer_support, get_layer_names_and_pointers, setup_debug_messenger,
     ENABLE_VALIDATION_LAYERS,
 };
 use ash::ext::debug_utils;
-use ash::khr::surface;
+use ash::khr::{surface, swapchain as khr_swapchain};
 use ash::vk::SurfaceKHR;
 use ash::{vk, Device, Entry, Instance};
 use std::error::Error;
@@ -17,6 +18,7 @@ use winit::event_loop::ControlFlow::Poll;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::{Window, WindowId};
+use swapchain::SwapchainSupportDetails;
 
 struct VulkanContext {
     _entry: Entry,
@@ -62,7 +64,7 @@ impl VulkanContext {
                 window.window_handle().unwrap().as_raw(),
                 None,
             )
-            .unwrap()
+                .unwrap()
         };
 
         let debug_report_callback = setup_debug_messenger(&entry, &instance);
@@ -126,7 +128,12 @@ impl VulkanContext {
         unsafe { Ok(entry.create_instance(&instance_create_info, None)?) }
     }
 
-    /// Pick the first physical device that supports the graphics queue families.
+    /// Pick the first suitable physical device.
+    ///
+    /// # Requirements
+    /// - At least one queue family with one queue supporting graphics.
+    /// - At least one queue family with one queue supporting presentation to `surface_khr`.
+    /// - Swapchain extension support. (VK_KHR_swapchain) 
     fn pick_physical_device(
         instance: &Instance,
         surface: &surface::Instance,
@@ -145,6 +152,7 @@ impl VulkanContext {
         device
     }
 
+
     fn is_device_suitable(
         instance: &Instance,
         surface: &surface::Instance,
@@ -152,7 +160,42 @@ impl VulkanContext {
         device: vk::PhysicalDevice,
     ) -> bool {
         let (graphics, present) = Self::find_queue_families(instance, surface, surface_khr, device);
-        graphics.is_some() && present.is_some()
+
+        let extension_support = Self::check_device_extension_support(instance, device);
+
+        let is_swapchain_usable = {
+            let details = SwapchainSupportDetails::new(device, surface, surface_khr);
+            !details.formats.is_empty() && !details.present_modes.is_empty()
+        };
+        graphics.is_some() && present.is_some() && extension_support && is_swapchain_usable
+    }
+
+
+    fn check_device_extension_support(instance: &Instance, device: vk::PhysicalDevice) -> bool {
+        let required_extension = Self::get_required_device_extensions();
+
+        let extension_properties = unsafe {
+            instance
+                .enumerate_device_extension_properties(device)
+                .unwrap()
+        };
+
+        for extension in required_extension.iter() {
+            let found_ext = extension_properties.iter().any(|ext| {
+                let ext_name = unsafe { CStr::from_ptr(ext.extension_name.as_ptr()) };
+                extension == &ext_name
+            });
+
+            if !found_ext {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    fn get_required_device_extensions() -> [&'static CStr; 1] {
+        [khr_swapchain::NAME]
     }
 
     /// Find a queue family with at least one graphics queue and one with
@@ -233,11 +276,18 @@ impl VulkanContext {
                 })
                 .collect::<Vec<_>>()
         };
+        
+        let device_extensions = Self::get_required_device_extensions();
+        let device_extensions_ptrs = device_extensions
+            .iter()
+            .map(|ext| ext.as_ptr())
+            .collect::<Vec<_>>();
 
         let device_features = vk::PhysicalDeviceFeatures::default();
 
         let device_create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&queue_create_infos)
+            .enabled_extension_names(&device_extensions_ptrs)
             .enabled_features(&device_features);
 
         let device = unsafe {
@@ -251,6 +301,8 @@ impl VulkanContext {
         (device, graphics_queue, present_queue)
     }
 }
+
+
 impl Drop for VulkanContext {
     fn drop(&mut self) {
         unsafe {
