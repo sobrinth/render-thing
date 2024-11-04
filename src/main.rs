@@ -10,6 +10,7 @@ use crate::swapchain::*;
 
 use ash::ext::debug_utils;
 use ash::khr::{surface, swapchain as khr_swapchain};
+use ash::vk::CommandPool;
 use ash::{vk, Device, Entry, Instance};
 use cgmath::{Deg, Matrix4, Point3, Vector3};
 use primitives::{UniformBufferObject, Vertex};
@@ -164,7 +165,7 @@ impl VulkanContext {
         );
 
         let (texture_image, texture_image_memory) =
-            Self::create_texture_image(&device, memory_properties);
+            Self::create_texture_image(&device, memory_properties, command_pool, graphics_queue);
 
         let (vertex_buffer, vertex_buffer_memory) = Self::create_vertex_buffer(
             &device,
@@ -1162,9 +1163,11 @@ impl VulkanContext {
     fn create_texture_image(
         device: &Device,
         device_memory_properties: vk::PhysicalDeviceMemoryProperties,
+        command_pool: vk::CommandPool,
+        copy_queue: vk::Queue,
     ) -> (vk::Image, vk::DeviceMemory) {
         let image = image::open("assets/images/statue.jpg").unwrap();
-        let image_as_rgb = image.to_rgb8();
+        let image_as_rgb = image.to_rgba8();
         let image_width = image_as_rgb.width();
         let image_height = image_as_rgb.height();
         let pixels = image_as_rgb.into_raw();
@@ -1197,6 +1200,40 @@ impl VulkanContext {
             vk::ImageTiling::OPTIMAL,
             vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
         );
+
+        // Transition the image layout and copy the buffer into the image
+        // and transition the layout again to be readable from fragment shader.
+        {
+            Self::transition_image_layout(
+                device,
+                command_pool,
+                copy_queue,
+                image,
+                vk::Format::R8G8B8A8_UNORM,
+                vk::ImageLayout::UNDEFINED,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            );
+
+            Self::copy_buffer_to_image(
+                device,
+                command_pool,
+                copy_queue,
+                buffer,
+                image,
+                image_width,
+                image_height,
+            );
+
+            Self::transition_image_layout(
+                device,
+                command_pool,
+                copy_queue,
+                image,
+                vk::Format::R8G8B8A8_UNORM,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            );
+        }
 
         unsafe {
             device.destroy_buffer(buffer, None);
@@ -1248,6 +1285,155 @@ impl VulkanContext {
         };
 
         (image, memory)
+    }
+
+    fn transition_image_layout(
+        device: &Device,
+        command_pool: vk::CommandPool,
+        transition_queue: vk::Queue,
+        image: vk::Image,
+        _format: vk::Format,
+        old_layout: vk::ImageLayout,
+        new_layout: vk::ImageLayout,
+    ) {
+        Self::exectute_one_time_command(device, command_pool, transition_queue, |buffer| {
+            let (src_access_mask, dst_access_mask, src_stage, dst_stage) =
+                match (old_layout, new_layout) {
+                    (vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL) => (
+                        vk::AccessFlags::empty(),
+                        vk::AccessFlags::TRANSFER_WRITE,
+                        vk::PipelineStageFlags::TOP_OF_PIPE,
+                        vk::PipelineStageFlags::TRANSFER,
+                    ),
+                    (
+                        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                    ) => (
+                        vk::AccessFlags::TRANSFER_WRITE,
+                        vk::AccessFlags::SHADER_READ,
+                        vk::PipelineStageFlags::TRANSFER,
+                        vk::PipelineStageFlags::FRAGMENT_SHADER,
+                    ),
+                    _ => panic!(
+                        "Unsupported layout transition({:?} => {:?}).",
+                        old_layout, new_layout
+                    ),
+                };
+
+            let barrier = vk::ImageMemoryBarrier::default()
+                .old_layout(old_layout)
+                .new_layout(new_layout)
+                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .image(image)
+                .subresource_range(vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                })
+                .src_access_mask(src_access_mask)
+                .dst_access_mask(dst_access_mask);
+            let barriers = [barrier];
+
+            unsafe {
+                device.cmd_pipeline_barrier(
+                    buffer,
+                    src_stage,
+                    dst_stage,
+                    vk::DependencyFlags::empty(),
+                    &[],
+                    &[],
+                    &barriers,
+                )
+            };
+        });
+    }
+
+    fn copy_buffer_to_image(
+        device: &Device,
+        command_pool: CommandPool,
+        transition_queue: vk::Queue,
+        buffer: vk::Buffer,
+        image: vk::Image,
+        width: u32,
+        height: u32,
+    ) {
+        Self::exectute_one_time_command(device, command_pool, transition_queue, |cmd_buffer| {
+            let region = vk::BufferImageCopy::default()
+                .buffer_offset(0)
+                .buffer_row_length(0)
+                .buffer_image_height(0)
+                .image_subresource(vk::ImageSubresourceLayers {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    mip_level: 0,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                })
+                .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
+                .image_extent(vk::Extent3D {
+                    width,
+                    height,
+                    depth: 1,
+                });
+            let regions = [region];
+
+            unsafe {
+                device.cmd_copy_buffer_to_image(
+                    cmd_buffer,
+                    buffer,
+                    image,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    &regions,
+                )
+            }
+        });
+    }
+
+    /// Create a one time use command buffer and pass it to `executor`.
+    fn exectute_one_time_command<F: FnOnce(vk::CommandBuffer)>(
+        device: &Device,
+        command_pool: vk::CommandPool,
+        queue: vk::Queue,
+        executor: F,
+    ) {
+        let command_buffer = {
+            let alloc_info = vk::CommandBufferAllocateInfo::default()
+                .level(vk::CommandBufferLevel::PRIMARY)
+                .command_pool(command_pool)
+                .command_buffer_count(1);
+
+            unsafe { device.allocate_command_buffers(&alloc_info) }.unwrap()[0]
+        };
+        let command_buffers = [command_buffer];
+
+        // begin recording
+        {
+            let begin_info = vk::CommandBufferBeginInfo::default()
+                .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+            unsafe { device.begin_command_buffer(command_buffer, &begin_info) }.unwrap();
+        }
+
+        executor(command_buffer);
+
+        // end recording
+        unsafe { device.end_command_buffer(command_buffer) }.unwrap();
+
+        // submit and wait
+        {
+            let submit_info = vk::SubmitInfo::default().command_buffers(&command_buffers);
+            let submit_infos = [submit_info];
+            unsafe {
+                device
+                    .queue_submit(queue, &submit_infos, vk::Fence::null())
+                    .unwrap();
+                device.queue_wait_idle(queue).unwrap();
+            };
+        }
+
+        // free
+        unsafe { device.free_command_buffers(command_pool, &command_buffers) };
     }
 
     fn create_vertex_buffer(
@@ -1416,25 +1602,7 @@ impl VulkanContext {
         dst: vk::Buffer,
         size: vk::DeviceSize,
     ) {
-        let command_buffer = {
-            let alloc_info = vk::CommandBufferAllocateInfo::default()
-                .level(vk::CommandBufferLevel::PRIMARY)
-                .command_pool(command_pool)
-                .command_buffer_count(1);
-
-            unsafe { device.allocate_command_buffers(&alloc_info) }.unwrap()[0]
-        };
-        let command_buffers = [command_buffer];
-
-        // begin recording
-        {
-            let begin_info = vk::CommandBufferBeginInfo::default()
-                .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-            unsafe { device.begin_command_buffer(command_buffer, &begin_info) }.unwrap();
-        }
-
-        // copy
-        {
+        Self::exectute_one_time_command(device, command_pool, transfer_queue, |buffer| {
             let region = vk::BufferCopy {
                 src_offset: 0,
                 dst_offset: 0,
@@ -1442,26 +1610,8 @@ impl VulkanContext {
             };
             let regions = [region];
 
-            unsafe { device.cmd_copy_buffer(command_buffer, src, dst, &regions) };
-        }
-
-        // end recording
-        unsafe { device.end_command_buffer(command_buffer) }.unwrap();
-
-        // submit and wait
-        {
-            let submit_info = vk::SubmitInfo::default().command_buffers(&command_buffers);
-            let submit_infos = [submit_info];
-            unsafe {
-                device
-                    .queue_submit(transfer_queue, &submit_infos, vk::Fence::null())
-                    .unwrap();
-                device.queue_wait_idle(transfer_queue).unwrap();
-            };
-        }
-
-        // free
-        unsafe { device.free_command_buffers(command_pool, &command_buffers) };
+            unsafe { device.cmd_copy_buffer(buffer, src, dst, &regions) }
+        });
     }
 
     /// Find a memory type in `mem_properties` that is suitable
