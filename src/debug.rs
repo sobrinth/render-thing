@@ -81,11 +81,8 @@ pub(crate) fn setup_debug_messenger(
         )
         .pfn_user_callback(Some(vulkan_debug_callback));
     let debug_utils = debug_utils::Instance::new(entry, instance);
-    let debug_utils_messenger = unsafe {
-        debug_utils
-            .create_debug_utils_messenger(&create_info, None)
-            .unwrap()
-    };
+    let debug_utils_messenger =
+        unsafe { debug_utils.create_debug_utils_messenger(&create_info, None) }.unwrap();
 
     Some((debug_utils, debug_utils_messenger))
 }
