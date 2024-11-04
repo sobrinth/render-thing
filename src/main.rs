@@ -100,8 +100,8 @@ impl VulkanContext {
                 window.window_handle().unwrap().as_raw(),
                 None,
             )
-            .unwrap()
-        };
+        }
+        .unwrap();
 
         let debug_report_callback = setup_debug_messenger(&entry, &instance);
 
@@ -251,11 +251,7 @@ impl VulkanContext {
         let wait_fences = [in_flight_fence];
 
         // wait for available fence
-        unsafe {
-            self.device
-                .wait_for_fences(&wait_fences, true, u64::MAX)
-                .unwrap();
-        };
+        unsafe { self.device.wait_for_fences(&wait_fences, true, u64::MAX) }.unwrap();
 
         let result = unsafe {
             self.swapchain.acquire_next_image(
@@ -275,7 +271,7 @@ impl VulkanContext {
             Err(error) => panic!("Error while acquiring next image. Cause: {}", error),
         };
 
-        unsafe { self.device.reset_fences(&wait_fences).unwrap() }
+        unsafe { self.device.reset_fences(&wait_fences) }.unwrap();
 
         self.update_uniform_buffers(image_index);
 
@@ -296,8 +292,8 @@ impl VulkanContext {
             unsafe {
                 self.device
                     .queue_submit(self.graphics_queue, &submit_infos, in_flight_fence)
-                    .unwrap()
-            };
+            }
+            .unwrap();
         }
 
         let swapchains = [self.swapchain_khr];
@@ -334,7 +330,7 @@ impl VulkanContext {
     }
 
     pub(crate) fn wait_gpu_idle(&self) {
-        unsafe { self.device.device_wait_idle().unwrap() }
+        unsafe { self.device.device_wait_idle() }.unwrap();
     }
 
     fn create_instance(entry: &Entry, window: &Window) -> Result<Instance, Box<dyn Error>> {
@@ -384,7 +380,7 @@ impl VulkanContext {
         surface: &surface::Instance,
         surface_khr: vk::SurfaceKHR,
     ) -> (vk::PhysicalDevice, QueueFamilyIndices) {
-        let devices = unsafe { instance.enumerate_physical_devices().unwrap() };
+        let devices = unsafe { instance.enumerate_physical_devices() }.unwrap();
         let device = devices
             .into_iter()
             .find(|device| Self::is_device_suitable(instance, surface, surface_khr, *device))
@@ -423,11 +419,8 @@ impl VulkanContext {
     fn check_device_extension_support(instance: &Instance, device: vk::PhysicalDevice) -> bool {
         let required_extension = Self::get_required_device_extensions();
 
-        let extension_properties = unsafe {
-            instance
-                .enumerate_device_extension_properties(device)
-                .unwrap()
-        };
+        let extension_properties =
+            unsafe { instance.enumerate_device_extension_properties(device) }.unwrap();
 
         for extension in required_extension.iter() {
             let found_ext = extension_properties.iter().any(|ext| {
@@ -471,11 +464,9 @@ impl VulkanContext {
                 graphics = Some(index);
             }
 
-            let present_support = unsafe {
-                surface
-                    .get_physical_device_surface_support(device, index, surface_khr)
-                    .unwrap()
-            };
+            let present_support =
+                unsafe { surface.get_physical_device_surface_support(device, index, surface_khr) }
+                    .unwrap();
 
             if present_support && present.is_none() {
                 present = Some(index);
@@ -536,11 +527,8 @@ impl VulkanContext {
             .enabled_extension_names(&device_extensions_ptrs)
             .enabled_features(&device_features);
 
-        let device = unsafe {
-            instance
-                .create_device(device, &device_create_info, None)
-                .expect("Failed to create logical device.")
-        };
+        let device = unsafe { instance.create_device(device, &device_create_info, None) }
+            .expect("Failed to create logical device.");
         let graphics_queue = unsafe { device.get_device_queue(graphics_family_index, 0) };
         let present_queue = unsafe { device.get_device_queue(present_family_index, 0) };
 
@@ -551,11 +539,7 @@ impl VulkanContext {
         let bindings = [UniformBufferObject::get_descriptor_set_layout_bindings()];
         let layout_info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings);
 
-        unsafe {
-            device
-                .create_descriptor_set_layout(&layout_info, None)
-                .unwrap()
-        }
+        unsafe { device.create_descriptor_set_layout(&layout_info, None) }.unwrap()
     }
     fn create_descriptor_pool(device: &Device, size: u32) -> vk::DescriptorPool {
         let pool_size = vk::DescriptorPoolSize {
@@ -568,7 +552,7 @@ impl VulkanContext {
             .pool_sizes(&pool_sizes)
             .max_sets(size);
 
-        unsafe { device.create_descriptor_pool(&pool_info, None).unwrap() }
+        unsafe { device.create_descriptor_pool(&pool_info, None) }.unwrap()
     }
 
     fn create_descriptor_sets(
@@ -583,7 +567,7 @@ impl VulkanContext {
         let alloc_info = vk::DescriptorSetAllocateInfo::default()
             .descriptor_pool(pool)
             .set_layouts(&layouts);
-        let descriptor_sets = unsafe { device.allocate_descriptor_sets(&alloc_info).unwrap() };
+        let descriptor_sets = unsafe { device.allocate_descriptor_sets(&alloc_info) }.unwrap();
 
         descriptor_sets
             .iter()
@@ -711,7 +695,7 @@ impl VulkanContext {
                         base_array_layer: 0,
                         layer_count: 1,
                     });
-                unsafe { device.create_image_view(&create_info, None).unwrap() }
+                unsafe { device.create_image_view(&create_info, None) }.unwrap()
             })
             .collect::<Vec<_>>()
     }
@@ -734,11 +718,11 @@ impl VulkanContext {
         let vertex_shader_stage_info = vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::VERTEX)
             .module(vertex_shader_module)
-            .name(&entry_point_name);
+            .name(entry_point_name);
         let fragment_shader_stage_info = vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::FRAGMENT)
             .module(fragment_shader_module)
-            .name(&entry_point_name);
+            .name(entry_point_name);
         let shader_stage_infos = [vertex_shader_stage_info, fragment_shader_stage_info];
 
         let vertex_binding_descs = [Vertex::get_binding_description()];
@@ -819,7 +803,7 @@ impl VulkanContext {
             let layout_info = vk::PipelineLayoutCreateInfo::default().set_layouts(&layouts);
             // .push_constant_ranges() // no push constants yet
 
-            unsafe { device.create_pipeline_layout(&layout_info, None).unwrap() }
+            unsafe { device.create_pipeline_layout(&layout_info, None) }.unwrap()
         };
 
         let pipeline_info = vk::GraphicsPipelineCreateInfo::default()
@@ -838,10 +822,9 @@ impl VulkanContext {
         let pipeline_infos = [pipeline_info];
 
         let pipeline = unsafe {
-            device
-                .create_graphics_pipelines(vk::PipelineCache::null(), &pipeline_infos, None)
-                .unwrap()[0]
-        };
+            device.create_graphics_pipelines(vk::PipelineCache::null(), &pipeline_infos, None)
+        }
+        .unwrap()[0];
 
         unsafe {
             device.destroy_shader_module(vertex_shader_module, None);
@@ -858,7 +841,7 @@ impl VulkanContext {
 
     fn create_shader_module(device: &Device, shader_source: &[u32]) -> vk::ShaderModule {
         let create_info = vk::ShaderModuleCreateInfo::default().code(shader_source);
-        unsafe { device.create_shader_module(&create_info, None).unwrap() }
+        unsafe { device.create_shader_module(&create_info, None) }.unwrap()
     }
 
     fn create_render_pass(
@@ -900,7 +883,7 @@ impl VulkanContext {
             .subpasses(&subpass_descs)
             .dependencies(&subpass_deps);
 
-        unsafe { device.create_render_pass(&render_pass_info, None).unwrap() }
+        unsafe { device.create_render_pass(&render_pass_info, None) }.unwrap()
     }
 
     fn create_framebuffers(
@@ -920,7 +903,7 @@ impl VulkanContext {
                     .width(swapchain_properties.extent.width)
                     .height(swapchain_properties.extent.height)
                     .layers(1);
-                unsafe { device.create_framebuffer(&framebuffer_info, None).unwrap() }
+                unsafe { device.create_framebuffer(&framebuffer_info, None) }.unwrap()
             })
             .collect()
     }
@@ -942,7 +925,7 @@ impl VulkanContext {
             .level(vk::CommandBufferLevel::PRIMARY)
             .command_buffer_count(framebuffers.len() as _);
 
-        let buffers = unsafe { device.allocate_command_buffers(&allocate_info).unwrap() };
+        let buffers = unsafe { device.allocate_command_buffers(&allocate_info) }.unwrap();
 
         buffers.iter().enumerate().for_each(|(i, buffer)| {
             let buffer = *buffer;
@@ -954,11 +937,7 @@ impl VulkanContext {
                     .flags(vk::CommandBufferUsageFlags::SIMULTANEOUS_USE);
                 // .inheritance_info() // null since it's a primary command buffer
 
-                unsafe {
-                    device
-                        .begin_command_buffer(buffer, &command_buffer_begin_info)
-                        .unwrap()
-                }
+                unsafe { device.begin_command_buffer(buffer, &command_buffer_begin_info) }.unwrap()
             }
 
             // begin render pass
@@ -1020,7 +999,7 @@ impl VulkanContext {
             unsafe { device.cmd_end_render_pass(buffer) };
 
             // end command buffer
-            unsafe { device.end_command_buffer(buffer).unwrap() }
+            unsafe { device.end_command_buffer(buffer) }.unwrap()
         });
 
         buffers
@@ -1067,11 +1046,7 @@ impl VulkanContext {
             .queue_family_index(queue_family_indices.graphics_index)
             .flags(create_flags);
 
-        unsafe {
-            device
-                .create_command_pool(&command_pool_info, None)
-                .unwrap()
-        }
+        unsafe { device.create_command_pool(&command_pool_info, None) }.unwrap()
     }
 
     fn create_sync_objects(device: &Device) -> InFlightFrames {
@@ -1080,18 +1055,18 @@ impl VulkanContext {
         for _ in 0..MAX_FRAMES_IN_FLIGHT {
             let image_available_semaphore = {
                 let semaphore_info = vk::SemaphoreCreateInfo::default();
-                unsafe { device.create_semaphore(&semaphore_info, None).unwrap() }
+                unsafe { device.create_semaphore(&semaphore_info, None) }.unwrap()
             };
 
             let render_finished_semaphore = {
                 let semaphore_info = vk::SemaphoreCreateInfo::default();
-                unsafe { device.create_semaphore(&semaphore_info, None).unwrap() }
+                unsafe { device.create_semaphore(&semaphore_info, None) }.unwrap()
             };
 
             let in_flight_fence = {
                 let fence_info =
                     vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
-                unsafe { device.create_fence(&fence_info, None).unwrap() }
+                unsafe { device.create_fence(&fence_info, None) }.unwrap()
             };
 
             let sync_objects = SyncObjects {
@@ -1311,7 +1286,7 @@ impl VulkanContext {
                 .size(size)
                 .usage(usage)
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
-            unsafe { device.create_buffer(&buffer_info, None).unwrap() }
+            unsafe { device.create_buffer(&buffer_info, None) }.unwrap()
         };
 
         let mem_requirements = unsafe { device.get_buffer_memory_requirements(buffer) };
@@ -1322,10 +1297,10 @@ impl VulkanContext {
             let alloc_info = vk::MemoryAllocateInfo::default()
                 .allocation_size(mem_requirements.size)
                 .memory_type_index(mem_type);
-            unsafe { device.allocate_memory(&alloc_info, None).unwrap() }
+            unsafe { device.allocate_memory(&alloc_info, None) }.unwrap()
         };
 
-        unsafe { device.bind_buffer_memory(buffer, memory, 0).unwrap() };
+        unsafe { device.bind_buffer_memory(buffer, memory, 0) }.unwrap();
 
         (buffer, memory, mem_requirements.size)
     }
@@ -1349,7 +1324,7 @@ impl VulkanContext {
                 .command_pool(command_pool)
                 .command_buffer_count(1);
 
-            unsafe { device.allocate_command_buffers(&alloc_info).unwrap()[0] }
+            unsafe { device.allocate_command_buffers(&alloc_info) }.unwrap()[0]
         };
         let command_buffers = [command_buffer];
 
@@ -1357,11 +1332,7 @@ impl VulkanContext {
         {
             let begin_info = vk::CommandBufferBeginInfo::default()
                 .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-            unsafe {
-                device
-                    .begin_command_buffer(command_buffer, &begin_info)
-                    .unwrap()
-            };
+            unsafe { device.begin_command_buffer(command_buffer, &begin_info) }.unwrap();
         }
 
         // copy
@@ -1377,7 +1348,7 @@ impl VulkanContext {
         }
 
         // end recording
-        unsafe { device.end_command_buffer(command_buffer).unwrap() }
+        unsafe { device.end_command_buffer(command_buffer) }.unwrap();
 
         // submit and wait
         {
