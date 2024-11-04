@@ -10,7 +10,6 @@ use crate::swapchain::*;
 
 use ash::ext::debug_utils;
 use ash::khr::{surface, swapchain as khr_swapchain};
-use ash::vk::CommandPool;
 use ash::{vk, Device, Entry, Instance};
 use cgmath::{Deg, Matrix4, Point3, Vector3};
 use primitives::{UniformBufferObject, Vertex};
@@ -59,6 +58,8 @@ struct VulkanContext {
     transient_command_pool: vk::CommandPool,
     texture_image: vk::Image,
     texture_image_memory: vk::DeviceMemory,
+    texture_image_view: vk::ImageView,
+    texture_image_sampler: vk::Sampler,
     vertex_buffer: vk::Buffer,
     vertex_buffer_memory: vk::DeviceMemory,
     index_buffer: vk::Buffer,
@@ -166,6 +167,8 @@ impl VulkanContext {
 
         let (texture_image, texture_image_memory) =
             Self::create_texture_image(&device, memory_properties, command_pool, graphics_queue);
+        let texture_image_view = Self::create_texture_image_view(&device, texture_image);
+        let texture_image_sampler = Self::create_texture_sampler(&device);
 
         let (vertex_buffer, vertex_buffer_memory) = Self::create_vertex_buffer(
             &device,
@@ -235,6 +238,8 @@ impl VulkanContext {
             transient_command_pool,
             texture_image,
             texture_image_memory,
+            texture_image_view,
+            texture_image_sampler,
             vertex_buffer,
             vertex_buffer_memory,
             index_buffer,
@@ -421,7 +426,12 @@ impl VulkanContext {
             let details = SwapchainSupportDetails::new(device, surface, surface_khr);
             !details.formats.is_empty() && !details.present_modes.is_empty()
         };
-        graphics.is_some() && present.is_some() && extension_support && is_swapchain_usable
+        let features = unsafe { instance.get_physical_device_features(device) };
+        graphics.is_some()
+            && present.is_some()
+            && extension_support
+            && is_swapchain_usable
+            && features.sampler_anisotropy == vk::TRUE
     }
 
     fn check_device_extension_support(instance: &Instance, device: vk::PhysicalDevice) -> bool {
@@ -528,7 +538,7 @@ impl VulkanContext {
             .map(|ext| ext.as_ptr())
             .collect::<Vec<_>>();
 
-        let device_features = vk::PhysicalDeviceFeatures::default();
+        let device_features = vk::PhysicalDeviceFeatures::default().sampler_anisotropy(true);
 
         let device_create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&queue_create_infos)
@@ -681,31 +691,30 @@ impl VulkanContext {
     fn create_swapchain_image_views(
         device: &Device,
         swapchain_images: &[vk::Image],
-        swapchain_format: SwapchainProperties,
+        swapchain_properties: SwapchainProperties,
     ) -> Vec<vk::ImageView> {
         swapchain_images
             .iter()
             .map(|image| {
-                let create_info = vk::ImageViewCreateInfo::default()
-                    .image(*image)
-                    .view_type(vk::ImageViewType::TYPE_2D)
-                    .format(swapchain_format.format.format)
-                    .components(vk::ComponentMapping {
-                        r: vk::ComponentSwizzle::IDENTITY,
-                        g: vk::ComponentSwizzle::IDENTITY,
-                        b: vk::ComponentSwizzle::IDENTITY,
-                        a: vk::ComponentSwizzle::IDENTITY,
-                    })
-                    .subresource_range(vk::ImageSubresourceRange {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    });
-                unsafe { device.create_image_view(&create_info, None) }.unwrap()
+                Self::create_image_view(device, *image, swapchain_properties.format.format)
             })
             .collect::<Vec<_>>()
+    }
+
+    fn create_image_view(device: &Device, image: vk::Image, format: vk::Format) -> vk::ImageView {
+        let create_info = vk::ImageViewCreateInfo::default()
+            .image(image)
+            .view_type(vk::ImageViewType::TYPE_2D)
+            .format(format)
+            .subresource_range(vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1,
+            });
+
+        unsafe { device.create_image_view(&create_info, None) }.unwrap()
     }
 
     fn create_pipeline(
@@ -1353,7 +1362,7 @@ impl VulkanContext {
 
     fn copy_buffer_to_image(
         device: &Device,
-        command_pool: CommandPool,
+        command_pool: vk::CommandPool,
         transition_queue: vk::Queue,
         buffer: vk::Buffer,
         image: vk::Image,
@@ -1389,6 +1398,31 @@ impl VulkanContext {
                 )
             }
         });
+    }
+
+    fn create_texture_image_view(device: &Device, image: vk::Image) -> vk::ImageView {
+        Self::create_image_view(device, image, vk::Format::R8G8B8A8_UNORM)
+    }
+
+    fn create_texture_sampler(device: &Device) -> vk::Sampler {
+        let sampler_info = vk::SamplerCreateInfo::default()
+            .mag_filter(vk::Filter::LINEAR)
+            .min_filter(vk::Filter::LINEAR)
+            .address_mode_u(vk::SamplerAddressMode::REPEAT)
+            .address_mode_v(vk::SamplerAddressMode::REPEAT)
+            .address_mode_w(vk::SamplerAddressMode::REPEAT)
+            .anisotropy_enable(true)
+            .max_anisotropy(16.0)
+            .border_color(vk::BorderColor::INT_OPAQUE_BLACK)
+            .unnormalized_coordinates(false)
+            .compare_enable(false)
+            .compare_op(vk::CompareOp::ALWAYS)
+            .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
+            .mip_lod_bias(0.0)
+            .min_lod(0.0)
+            .max_lod(0.0);
+
+        unsafe { device.create_sampler(&sampler_info, None) }.unwrap()
     }
 
     /// Create a one time use command buffer and pass it to `executor`.
@@ -1676,6 +1710,10 @@ impl Drop for VulkanContext {
             self.device.free_memory(self.index_buffer_memory, None);
             self.device.destroy_buffer(self.vertex_buffer, None);
             self.device.free_memory(self.vertex_buffer_memory, None);
+            self.device
+                .destroy_sampler(self.texture_image_sampler, None);
+            self.device
+                .destroy_image_view(self.texture_image_view, None);
             self.device.destroy_image(self.texture_image, None);
             self.device.free_memory(self.texture_image_memory, None);
             self.device
