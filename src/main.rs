@@ -14,7 +14,7 @@ use ash::{vk, Device, Entry, Instance};
 use cgmath::{Deg, Matrix4, Point3, Vector3};
 use primitives::{UniformBufferObject, Vertex};
 use std::error::Error;
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 use std::time::Instant;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
@@ -338,12 +338,12 @@ impl VulkanContext {
     }
 
     fn create_instance(entry: &Entry, window: &Window) -> Result<Instance, Box<dyn Error>> {
-        let app_name = CString::new("Vulkan Application").unwrap();
-        let engine_name = CString::new("No Engine").unwrap();
+        let app_name = c"Vulkan Application";
+        let engine_name = c"No Engine";
         let app_info = vk::ApplicationInfo::default()
-            .application_name(app_name.as_c_str())
+            .application_name(app_name)
             .application_version(vk::make_api_version(0, 1, 0, 0))
-            .engine_name(engine_name.as_c_str())
+            .engine_name(engine_name)
             .engine_version(vk::make_api_version(0, 1, 0, 0))
             .api_version(vk::make_api_version(0, 1, 0, 0));
 
@@ -730,7 +730,7 @@ impl VulkanContext {
         let fragment_shader_module = Self::create_shader_module(device, &fragment_source);
 
         // Vertex input & topology
-        let entry_point_name = CString::new("main").unwrap();
+        let entry_point_name = c"main";
         let vertex_shader_stage_info = vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::VERTEX)
             .module(vertex_shader_module)
