@@ -1,4 +1,3 @@
-use crate::static_data::VERTEX_SIZE;
 use ash::vk;
 use cgmath::Matrix4;
 
@@ -7,16 +6,17 @@ use cgmath::Matrix4;
 pub(crate) struct Vertex {
     pub(crate) pos: [f32; 2],
     pub(crate) color: [f32; 3],
+    pub(crate) coords: [f32; 2],
 }
 
 impl Vertex {
     pub(crate) fn get_binding_description() -> vk::VertexInputBindingDescription {
         vk::VertexInputBindingDescription::default()
             .binding(0)
-            .stride(VERTEX_SIZE as _)
+            .stride(size_of::<Vertex>() as _)
             .input_rate(vk::VertexInputRate::VERTEX)
     }
-    pub(crate) fn get_attribute_descriptions() -> [vk::VertexInputAttributeDescription; 2] {
+    pub(crate) fn get_attribute_descriptions() -> [vk::VertexInputAttributeDescription; 3] {
         let position_desc = vk::VertexInputAttributeDescription::default()
             .binding(0)
             .location(0)
@@ -27,7 +27,12 @@ impl Vertex {
             .location(1)
             .format(vk::Format::R32G32B32_SFLOAT)
             .offset(8);
-        [position_desc, color_desc]
+        let coord_desc = vk::VertexInputAttributeDescription::default()
+            .binding(0)
+            .location(2)
+            .format(vk::Format::R32G32_SFLOAT)
+            .offset(20);
+        [position_desc, color_desc, coord_desc]
     }
 }
 
