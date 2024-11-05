@@ -5,7 +5,7 @@ use cgmath::Matrix4;
 #[derive(Clone, Copy)]
 #[allow(dead_code)]
 pub(crate) struct Vertex {
-    pub(crate) pos: [f32; 2],
+    pub(crate) pos: [f32; 3],
     pub(crate) color: [f32; 3],
     pub(crate) coords: [f32; 2],
 }
@@ -21,7 +21,7 @@ impl Vertex {
         let position_desc = vk::VertexInputAttributeDescription::default()
             .binding(0)
             .location(0)
-            .format(vk::Format::R32G32_SFLOAT)
+            .format(vk::Format::R32G32B32_SFLOAT)
             .offset(offset_of!(Vertex, pos) as _);
         let color_desc = vk::VertexInputAttributeDescription::default()
             .binding(0)
