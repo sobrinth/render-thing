@@ -14,6 +14,7 @@ use ash::{vk, Device, Entry, Instance};
 use cgmath::{Deg, Matrix4, Point3, Vector3};
 use std::error::Error;
 use std::ffi::CStr;
+use std::path::Path;
 use std::time::Instant;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
@@ -52,6 +53,7 @@ struct VulkanApplication {
     transient_command_pool: vk::CommandPool,
 
     texture: Texture,
+    model_index_count: usize,
     depth_texture: Texture,
     depth_format: vk::Format,
 
@@ -171,12 +173,14 @@ impl VulkanApplication {
             render_pass,
             swapchain_properties,
         );
+        
+        let (vertices, indices) = Self::load_model();
 
         let (vertex_buffer, vertex_buffer_memory) =
-            Self::create_vertex_buffer(&vk_context, transient_command_pool, graphics_queue);
+            Self::create_vertex_buffer(&vk_context, transient_command_pool, graphics_queue, &vertices);
 
         let (index_buffer, index_buffer_memory) =
-            Self::create_index_buffer(&vk_context, transient_command_pool, graphics_queue);
+            Self::create_index_buffer(&vk_context, transient_command_pool, graphics_queue, &indices);
 
         let (uniform_buffers, uniform_buffer_memories) =
             Self::create_uniform_buffers(&vk_context, images.len());
@@ -198,6 +202,7 @@ impl VulkanApplication {
             swapchain_properties,
             vertex_buffer,
             index_buffer,
+            indices.len(),
             layout,
             &descriptor_sets,
             pipeline,
@@ -226,6 +231,7 @@ impl VulkanApplication {
             command_pool,
             transient_command_pool,
             texture,
+            model_index_count: indices.len(),
             depth_texture,
             depth_format,
             vertex_buffer,
@@ -994,6 +1000,7 @@ impl VulkanApplication {
         swapchain_properties: SwapchainProperties,
         vertex_buffer: vk::Buffer,
         index_buffer: vk::Buffer,
+        index_count: usize,
         pipeline_layout: vk::PipelineLayout,
         descriptor_sets: &[vk::DescriptorSet],
         graphics_pipeline: vk::Pipeline,
@@ -1057,12 +1064,12 @@ impl VulkanApplication {
             };
 
             // bind vertex buffer
-            let vertex_buffer = [vertex_buffer];
+            let vertex_buffers = [vertex_buffer];
             let offsets = [0];
-            unsafe { device.cmd_bind_vertex_buffers(buffer, 0, &vertex_buffer, &offsets) };
+            unsafe { device.cmd_bind_vertex_buffers(buffer, 0, &vertex_buffers, &offsets) };
 
             // bind index buffer
-            unsafe { device.cmd_bind_index_buffer(buffer, index_buffer, 0, vk::IndexType::UINT16) };
+            unsafe { device.cmd_bind_index_buffer(buffer, index_buffer, 0, vk::IndexType::UINT32) };
 
             // bind descriptor set
             unsafe {
@@ -1078,7 +1085,7 @@ impl VulkanApplication {
             };
 
             // draw
-            unsafe { device.cmd_draw_indexed(buffer, INDICES.len() as _, 1, 0, 0, 0) };
+            unsafe { device.cmd_draw_indexed(buffer, index_count as _, 1, 0, 0, 0) };
 
             // end render pass
             unsafe { device.cmd_end_render_pass(buffer) };
@@ -1225,6 +1232,7 @@ impl VulkanApplication {
             properties,
             self.vertex_buffer,
             self.index_buffer,
+            self.model_index_count,
             layout,
             &self.descriptor_sets,
             pipeline,
@@ -1251,7 +1259,7 @@ impl VulkanApplication {
     ) -> Texture {
         let device = vk_context.device();
 
-        let image = image::open("assets/images/statue.jpg").unwrap();
+        let image = image::open("assets/images/chalet.jpg").unwrap().flipv();
         let image_as_rgb = image.to_rgba8();
         let image_width = image_as_rgb.width();
         let image_height = image_as_rgb.height();
@@ -1283,6 +1291,7 @@ impl VulkanApplication {
             vk::ImageTiling::OPTIMAL,
             vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
         );
+
 
         // Transition the image layout and copy the buffer into the image
         // and transition the layout again to be readable from fragment shader.
@@ -1354,6 +1363,34 @@ impl VulkanApplication {
         Texture::new(image, image_memory, image_view, Some(sampler))
     }
 
+
+    fn load_model() -> (Vec<Vertex>, Vec<u32>) {
+        log::debug!("Loading model.");
+        let (models, _) = tobj::load_obj(&Path::new("assets/models/chalet.obj")).unwrap();
+        
+        let mesh = &models[0].mesh;
+        let positions = mesh.positions.as_slice();
+        let coords = mesh.texcoords.as_slice();
+        let vertex_count = mesh.positions.len() / 3;
+        
+        let mut vertices = Vec::with_capacity(vertex_count);
+        for i in 0..vertex_count {
+            let x = positions[i * 3];
+            let y = positions[i * 3 + 1];
+            let z = positions[i * 3 + 2];
+            let u = coords[i * 2];
+            let v = coords[i * 2 + 1];
+            
+            let vertex = Vertex {
+                pos: [x, y, z],
+                color: [1.0, 1.0, 1.0],
+                coords: [u, v],
+            };
+            vertices.push(vertex);
+        }
+        (vertices, mesh.indices.clone())
+    }
+    
     fn create_image(
         vk_context: &VkContext,
         mem_properties: vk::MemoryPropertyFlags,
@@ -1447,7 +1484,7 @@ impl VulkanApplication {
             let aspect_mask = if new_layout == vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL {
                 let mut mask = vk::ImageAspectFlags::DEPTH;
                 if Self::has_stencil_component(format) {
-                    mask = mask | vk::ImageAspectFlags::STENCIL;
+                    mask |= vk::ImageAspectFlags::STENCIL;
                 }
                 mask
             } else {
@@ -1574,13 +1611,14 @@ impl VulkanApplication {
         vk_context: &VkContext,
         command_pool: vk::CommandPool,
         transfer_queue: vk::Queue,
+        vertices: &[Vertex],
     ) -> (vk::Buffer, vk::DeviceMemory) {
         Self::create_device_local_buffer_with_data::<u32, _>(
             vk_context,
             command_pool,
             transfer_queue,
             vk::BufferUsageFlags::VERTEX_BUFFER,
-            &VERTICES,
+            vertices,
         )
     }
 
@@ -1588,13 +1626,14 @@ impl VulkanApplication {
         vk_context: &VkContext,
         command_pool: vk::CommandPool,
         transfer_queue: vk::Queue,
+        indices: &[u32],
     ) -> (vk::Buffer, vk::DeviceMemory) {
         Self::create_device_local_buffer_with_data::<u16, _>(
             vk_context,
             command_pool,
             transfer_queue,
             vk::BufferUsageFlags::INDEX_BUFFER,
-            &INDICES,
+            indices,
         )
     }
 
