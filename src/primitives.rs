@@ -1,6 +1,6 @@
-use std::mem::offset_of;
 use ash::vk;
 use cgmath::Matrix4;
+use std::mem::offset_of;
 
 #[derive(Clone, Copy)]
 #[allow(dead_code)]
