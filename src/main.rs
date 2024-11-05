@@ -909,7 +909,7 @@ impl VulkanApplication {
         (pipeline, layout)
     }
 
-    fn read_shader_from_file<P: AsRef<std::path::Path>>(path: P) -> Vec<u32> {
+    fn read_shader_from_file<P: AsRef<Path>>(path: P) -> Vec<u32> {
         log::debug!("Loading shader file {}", path.as_ref().display());
         let mut file = std::fs::File::open(path).unwrap();
         ash::util::read_spv(&mut file).unwrap()
@@ -1271,8 +1271,10 @@ impl VulkanApplication {
 
         let image = image::open("assets/images/chalet.jpg").unwrap().flipv();
         let image_as_rgb = image.to_rgba8();
-        let image_width = image_as_rgb.width();
-        let image_height = image_as_rgb.height();
+        let extent = vk::Extent2D {
+            width: image_as_rgb.width(),
+            height: image_as_rgb.height(),
+        };
         let pixels = image_as_rgb.into_raw();
         let image_size = (pixels.len() * size_of::<u8>()) as vk::DeviceSize;
 
@@ -1295,8 +1297,7 @@ impl VulkanApplication {
         let (image, image_memory) = Self::create_image(
             vk_context,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
-            image_width,
-            image_height,
+            extent,
             vk::Format::R8G8B8A8_UNORM,
             vk::ImageTiling::OPTIMAL,
             vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
@@ -1315,15 +1316,7 @@ impl VulkanApplication {
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
             );
 
-            Self::copy_buffer_to_image(
-                device,
-                command_pool,
-                copy_queue,
-                buffer,
-                image,
-                image_width,
-                image_height,
-            );
+            Self::copy_buffer_to_image(device, command_pool, copy_queue, buffer, image, extent);
 
             Self::transition_image_layout(
                 device,
@@ -1402,8 +1395,7 @@ impl VulkanApplication {
     fn create_image(
         vk_context: &VkContext,
         mem_properties: vk::MemoryPropertyFlags,
-        width: u32,
-        height: u32,
+        extent: vk::Extent2D,
         format: vk::Format,
         tiling: vk::ImageTiling,
         usage: vk::ImageUsageFlags,
@@ -1412,8 +1404,8 @@ impl VulkanApplication {
         let image_info = vk::ImageCreateInfo::default()
             .image_type(vk::ImageType::TYPE_2D)
             .extent(vk::Extent3D {
-                width,
-                height,
+                width: extent.width,
+                height: extent.height,
                 depth: 1,
             })
             .mip_levels(1)
@@ -1537,8 +1529,7 @@ impl VulkanApplication {
         transition_queue: vk::Queue,
         buffer: vk::Buffer,
         image: vk::Image,
-        width: u32,
-        height: u32,
+        extent: vk::Extent2D,
     ) {
         Self::exectute_one_time_command(device, command_pool, transition_queue, |cmd_buffer| {
             let region = vk::BufferImageCopy::default()
@@ -1553,8 +1544,8 @@ impl VulkanApplication {
                 })
                 .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
                 .image_extent(vk::Extent3D {
-                    width,
-                    height,
+                    width: extent.width,
+                    height: extent.height,
                     depth: 1,
                 });
             let regions = [region];
@@ -1843,8 +1834,7 @@ impl VulkanApplication {
         let (image, mem) = Self::create_image(
             vk_context,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
-            extent.width,
-            extent.height,
+            extent,
             format,
             vk::ImageTiling::OPTIMAL,
             vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
