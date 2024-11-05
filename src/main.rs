@@ -1,3 +1,4 @@
+mod camera;
 mod context;
 mod debug;
 mod math;
@@ -5,7 +6,7 @@ mod primitives;
 mod swapchain;
 mod texture;
 
-use crate::{context::*, debug::*, primitives::*, swapchain::*, texture::*};
+use crate::{camera::*, context::*, debug::*, primitives::*, swapchain::*, texture::*};
 
 use ash::ext::debug_utils;
 use ash::khr::{surface, swapchain as khr_swapchain};
@@ -14,11 +15,10 @@ use cgmath::{Deg, Matrix4, Point3, Vector3};
 use std::error::Error;
 use std::ffi::CStr;
 use std::path::Path;
-use std::time::Instant;
 use tobj::GPU_LOAD_OPTIONS;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::WindowEvent;
+use winit::event::{ElementState, MouseButton, MouseScrollDelta, StartCause, WindowEvent};
 use winit::event_loop::ControlFlow::Poll;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
@@ -29,12 +29,16 @@ const HEIGHT: u32 = 600;
 const MAX_FRAMES_IN_FLIGHT: u32 = 2;
 
 struct VulkanApplication {
-    start_instant: Instant,
-
     resize_dimensions: Option<[u32; 2]>,
     dirty_swapchain: bool,
 
     vk_context: VkContext,
+
+    camera: Camera,
+    is_left_clicked: bool,
+    cursor_position: [i32; 2],
+    cursor_delta: Option<[i32; 2]>,
+    wheel_delta: Option<f32>,
 
     queue_family_indices: QueueFamilyIndices,
     graphics_queue: vk::Queue,
@@ -220,10 +224,14 @@ impl VulkanApplication {
         let in_flight_frames = Self::create_sync_objects(vk_context.device());
 
         Self {
-            start_instant: Instant::now(),
             resize_dimensions: None,
             dirty_swapchain: false,
             vk_context,
+            camera: Camera::default(),
+            is_left_clicked: false,
+            cursor_position: [0, 0],
+            cursor_delta: None,
+            wheel_delta: None,
             queue_family_indices,
             graphics_queue,
             present_queue,
@@ -1108,18 +1116,30 @@ impl VulkanApplication {
     }
 
     fn update_uniform_buffers(&mut self, current_image: u32) {
-        let elapsed = self.start_instant.elapsed();
-        let elapsed = elapsed.as_secs() as f32 + (elapsed.subsec_millis() as f32) / 1_000f32;
+        // Move camera while holding left mouse-button
+        if self.is_left_clicked && self.cursor_delta.is_some() {
+            let delta = self.cursor_delta.take().unwrap();
+            let x_ratio = delta[0] as f32 / self.swapchain_properties.extent.width as f32;
+            let y_ratio = delta[1] as f32 / self.swapchain_properties.extent.height as f32;
+            let theta = x_ratio * 180.0f32.to_radians();
+            let phi = y_ratio * 90.0f32.to_radians();
+            self.camera.rotate(theta, phi);
+        }
+
+        // Move camera forward/backwards with mouse wheel
+        if let Some(wheel_data) = self.wheel_delta {
+            self.camera.forward(wheel_data * 0.3);
+        }
 
         let aspect = self.swapchain_properties.extent.width as f32
             / self.swapchain_properties.extent.height as f32;
 
         let ubo = UniformBufferObject {
-            model: Matrix4::from_angle_z(Deg(90.0 * elapsed)),
+            model: Matrix4::from_angle_x(Deg(270.0)),
             view: Matrix4::look_at_rh(
-                Point3::new(2.0, 2.0, 2.0),
+                self.camera.position(),
                 Point3::new(0.0, 0.0, 0.0),
-                Vector3::new(0.0, 0.0, 1.0),
+                Vector3::new(0.0, 1.0, 0.0),
             ),
             proj: math::perspective(Deg(45.0), aspect, 0.1, 10.0),
         };
@@ -1368,7 +1388,8 @@ impl VulkanApplication {
 
     fn load_model() -> (Vec<Vertex>, Vec<u32>) {
         log::debug!("Loading model.");
-        let (models, _) = tobj::load_obj(Path::new("assets/models/chalet.obj"), &GPU_LOAD_OPTIONS).unwrap();
+        let (models, _) =
+            tobj::load_obj(Path::new("assets/models/chalet.obj"), &GPU_LOAD_OPTIONS).unwrap();
 
         let mesh = &models[0].mesh;
         let positions = mesh.positions.as_slice();
@@ -1911,6 +1932,12 @@ impl Drop for VulkanApplication {
 }
 
 impl ApplicationHandler for App {
+    fn new_events(&mut self, _: &ActiveEventLoop, _: StartCause) {
+        if let Some(app) = self.vulkan.as_mut() {
+            app.wheel_delta = None;
+        }
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window = event_loop
             .create_window(
@@ -1936,6 +1963,26 @@ impl ApplicationHandler for App {
             }
             WindowEvent::Resized { .. } => {
                 self.vulkan.as_mut().unwrap().dirty_swapchain = true;
+            }
+            WindowEvent::MouseInput { button, state, .. } => {
+                self.vulkan.as_mut().unwrap().is_left_clicked =
+                    state == ElementState::Pressed && button == MouseButton::Left;
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                let app = self.vulkan.as_mut().unwrap();
+
+                let position: (i32, i32) = position.into();
+                app.cursor_delta = Some([
+                    app.cursor_position[0] - position.0,
+                    app.cursor_position[1] - position.1,
+                ]);
+                app.cursor_position = [position.0, position.1];
+            }
+            WindowEvent::MouseWheel {
+                delta: MouseScrollDelta::LineDelta(_, v_lines),
+                ..
+            } => {
+                self.vulkan.as_mut().unwrap().wheel_delta = Some(v_lines);
             }
             _ => (),
         }
