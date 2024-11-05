@@ -15,6 +15,7 @@ use std::error::Error;
 use std::ffi::CStr;
 use std::path::Path;
 use std::time::Instant;
+use tobj::GPU_LOAD_OPTIONS;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
@@ -1367,7 +1368,7 @@ impl VulkanApplication {
 
     fn load_model() -> (Vec<Vertex>, Vec<u32>) {
         log::debug!("Loading model.");
-        let (models, _) = tobj::load_obj(Path::new("assets/models/chalet.obj")).unwrap();
+        let (models, _) = tobj::load_obj(Path::new("assets/models/chalet.obj"), &GPU_LOAD_OPTIONS).unwrap();
 
         let mesh = &models[0].mesh;
         let positions = mesh.positions.as_slice();

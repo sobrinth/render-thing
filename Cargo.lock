@@ -1877,9 +1877,12 @@ dependencies = [
 
 [[package]]
 name = "tobj"
-version = "0.1.12"
+version = "4.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe69d3e3b94bf71dfd868eb38b0830917bb177a7b32b58cab7ca72691aba7729"
+checksum = "c3bd4ba05f29e4c65b6c0c11a58b6465ffa820bac890d76ad407b4e81d8372e8"
+dependencies = [
+ "ahash",
+]
 
 [[package]]
 name = "toml"
