@@ -6,17 +6,12 @@ mod static_data;
 mod swapchain;
 mod texture;
 
-use crate::debug::*;
-use crate::static_data::{INDICES, VERTICES};
-use crate::swapchain::*;
+use crate::{context::*, debug::*, primitives::*, static_data::*, swapchain::*, texture::*};
 
-use crate::context::VkContext;
-use crate::texture::Texture;
 use ash::ext::debug_utils;
 use ash::khr::{surface, swapchain as khr_swapchain};
 use ash::{vk, Device, Entry, Instance};
 use cgmath::{Deg, Matrix4, Point3, Vector3};
-use primitives::{UniformBufferObject, Vertex};
 use std::error::Error;
 use std::ffi::CStr;
 use std::time::Instant;
