@@ -1,3 +1,4 @@
+mod context;
 mod debug;
 mod math;
 mod primitives;
@@ -9,6 +10,7 @@ use crate::debug::*;
 use crate::static_data::{INDICES, VERTICES};
 use crate::swapchain::*;
 
+use crate::context::VkContext;
 use crate::texture::Texture;
 use ash::ext::debug_utils;
 use ash::khr::{surface, swapchain as khr_swapchain};
@@ -30,21 +32,16 @@ const WIDTH: u32 = 800;
 const HEIGHT: u32 = 600;
 const MAX_FRAMES_IN_FLIGHT: u32 = 2;
 
-struct VulkanContext {
-    _entry: Entry,
+struct VulkanApplication {
     start_instant: Instant,
 
     resize_dimensions: Option<[u32; 2]>,
     dirty_swapchain: bool,
 
-    instance: Instance,
-    debug_report_callback: Option<(debug_utils::Instance, vk::DebugUtilsMessengerEXT)>,
-    physical_device: vk::PhysicalDevice,
+    vk_context: VkContext,
+
     queue_family_indices: QueueFamilyIndices,
-    device: Device,
     graphics_queue: vk::Queue,
-    surface: surface::Instance,
-    surface_khr: vk::SurfaceKHR,
     present_queue: vk::Queue,
     swapchain: khr_swapchain::Device,
     swapchain_khr: vk::SwapchainKHR,
@@ -76,7 +73,7 @@ struct VulkanContext {
 #[derive(Default)]
 struct App {
     window: Option<Window>,
-    vulkan: Option<VulkanContext>,
+    vulkan: Option<VulkanApplication>,
 }
 
 fn main() {
@@ -89,7 +86,7 @@ fn main() {
     event_loop.run_app(&mut app).unwrap();
 }
 
-impl VulkanContext {
+impl VulkanApplication {
     fn new(window: &Window) -> Self {
         log::debug!("Creating Vulkan context.");
 
@@ -113,9 +110,6 @@ impl VulkanContext {
         let (physical_device, queue_family_indices) =
             Self::pick_physical_device(&instance, &surface, surface_khr);
 
-        let memory_properties =
-            unsafe { instance.get_physical_device_memory_properties(physical_device) };
-
         let (device, graphics_queue, present_queue) =
             Self::create_logical_device_with_graphics_queue(
                 &instance,
@@ -123,72 +117,65 @@ impl VulkanContext {
                 queue_family_indices,
             );
 
+        let vk_context = VkContext::new(
+            entry,
+            instance,
+            debug_report_callback,
+            surface,
+            surface_khr,
+            physical_device,
+            device,
+        );
+
         let (swapchain, swapchain_khr, swapchain_properties, images) =
-            Self::create_swapchain_and_images(
-                &instance,
-                physical_device,
-                &device,
-                &surface,
-                surface_khr,
-                queue_family_indices,
-                [WIDTH, HEIGHT],
-            );
+            Self::create_swapchain_and_images(&vk_context, queue_family_indices, [WIDTH, HEIGHT]);
         let swapchain_image_views =
-            Self::create_swapchain_image_views(&device, &images, swapchain_properties);
+            Self::create_swapchain_image_views(vk_context.device(), &images, swapchain_properties);
 
-        let render_pass = Self::create_render_pass(&device, swapchain_properties);
+        let render_pass = Self::create_render_pass(vk_context.device(), swapchain_properties);
 
-        let descriptor_set_layout = Self::create_descriptor_set_layout(&device);
+        let descriptor_set_layout = Self::create_descriptor_set_layout(vk_context.device());
 
         let (pipeline, layout) = Self::create_pipeline(
-            &device,
+            vk_context.device(),
             swapchain_properties,
             render_pass,
             descriptor_set_layout,
         );
 
         let framebuffers = Self::create_framebuffers(
-            &device,
+            vk_context.device(),
             &swapchain_image_views,
             render_pass,
             swapchain_properties,
         );
 
         let command_pool = Self::create_command_pool(
-            &device,
+            vk_context.device(),
             queue_family_indices,
             vk::CommandPoolCreateFlags::empty(),
         );
 
         let transient_command_pool = Self::create_command_pool(
-            &device,
+            vk_context.device(),
             queue_family_indices,
             vk::CommandPoolCreateFlags::TRANSIENT,
         );
 
-        let texture =
-            Self::create_texture_image(&device, memory_properties, command_pool, graphics_queue);
+        let texture = Self::create_texture_image(&vk_context, command_pool, graphics_queue);
 
-        let (vertex_buffer, vertex_buffer_memory) = Self::create_vertex_buffer(
-            &device,
-            memory_properties,
-            transient_command_pool,
-            graphics_queue,
-        );
+        let (vertex_buffer, vertex_buffer_memory) =
+            Self::create_vertex_buffer(&vk_context, transient_command_pool, graphics_queue);
 
-        let (index_buffer, index_buffer_memory) = Self::create_index_buffer(
-            &device,
-            memory_properties,
-            transient_command_pool,
-            graphics_queue,
-        );
+        let (index_buffer, index_buffer_memory) =
+            Self::create_index_buffer(&vk_context, transient_command_pool, graphics_queue);
 
         let (uniform_buffers, uniform_buffer_memories) =
-            Self::create_uniform_buffers(&device, memory_properties, images.len());
+            Self::create_uniform_buffers(&vk_context, images.len());
 
-        let descriptor_pool = Self::create_descriptor_pool(&device, images.len() as _);
+        let descriptor_pool = Self::create_descriptor_pool(vk_context.device(), images.len() as _);
         let descriptor_sets = Self::create_descriptor_sets(
-            &device,
+            vk_context.device(),
             descriptor_pool,
             descriptor_set_layout,
             &uniform_buffers,
@@ -196,7 +183,7 @@ impl VulkanContext {
         );
 
         let command_buffers = Self::create_and_register_command_buffers(
-            &device,
+            vk_context.device(),
             command_pool,
             &framebuffers,
             render_pass,
@@ -208,21 +195,15 @@ impl VulkanContext {
             pipeline,
         );
 
-        let in_flight_frames = Self::create_sync_objects(&device);
+        let in_flight_frames = Self::create_sync_objects(vk_context.device());
 
         Self {
-            _entry: entry,
             start_instant: Instant::now(),
             resize_dimensions: None,
             dirty_swapchain: false,
-            instance,
-            debug_report_callback,
-            physical_device,
+            vk_context,
             queue_family_indices,
-            device,
             graphics_queue,
-            surface,
-            surface_khr,
             present_queue,
             swapchain,
             swapchain_khr,
@@ -261,7 +242,12 @@ impl VulkanContext {
         let wait_fences = [in_flight_fence];
 
         // wait for available fence
-        unsafe { self.device.wait_for_fences(&wait_fences, true, u64::MAX) }.unwrap();
+        unsafe {
+            self.vk_context
+                .device()
+                .wait_for_fences(&wait_fences, true, u64::MAX)
+        }
+        .unwrap();
 
         let result = unsafe {
             self.swapchain.acquire_next_image(
@@ -281,7 +267,7 @@ impl VulkanContext {
             Err(error) => panic!("Error while acquiring next image. Cause: {}", error),
         };
 
-        unsafe { self.device.reset_fences(&wait_fences) }.unwrap();
+        unsafe { self.vk_context.device().reset_fences(&wait_fences) }.unwrap();
 
         self.update_uniform_buffers(image_index);
 
@@ -300,8 +286,11 @@ impl VulkanContext {
             let submit_infos = [submit_info];
 
             unsafe {
-                self.device
-                    .queue_submit(self.graphics_queue, &submit_infos, in_flight_fence)
+                self.vk_context.device().queue_submit(
+                    self.graphics_queue,
+                    &submit_infos,
+                    in_flight_fence,
+                )
             }
             .unwrap();
         }
@@ -340,7 +329,7 @@ impl VulkanContext {
     }
 
     pub(crate) fn wait_gpu_idle(&self) {
-        unsafe { self.device.device_wait_idle() }.unwrap();
+        unsafe { self.vk_context.device().device_wait_idle() }.unwrap();
     }
 
     fn create_instance(entry: &Entry, window: &Window) -> Result<Instance, Box<dyn Error>> {
@@ -638,11 +627,7 @@ impl VulkanContext {
 
     /// Create the swapchain with optimal settings possible with `device`
     fn create_swapchain_and_images(
-        instance: &Instance,
-        physical_device: vk::PhysicalDevice,
-        device: &Device,
-        surface: &surface::Instance,
-        surface_khr: vk::SurfaceKHR,
+        vk_context: &VkContext,
         queue_family_indices: QueueFamilyIndices,
         dimensions: [u32; 2],
     ) -> (
@@ -651,7 +636,11 @@ impl VulkanContext {
         SwapchainProperties,
         Vec<vk::Image>,
     ) {
-        let details = SwapchainSupportDetails::new(physical_device, surface, surface_khr);
+        let details = SwapchainSupportDetails::new(
+            vk_context.physical_device(),
+            vk_context.surface(),
+            vk_context.surface_khr(),
+        );
         let swapchain_properties = details.get_ideal_swapchain_properties(dimensions);
 
         let format = swapchain_properties.format;
@@ -682,7 +671,7 @@ impl VulkanContext {
 
         let create_info = {
             let mut default = vk::SwapchainCreateInfoKHR::default()
-                .surface(surface_khr)
+                .surface(vk_context.surface_khr())
                 .min_image_count(image_count)
                 .image_format(format.format)
                 .image_color_space(format.color_space)
@@ -705,7 +694,7 @@ impl VulkanContext {
                 .clipped(true)
         };
 
-        let swapchain = khr_swapchain::Device::new(instance, device);
+        let swapchain = khr_swapchain::Device::new(vk_context.instance(), vk_context.device());
         let swapchain_khr = unsafe { swapchain.create_swapchain(&create_info, None).unwrap() };
         let images = unsafe { swapchain.get_swapchain_images(swapchain_khr).unwrap() };
         (swapchain, swapchain_khr, swapchain_properties, images)
@@ -1079,12 +1068,13 @@ impl VulkanContext {
 
         unsafe {
             let data_ptr = self
-                .device
+                .vk_context
+                .device()
                 .map_memory(buffer_mem, 0, size, vk::MemoryMapFlags::empty())
                 .unwrap();
             let mut align = ash::util::Align::new(data_ptr, align_of::<f32>() as _, size);
             align.copy_from_slice(&ubos);
-            self.device.unmap_memory(buffer_mem);
+            self.vk_context.device().unmap_memory(buffer_mem);
         }
     }
 
@@ -1150,35 +1140,31 @@ impl VulkanContext {
         ]);
 
         let (swapchain, swapchain_khr, properties, images) = Self::create_swapchain_and_images(
-            &self.instance,
-            self.physical_device,
-            &self.device,
-            &self.surface,
-            self.surface_khr,
+            &self.vk_context,
             self.queue_family_indices,
             dimensions,
         );
         let swapchain_image_views =
-            Self::create_swapchain_image_views(&self.device, &images, properties);
+            Self::create_swapchain_image_views(self.vk_context.device(), &images, properties);
 
-        let render_pass = Self::create_render_pass(&self.device, properties);
+        let render_pass = Self::create_render_pass(self.vk_context.device(), properties);
 
         let (pipeline, layout) = Self::create_pipeline(
-            &self.device,
-            properties,
+            self.vk_context.device(),
+            self.swapchain_properties,
             render_pass,
             self.descriptor_set_layout,
         );
 
         let framebuffers = Self::create_framebuffers(
-            &self.device,
+            self.vk_context.device(),
             &swapchain_image_views,
             render_pass,
             properties,
         );
 
         let command_buffers = Self::create_and_register_command_buffers(
-            &self.device,
+            self.vk_context.device(),
             self.command_pool,
             &framebuffers,
             render_pass,
@@ -1204,11 +1190,12 @@ impl VulkanContext {
     }
 
     fn create_texture_image(
-        device: &Device,
-        device_memory_properties: vk::PhysicalDeviceMemoryProperties,
+        vk_context: &VkContext,
         command_pool: vk::CommandPool,
         copy_queue: vk::Queue,
     ) -> Texture {
+        let device = vk_context.device();
+
         let image = image::open("assets/images/statue.jpg").unwrap();
         let image_as_rgb = image.to_rgba8();
         let image_width = image_as_rgb.width();
@@ -1217,8 +1204,7 @@ impl VulkanContext {
         let image_size = (pixels.len() * size_of::<u8>()) as vk::DeviceSize;
 
         let (buffer, memory, mem_size) = Self::create_buffer(
-            device,
-            device_memory_properties,
+            vk_context,
             image_size,
             vk::BufferUsageFlags::TRANSFER_SRC,
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
@@ -1234,8 +1220,7 @@ impl VulkanContext {
         }
 
         let (image, image_memory) = Self::create_image(
-            device,
-            device_memory_properties,
+            vk_context,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
             image_width,
             image_height,
@@ -1315,8 +1300,7 @@ impl VulkanContext {
     }
 
     fn create_image(
-        device: &Device,
-        device_mem_properties: vk::PhysicalDeviceMemoryProperties,
+        vk_context: &VkContext,
         mem_properties: vk::MemoryPropertyFlags,
         width: u32,
         height: u32,
@@ -1324,6 +1308,7 @@ impl VulkanContext {
         tiling: vk::ImageTiling,
         usage: vk::ImageUsageFlags,
     ) -> (vk::Image, vk::DeviceMemory) {
+        let device = vk_context.device();
         let image_info = vk::ImageCreateInfo::default()
             .image_type(vk::ImageType::TYPE_2D)
             .extent(vk::Extent3D {
@@ -1343,8 +1328,11 @@ impl VulkanContext {
 
         let image = unsafe { device.create_image(&image_info, None) }.unwrap();
         let mem_requirements = unsafe { device.get_image_memory_requirements(image) };
-        let mem_type_index =
-            Self::find_memory_type(mem_requirements, device_mem_properties, mem_properties);
+        let mem_type_index = Self::find_memory_type(
+            mem_requirements,
+            vk_context.get_mem_properties(),
+            mem_properties,
+        );
 
         let alloc_info = vk::MemoryAllocateInfo::default()
             .allocation_size(mem_requirements.size)
@@ -1509,14 +1497,12 @@ impl VulkanContext {
     }
 
     fn create_vertex_buffer(
-        device: &Device,
-        mem_properties: vk::PhysicalDeviceMemoryProperties,
+        vk_context: &VkContext,
         command_pool: vk::CommandPool,
         transfer_queue: vk::Queue,
     ) -> (vk::Buffer, vk::DeviceMemory) {
         Self::create_device_local_buffer_with_data::<u32, _>(
-            device,
-            mem_properties,
+            vk_context,
             command_pool,
             transfer_queue,
             vk::BufferUsageFlags::VERTEX_BUFFER,
@@ -1525,14 +1511,12 @@ impl VulkanContext {
     }
 
     fn create_index_buffer(
-        device: &Device,
-        mem_properties: vk::PhysicalDeviceMemoryProperties,
+        vk_context: &VkContext,
         command_pool: vk::CommandPool,
         transfer_queue: vk::Queue,
     ) -> (vk::Buffer, vk::DeviceMemory) {
         Self::create_device_local_buffer_with_data::<u16, _>(
-            device,
-            mem_properties,
+            vk_context,
             command_pool,
             transfer_queue,
             vk::BufferUsageFlags::INDEX_BUFFER,
@@ -1551,17 +1535,16 @@ impl VulkanContext {
     /// A - Memory alignment of data
     /// T - Type of data
     fn create_device_local_buffer_with_data<A, T: Copy>(
-        device: &Device,
-        mem_properties: vk::PhysicalDeviceMemoryProperties,
+        vk_context: &VkContext,
         command_pool: vk::CommandPool,
         transfer_queue: vk::Queue,
         usage: vk::BufferUsageFlags,
         data: &[T],
     ) -> (vk::Buffer, vk::DeviceMemory) {
+        let device = vk_context.device();
         let size = size_of_val(data) as vk::DeviceSize;
         let (staging_buffer, staging_memory, staging_mem_size) = Self::create_buffer(
-            device,
-            mem_properties,
+            vk_context,
             size,
             vk::BufferUsageFlags::TRANSFER_SRC,
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
@@ -1577,8 +1560,7 @@ impl VulkanContext {
         };
 
         let (buffer, memory, _) = Self::create_buffer(
-            device,
-            mem_properties,
+            vk_context,
             size,
             vk::BufferUsageFlags::TRANSFER_DST | usage,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
@@ -1602,8 +1584,7 @@ impl VulkanContext {
     }
 
     fn create_uniform_buffers(
-        device: &Device,
-        device_mem_properties: vk::PhysicalDeviceMemoryProperties,
+        vk_context: &VkContext,
         count: usize,
     ) -> (Vec<vk::Buffer>, Vec<vk::DeviceMemory>) {
         let size = size_of::<UniformBufferObject>() as vk::DeviceSize;
@@ -1612,8 +1593,7 @@ impl VulkanContext {
 
         for _ in 0..count {
             let (buffer, memory, _) = Self::create_buffer(
-                device,
-                device_mem_properties,
+                vk_context,
                 size,
                 vk::BufferUsageFlags::UNIFORM_BUFFER,
                 vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
@@ -1631,12 +1611,12 @@ impl VulkanContext {
     /// The buffer, its memory and the actual size in bytes of the
     /// allocated memory since it may differ from the requested size.
     fn create_buffer(
-        device: &Device,
-        device_mem_properties: vk::PhysicalDeviceMemoryProperties,
+        vk_context: &VkContext,
         size: vk::DeviceSize,
         usage: vk::BufferUsageFlags,
         mem_properties: vk::MemoryPropertyFlags,
     ) -> (vk::Buffer, vk::DeviceMemory, vk::DeviceSize) {
+        let device = vk_context.device();
         let buffer = {
             let buffer_info = vk::BufferCreateInfo::default()
                 .size(size)
@@ -1647,8 +1627,11 @@ impl VulkanContext {
 
         let mem_requirements = unsafe { device.get_buffer_memory_requirements(buffer) };
         let memory = {
-            let mem_type =
-                Self::find_memory_type(mem_requirements, device_mem_properties, mem_properties);
+            let mem_type = Self::find_memory_type(
+                mem_requirements,
+                vk_context.get_mem_properties(),
+                mem_properties,
+            );
 
             let alloc_info = vk::MemoryAllocateInfo::default()
                 .allocation_size(mem_requirements.size)
@@ -1710,54 +1693,45 @@ impl VulkanContext {
     }
 
     fn cleanup_swapchain(&mut self) {
+        let device = self.vk_context.device();
         unsafe {
             self.swapchain_framebuffers
                 .iter()
-                .for_each(|f| self.device.destroy_framebuffer(*f, None));
-            self.device
-                .free_command_buffers(self.command_pool, &self.command_buffers);
-            self.device.destroy_pipeline(self.pipeline, None);
-            self.device
-                .destroy_pipeline_layout(self.pipeline_layout, None);
-            self.device.destroy_render_pass(self.render_pass, None);
+                .for_each(|f| device.destroy_framebuffer(*f, None));
+            device.free_command_buffers(self.command_pool, &self.command_buffers);
+            device.destroy_pipeline(self.pipeline, None);
+            device.destroy_pipeline_layout(self.pipeline_layout, None);
+            device.destroy_render_pass(self.render_pass, None);
             self.swapchain_image_views
                 .iter()
-                .for_each(|v| self.device.destroy_image_view(*v, None));
+                .for_each(|v| device.destroy_image_view(*v, None));
             self.swapchain.destroy_swapchain(self.swapchain_khr, None);
         }
     }
 }
 
-impl Drop for VulkanContext {
+impl Drop for VulkanApplication {
     fn drop(&mut self) {
         log::debug!("Dropping application");
         self.cleanup_swapchain();
-        self.in_flight_frames.destroy(&self.device);
+        let device = self.vk_context.device();
+        self.in_flight_frames.destroy(device);
         unsafe {
-            self.device
-                .destroy_descriptor_pool(self.descriptor_pool, None);
-            self.device
-                .destroy_descriptor_set_layout(self.descriptor_set_layout, None);
+            device.destroy_descriptor_pool(self.descriptor_pool, None);
+            device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
             self.uniform_buffer_memories.iter().for_each(|m| {
-                self.device.free_memory(*m, None);
+                device.free_memory(*m, None);
             });
             self.uniform_buffers.iter().for_each(|m| {
-                self.device.destroy_buffer(*m, None);
+                device.destroy_buffer(*m, None);
             });
-            self.device.destroy_buffer(self.index_buffer, None);
-            self.device.free_memory(self.index_buffer_memory, None);
-            self.device.destroy_buffer(self.vertex_buffer, None);
-            self.device.free_memory(self.vertex_buffer_memory, None);
-            self.texture.destroy(&self.device);
-            self.device
-                .destroy_command_pool(self.transient_command_pool, None);
-            self.device.destroy_command_pool(self.command_pool, None);
-            self.device.destroy_device(None);
-            self.surface.destroy_surface(self.surface_khr, None);
-            if let Some((report, callback)) = self.debug_report_callback.take() {
-                report.destroy_debug_utils_messenger(callback, None);
-            }
-            self.instance.destroy_instance(None);
+            device.destroy_buffer(self.index_buffer, None);
+            device.free_memory(self.index_buffer_memory, None);
+            device.destroy_buffer(self.vertex_buffer, None);
+            device.free_memory(self.vertex_buffer_memory, None);
+            self.texture.destroy(device);
+            device.destroy_command_pool(self.transient_command_pool, None);
+            device.destroy_command_pool(self.command_pool, None);
         }
     }
 }
@@ -1772,7 +1746,7 @@ impl ApplicationHandler for App {
             )
             .unwrap();
 
-        self.vulkan = Some(VulkanContext::new(&window));
+        self.vulkan = Some(VulkanApplication::new(&window));
         self.window = Some(window);
     }
 
