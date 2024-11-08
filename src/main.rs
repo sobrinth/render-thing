@@ -63,8 +63,7 @@ struct VulkanApplication {
     color_texture: Texture,
     msaa_samples: vk::SampleCountFlags,
 
-    vertex_buffer: AllocatedBuffer,
-    index_buffer: AllocatedBuffer,
+    mesh_buffers: MeshBuffers,
     uniform_buffers: Vec<AllocatedBuffer>,
 
     descriptor_pool: vk::DescriptorPool,
@@ -211,6 +210,8 @@ impl VulkanApplication {
             &indices,
         );
 
+        let mesh_buffers = MeshBuffers::new(vertex_buffer, index_buffer);
+
         let uniform_buffers = Self::create_uniform_buffers(&vk_context, images.len());
 
         let descriptor_pool = Self::create_descriptor_pool(vk_context.device(), images.len() as _);
@@ -228,8 +229,7 @@ impl VulkanApplication {
             &framebuffers,
             render_pass,
             swapchain_properties,
-            vertex_buffer.buffer,
-            index_buffer.buffer,
+            mesh_buffers,
             indices.len(),
             layout,
             &descriptor_sets,
@@ -268,8 +268,7 @@ impl VulkanApplication {
             model_index_count: indices.len(),
             depth_texture,
             depth_format,
-            index_buffer,
-            vertex_buffer,
+            mesh_buffers,
             uniform_buffers,
             descriptor_pool,
             descriptor_sets,
@@ -1055,15 +1054,13 @@ impl VulkanApplication {
             .collect()
     }
 
-    // TODO DB: Consider using AllocatedBuffer instead of vk::Buffer
     fn create_and_register_command_buffers(
         device: &Device,
         pool: vk::CommandPool,
         framebuffers: &[vk::Framebuffer],
         render_pass: vk::RenderPass,
         swapchain_properties: SwapchainProperties,
-        vertex_buffer: vk::Buffer,
-        index_buffer: vk::Buffer,
+        mesh_buffers: MeshBuffers,
         index_count: usize,
         pipeline_layout: vk::PipelineLayout,
         descriptor_sets: &[vk::DescriptorSet],
@@ -1129,12 +1126,19 @@ impl VulkanApplication {
             };
 
             // bind vertex buffer
-            let vertex_buffers = [vertex_buffer];
+            let vertex_buffers = [mesh_buffers.vertex.buffer];
             let offsets = [0];
             unsafe { device.cmd_bind_vertex_buffers(buffer, 0, &vertex_buffers, &offsets) };
 
             // bind index buffer
-            unsafe { device.cmd_bind_index_buffer(buffer, index_buffer, 0, vk::IndexType::UINT32) };
+            unsafe {
+                device.cmd_bind_index_buffer(
+                    buffer,
+                    mesh_buffers.index.buffer,
+                    0,
+                    vk::IndexType::UINT32,
+                )
+            };
 
             // bind descriptor set
             unsafe {
@@ -1350,8 +1354,7 @@ impl VulkanApplication {
             &framebuffers,
             render_pass,
             properties,
-            self.vertex_buffer.buffer,
-            self.index_buffer.buffer,
+            self.mesh_buffers,
             self.model_index_count,
             layout,
             &self.descriptor_sets,
@@ -2234,8 +2237,7 @@ impl Drop for VulkanApplication {
             self.uniform_buffers.iter_mut().for_each(|u| {
                 u.destroy(device);
             });
-            self.vertex_buffer.destroy(device);
-            self.index_buffer.destroy(device);
+            self.mesh_buffers.destroy(device);
             self.texture.destroy(device);
             device.destroy_command_pool(self.transient_command_pool, None);
             device.destroy_command_pool(self.command_pool, None);

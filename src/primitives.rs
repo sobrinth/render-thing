@@ -77,3 +77,23 @@ impl AllocatedBuffer {
         }
     }
 }
+
+#[derive(Clone, Copy)]
+pub struct MeshBuffers {
+    pub index: AllocatedBuffer,
+    pub vertex: AllocatedBuffer,
+}
+
+impl MeshBuffers {
+    pub fn new(vertex_buffer: AllocatedBuffer, index_buffer: AllocatedBuffer) -> Self {
+        Self {
+            vertex: vertex_buffer,
+            index: index_buffer,
+        }
+    }
+
+    pub fn destroy(&mut self, device: &ash::Device) {
+        self.vertex.destroy(device);
+        self.index.destroy(device);
+    }
+}
