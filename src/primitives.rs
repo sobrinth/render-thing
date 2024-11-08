@@ -53,3 +53,27 @@ impl CameraUBO {
             .stage_flags(vk::ShaderStageFlags::VERTEX)
     }
 }
+
+#[derive(Clone, Copy)]
+pub struct AllocatedBuffer {
+    pub buffer: vk::Buffer,
+    pub memory: vk::DeviceMemory,
+    pub size: vk::DeviceSize,
+}
+
+impl AllocatedBuffer {
+    pub fn new(buffer: vk::Buffer, memory: vk::DeviceMemory, size: vk::DeviceSize) -> Self {
+        Self {
+            buffer,
+            memory,
+            size,
+        }
+    }
+
+    pub fn destroy(&mut self, device: &ash::Device) {
+        unsafe {
+            device.destroy_buffer(self.buffer, None);
+            device.free_memory(self.memory, None);
+        }
+    }
+}
