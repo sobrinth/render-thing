@@ -43,16 +43,18 @@ struct VulkanApplication {
     queue_family_indices: QueueFamilyIndices,
     graphics_queue: vk::Queue,
     present_queue: vk::Queue,
+    
     swapchain: khr_swapchain::Device,
     swapchain_khr: vk::SwapchainKHR,
     swapchain_properties: SwapchainProperties,
-    images: Vec<vk::Image>,
+    swapchain_images: Vec<vk::Image>,
     swapchain_image_views: Vec<vk::ImageView>,
-    pipeline_layout: vk::PipelineLayout,
+    swapchain_framebuffers: Vec<vk::Framebuffer>,
+
     render_pass: vk::RenderPass,
     descriptor_set_layout: vk::DescriptorSetLayout,
     pipeline: vk::Pipeline,
-    swapchain_framebuffers: Vec<vk::Framebuffer>,
+    pipeline_layout: vk::PipelineLayout,
     command_pool: vk::CommandPool,
     transient_command_pool: vk::CommandPool,
 
@@ -129,10 +131,10 @@ impl VulkanApplication {
             device,
         );
 
-        let (swapchain, swapchain_khr, swapchain_properties, images) =
+        let (swapchain, swapchain_khr, swapchain_properties, swapchain_images) =
             Self::create_swapchain_and_images(&vk_context, queue_family_indices, [WIDTH, HEIGHT]);
         let swapchain_image_views =
-            Self::create_swapchain_image_views(vk_context.device(), &images, swapchain_properties);
+            Self::create_swapchain_image_views(vk_context.device(), &swapchain_images, swapchain_properties);
 
         let msaa_samples = vk_context.get_max_usable_sample_count();
         let depth_format = Self::find_depth_format(&vk_context);
@@ -212,9 +214,9 @@ impl VulkanApplication {
 
         let mesh_buffers = MeshBuffers::new(vertex_buffer, index_buffer);
 
-        let uniform_buffers = Self::create_uniform_buffers(&vk_context, images.len());
+        let uniform_buffers = Self::create_uniform_buffers(&vk_context, swapchain_images.len());
 
-        let descriptor_pool = Self::create_descriptor_pool(vk_context.device(), images.len() as _);
+        let descriptor_pool = Self::create_descriptor_pool(vk_context.device(), swapchain_images.len() as _);
         let descriptor_sets = Self::create_descriptor_sets(
             vk_context.device(),
             descriptor_pool,
@@ -253,7 +255,7 @@ impl VulkanApplication {
             swapchain,
             swapchain_khr,
             swapchain_properties,
-            images,
+            swapchain_images,
             swapchain_image_views,
             pipeline_layout: layout,
             render_pass,
@@ -1364,7 +1366,7 @@ impl VulkanApplication {
         self.swapchain = swapchain;
         self.swapchain_khr = swapchain_khr;
         self.swapchain_properties = properties;
-        self.images = images;
+        self.swapchain_images = images;
         self.swapchain_image_views = swapchain_image_views;
         self.render_pass = render_pass;
         self.pipeline = pipeline;
