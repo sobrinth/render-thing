@@ -39,13 +39,12 @@ impl Vertex {
 
 #[derive(Clone, Copy)]
 #[allow(dead_code)]
-pub(crate) struct UniformBufferObject {
-    pub(crate) model: Matrix4<f32>,
+pub(crate) struct CameraUBO {
     pub(crate) view: Matrix4<f32>,
     pub(crate) proj: Matrix4<f32>,
 }
 
-impl UniformBufferObject {
+impl CameraUBO {
     pub(crate) fn get_descriptor_set_layout_bindings<'a>() -> vk::DescriptorSetLayoutBinding<'a> {
         vk::DescriptorSetLayoutBinding::default()
             .binding(0)

@@ -31,9 +31,9 @@ impl Camera {
 impl Default for Camera {
     fn default() -> Self {
         Camera {
-            theta: 0.0f32.to_radians(),
-            phi: 45.0f32.to_radians(),
-            r: 3.0,
+            theta: 270.0f32.to_radians(),
+            phi: 60.0f32.to_radians(),
+            r: 3.5,
         }
     }
 }
