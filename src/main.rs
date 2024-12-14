@@ -43,7 +43,7 @@ struct VulkanApplication {
     queue_family_indices: QueueFamilyIndices,
     graphics_queue: vk::Queue,
     present_queue: vk::Queue,
-    
+
     swapchain: khr_swapchain::Device,
     swapchain_khr: vk::SwapchainKHR,
     swapchain_properties: SwapchainProperties,
@@ -92,10 +92,12 @@ fn main() {
 
 impl VulkanApplication {
     fn new(window: &Window) -> Self {
-        log::debug!("Creating Vulkan context.");
+        log::debug!("Creating vulkan context");
 
-        let entry = unsafe { Entry::load().expect("Failed to create entry.") };
+        let entry = unsafe { Entry::load().expect("Failed to create ash entrypoint") };
         let instance = Self::create_instance(&entry, window).unwrap();
+
+        let debug_report_callback = setup_debug_messenger(&entry, &instance);
 
         let surface = surface::Instance::new(&entry, &instance);
         let surface_khr = unsafe {
@@ -106,21 +108,14 @@ impl VulkanApplication {
                 window.window_handle().unwrap().as_raw(),
                 None,
             )
-        }
-        .unwrap();
+        }.unwrap();
 
-        let debug_report_callback = setup_debug_messenger(&entry, &instance);
-
-        let (physical_device, queue_family_indices) =
-            Self::pick_physical_device(&instance, &surface, surface_khr);
-
-        let (device, graphics_queue, present_queue) =
-            Self::create_logical_device_with_graphics_queue(
-                &instance,
-                physical_device,
-                queue_family_indices,
-            );
-
+        let (physical_device, device, _, _) = Self::initialize_vulkan_device(
+            &instance,
+            &surface,
+            surface_khr
+        );
+        
         let vk_context = VkContext::new(
             entry,
             instance,
@@ -131,10 +126,18 @@ impl VulkanApplication {
             device,
         );
 
+        todo!()
+    }
+    fn new_12(_window: &Window) -> Self {
+        /*
+        // This is here so I can kinda check off what still needs to be moved over
         let (swapchain, swapchain_khr, swapchain_properties, swapchain_images) =
             Self::create_swapchain_and_images(&vk_context, queue_family_indices, [WIDTH, HEIGHT]);
-        let swapchain_image_views =
-            Self::create_swapchain_image_views(vk_context.device(), &swapchain_images, swapchain_properties);
+        let swapchain_image_views = Self::create_swapchain_image_views(
+            vk_context.device(),
+            &swapchain_images,
+            swapchain_properties,
+        );
 
         let msaa_samples = vk_context.get_max_usable_sample_count();
         let depth_format = Self::find_depth_format(&vk_context);
@@ -216,7 +219,8 @@ impl VulkanApplication {
 
         let uniform_buffers = Self::create_uniform_buffers(&vk_context, swapchain_images.len());
 
-        let descriptor_pool = Self::create_descriptor_pool(vk_context.device(), swapchain_images.len() as _);
+        let descriptor_pool =
+            Self::create_descriptor_pool(vk_context.device(), swapchain_images.len() as _);
         let descriptor_sets = Self::create_descriptor_sets(
             vk_context.device(),
             descriptor_pool,
@@ -277,6 +281,8 @@ impl VulkanApplication {
             command_buffers,
             in_flight_frames,
         }
+         */
+        todo!()
     }
 
     pub(crate) fn draw_frame(&mut self) -> bool {
@@ -413,39 +419,6 @@ impl VulkanApplication {
         unsafe { Ok(entry.create_instance(&instance_create_info, None)?) }
     }
 
-    /// Pick the first suitable physical device.
-    ///
-    /// # Requirements
-    /// - At least one queue family with one queue supporting graphics.
-    /// - At least one queue family with one queue supporting presentation to `surface_khr`.
-    /// - Swapchain extension support. (VK_KHR_swapchain)
-    ///
-    /// # Returns
-    /// A tuple containing the physical device and the queue family indices.
-    fn pick_physical_device(
-        instance: &Instance,
-        surface: &surface::Instance,
-        surface_khr: vk::SurfaceKHR,
-    ) -> (vk::PhysicalDevice, QueueFamilyIndices) {
-        let devices = unsafe { instance.enumerate_physical_devices() }.unwrap();
-        let device = devices
-            .into_iter()
-            .find(|device| Self::is_device_suitable(instance, surface, surface_khr, *device))
-            .expect("No suitable physical device.");
-
-        let props = unsafe { instance.get_physical_device_properties(device) };
-        log::debug!("Selected physical device: {:?}", unsafe {
-            CStr::from_ptr(props.device_name.as_ptr())
-        });
-
-        let (graphics, present) = Self::find_queue_families(instance, surface, surface_khr, device);
-        let queue_family_indices = QueueFamilyIndices {
-            graphics_index: graphics.unwrap(),
-            present_index: present.unwrap(),
-        };
-        (device, queue_family_indices)
-    }
-
     fn is_device_suitable(
         instance: &Instance,
         surface: &surface::Instance,
@@ -488,8 +461,16 @@ impl VulkanApplication {
         true
     }
 
-    fn get_required_device_extensions() -> [&'static CStr; 1] {
-        [khr_swapchain::NAME]
+    fn get_required_device_extensions() -> [&'static CStr; 7] {
+        [
+            c"VK_KHR_swapchain",
+            c"VK_KHR_dynamic_rendering",
+            c"VK_KHR_synchronization2",
+            c"VK_KHR_create_renderpass2",
+            c"VK_KHR_depth_stencil_resolve",
+            c"VK_KHR_buffer_device_address",
+            c"VK_EXT_descriptor_indexing",
+        ]
     }
 
     /// Find a queue family with at least one graphics queue and one with
@@ -530,61 +511,6 @@ impl VulkanApplication {
         }
 
         (graphics, present)
-    }
-
-    /// Create the logical device to interact with `device`, a graphics queue
-    /// and a presentation queue.
-    ///
-    /// # Returns
-    ///
-    /// Return a tuple containing the logical device, the graphics queue and the presentation queue.
-    fn create_logical_device_with_graphics_queue(
-        instance: &Instance,
-        device: vk::PhysicalDevice,
-        queue_family_indices: QueueFamilyIndices,
-    ) -> (Device, vk::Queue, vk::Queue) {
-        let graphics_family_index = queue_family_indices.graphics_index;
-        let present_family_index = queue_family_indices.present_index;
-
-        let queue_priorities = [1.0f32];
-
-        let queue_create_infos = {
-            // Vulkan spec does not allow passing an array containing duplicated family indices.
-            // And since the family for graphics and presentation could be the same we need to dedup it.
-            let mut indices = vec![graphics_family_index, present_family_index];
-            indices.dedup();
-
-            // Now we build an array of `DeviceQueueCreateInfo`.
-            // One for each different family index.
-            indices
-                .iter()
-                .map(|index| {
-                    vk::DeviceQueueCreateInfo::default()
-                        .queue_family_index(*index)
-                        .queue_priorities(&queue_priorities)
-                })
-                .collect::<Vec<_>>()
-        };
-
-        let device_extensions = Self::get_required_device_extensions();
-        let device_extensions_ptrs = device_extensions
-            .iter()
-            .map(|ext| ext.as_ptr())
-            .collect::<Vec<_>>();
-
-        let device_features = vk::PhysicalDeviceFeatures::default().sampler_anisotropy(true);
-
-        let device_create_info = vk::DeviceCreateInfo::default()
-            .queue_create_infos(&queue_create_infos)
-            .enabled_extension_names(&device_extensions_ptrs)
-            .enabled_features(&device_features);
-
-        let device = unsafe { instance.create_device(device, &device_create_info, None) }
-            .expect("Failed to create logical device.");
-        let graphics_queue = unsafe { device.get_device_queue(graphics_family_index, 0) };
-        let present_queue = unsafe { device.get_device_queue(present_family_index, 0) };
-
-        (device, graphics_queue, present_queue)
     }
 
     fn create_descriptor_set_layout(device: &Device) -> vk::DescriptorSetLayout {
@@ -1585,7 +1511,7 @@ impl VulkanApplication {
         old_layout: vk::ImageLayout,
         new_layout: vk::ImageLayout,
     ) {
-        Self::exectute_one_time_command(device, command_pool, transition_queue, |buffer| {
+        Self::execute_one_time_command(device, command_pool, transition_queue, |buffer| {
             let (src_access_mask, dst_access_mask, src_stage, dst_stage) =
                 match (old_layout, new_layout) {
                     (vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL) => (
@@ -1676,7 +1602,7 @@ impl VulkanApplication {
         image: vk::Image,
         extent: vk::Extent2D,
     ) {
-        Self::exectute_one_time_command(device, command_pool, transition_queue, |cmd_buffer| {
+        Self::execute_one_time_command(device, command_pool, transition_queue, |cmd_buffer| {
             let region = vk::BufferImageCopy::default()
                 .buffer_offset(0)
                 .buffer_row_length(0)
@@ -1708,7 +1634,7 @@ impl VulkanApplication {
     }
 
     /// Create a one time use command buffer and pass it to `executor`.
-    fn exectute_one_time_command<F: FnOnce(vk::CommandBuffer)>(
+    fn execute_one_time_command<F: FnOnce(vk::CommandBuffer)>(
         device: &Device,
         command_pool: vk::CommandPool,
         queue: vk::Queue,
@@ -1907,7 +1833,7 @@ impl VulkanApplication {
         dst: vk::Buffer,
         size: vk::DeviceSize,
     ) {
-        Self::exectute_one_time_command(device, command_pool, transfer_queue, |buffer| {
+        Self::execute_one_time_command(device, command_pool, transfer_queue, |buffer| {
             let region = vk::BufferCopy {
                 src_offset: 0,
                 dst_offset: 0,
@@ -2069,7 +1995,7 @@ impl VulkanApplication {
             panic!("Linear blitting is not supported for format {:?}.", format)
         }
 
-        Self::exectute_one_time_command(
+        Self::execute_one_time_command(
             vk_context.device(),
             command_pool,
             transfer_queue,
@@ -2224,6 +2150,74 @@ impl VulkanApplication {
                 .for_each(|v| device.destroy_image_view(*v, None));
             self.swapchain.destroy_swapchain(self.swapchain_khr, None);
         }
+    }
+
+    fn initialize_vulkan_device(
+        instance: &Instance,
+        surface: &surface::Instance,
+        surface_khr: vk::SurfaceKHR,
+    ) -> (vk::PhysicalDevice, Device, vk::Queue, vk::Queue) {
+        
+        // Select physical device
+        let available_devices = unsafe { instance.enumerate_physical_devices() }.unwrap();
+        let selected_device = available_devices
+            .into_iter()
+            .find(|d| Self::is_device_suitable(instance, surface, surface_khr, *d))
+            .expect("No suitable physical device found.");
+        
+        let props = unsafe { instance.get_physical_device_properties(selected_device) };
+        log::debug!("Selected physical device: {:?}", unsafe {
+            CStr::from_ptr(props.device_name.as_ptr())
+        });
+        
+        // Queue families for graphics and present queue
+        let (graphics, present) = Self::find_queue_families(instance, surface, surface_khr, selected_device);
+        let queue_family_indices = QueueFamilyIndices {
+            graphics_index: graphics.unwrap(),
+            present_index: present.unwrap(),
+        };
+        
+        // Create logical vulkan device
+        let queue_priorities = [1.0_f32];
+        let queue_create_infos = {
+            // Vulkan spec does not allow passing an array containing duplicated family indices.
+            // And since the family for graphics and presentation could be the same we need to dedup it.
+            let mut indices = vec![queue_family_indices.graphics_index, queue_family_indices.present_index];
+            indices.dedup();
+
+            // Now we build an array of `DeviceQueueCreateInfo`.
+            // One for each different family index.
+            indices
+                .iter()
+                .map(|index| {
+                    vk::DeviceQueueCreateInfo::default()
+                        .queue_family_index(*index)
+                        .queue_priorities(&queue_priorities)
+                })
+                .collect::<Vec<_>>()
+        };
+        
+        let device_extensions = Self::get_required_device_extensions();
+        let device_extensions_ptrs = device_extensions
+            .iter()
+            .map(|ext| ext.as_ptr())
+            .collect::<Vec<_>>();
+        
+        let device_features = vk::PhysicalDeviceFeatures::default().sampler_anisotropy(true);
+        
+        let device_create_info = vk::DeviceCreateInfo::default()
+            .queue_create_infos(&queue_create_infos)
+            .enabled_extension_names(&device_extensions_ptrs)
+            .enabled_features(&device_features);
+        
+        let device  = unsafe { instance.create_device(selected_device, &device_create_info, None) }
+            .expect("Failed to create logical device.");
+        
+        // graphics and present queue are created, but not retrieved yet
+        let graphics_queue = unsafe { device.get_device_queue(queue_family_indices.graphics_index, 0) };
+        let present_queue = unsafe { device.get_device_queue(queue_family_indices.present_index, 0) };
+
+        (selected_device, device, graphics_queue, present_queue)
     }
 }
 
