@@ -1,6 +1,7 @@
 use ash::ext::debug_utils;
 use ash::{Entry, Instance, vk};
 use std::ffi::{CStr, CString, c_char, c_void};
+use itertools::Itertools;
 
 #[cfg(debug_assertions)]
 pub(crate) const ENABLE_VALIDATION_LAYERS: bool = true;
@@ -32,7 +33,7 @@ pub(crate) fn get_layer_names_and_pointers() -> (Vec<CString>, Vec<*const c_char
     let layer_names = REQUIRED_LAYERS
         .iter()
         .map(|n| CString::new(*n).unwrap())
-        .collect::<Vec<_>>();
+        .collect_vec();
     let layer_names_ptrs = layer_names.iter().map(|n| n.as_ptr()).collect::<Vec<_>>();
     (layer_names, layer_names_ptrs)
 }
