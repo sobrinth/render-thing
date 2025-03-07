@@ -1,5 +1,5 @@
-use cgmath::num_traits::clamp;
 use cgmath::Point3;
+use cgmath::num_traits::clamp;
 
 #[derive(Clone, Copy)]
 pub struct Camera {

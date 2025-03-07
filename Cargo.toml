@@ -2,7 +2,7 @@
 name = "vulkan-rust"
 version = "0.1.0"
 authors = ["Dominik Baumann <hey@sobrinth.com>"]
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 ash = "0.38"

@@ -1,7 +1,7 @@
+use ash::Instance;
 use ash::ext::debug_utils;
 use ash::khr::surface;
-use ash::Instance;
-use ash::{vk, Device, Entry};
+use ash::{Device, Entry, vk};
 
 pub struct VkContext {
     _entry: Entry,
