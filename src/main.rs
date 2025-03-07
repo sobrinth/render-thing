@@ -2378,5 +2378,5 @@ impl Iterator for InFlightFrames {
 /// Return a `&[u8]` for any sized object passed in.
 unsafe fn any_as_u8_slice<T: Sized>(any: &T) -> &[u8] {
     let ptr = (any as *const T) as *const u8;
-    std::slice::from_raw_parts(ptr, size_of::<T>())
+    unsafe { std::slice::from_raw_parts(ptr, size_of::<T>()) }
 }
