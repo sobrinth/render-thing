@@ -1,6 +1,6 @@
 use ash::ext::debug_utils;
-use ash::{vk, Entry, Instance};
-use std::ffi::{c_char, c_void, CStr, CString};
+use ash::{Entry, Instance, vk};
+use std::ffi::{CStr, CString, c_char, c_void};
 
 #[cfg(debug_assertions)]
 pub(crate) const ENABLE_VALIDATION_LAYERS: bool = true;

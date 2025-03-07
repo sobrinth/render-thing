@@ -10,8 +10,8 @@ use crate::{camera::*, context::*, debug::*, primitives::*, swapchain::*, textur
 
 use ash::ext::debug_utils;
 use ash::khr::{surface, swapchain as khr_swapchain};
-use ash::{vk, Device, Entry, Instance};
-use cgmath::{vec3, Deg, Matrix4, Point3, Vector3};
+use ash::{Device, Entry, Instance, vk};
+use cgmath::{Deg, Matrix4, Point3, Vector3, vec3};
 use std::error::Error;
 use std::ffi::CStr;
 use std::path::Path;
@@ -108,14 +108,12 @@ impl VulkanApplication {
                 window.window_handle().unwrap().as_raw(),
                 None,
             )
-        }.unwrap();
+        }
+        .unwrap();
 
-        let (physical_device, device, _, _) = Self::initialize_vulkan_device(
-            &instance,
-            &surface,
-            surface_khr
-        );
-        
+        let (physical_device, device, _, _) =
+            Self::initialize_vulkan_device(&instance, &surface, surface_khr);
+
         let vk_context = VkContext::new(
             entry,
             instance,
@@ -2157,32 +2155,35 @@ impl VulkanApplication {
         surface: &surface::Instance,
         surface_khr: vk::SurfaceKHR,
     ) -> (vk::PhysicalDevice, Device, vk::Queue, vk::Queue) {
-        
         // Select physical device
         let available_devices = unsafe { instance.enumerate_physical_devices() }.unwrap();
         let selected_device = available_devices
             .into_iter()
             .find(|d| Self::is_device_suitable(instance, surface, surface_khr, *d))
             .expect("No suitable physical device found.");
-        
+
         let props = unsafe { instance.get_physical_device_properties(selected_device) };
         log::debug!("Selected physical device: {:?}", unsafe {
             CStr::from_ptr(props.device_name.as_ptr())
         });
-        
+
         // Queue families for graphics and present queue
-        let (graphics, present) = Self::find_queue_families(instance, surface, surface_khr, selected_device);
+        let (graphics, present) =
+            Self::find_queue_families(instance, surface, surface_khr, selected_device);
         let queue_family_indices = QueueFamilyIndices {
             graphics_index: graphics.unwrap(),
             present_index: present.unwrap(),
         };
-        
+
         // Create logical vulkan device
         let queue_priorities = [1.0_f32];
         let queue_create_infos = {
             // Vulkan spec does not allow passing an array containing duplicated family indices.
             // And since the family for graphics and presentation could be the same we need to dedup it.
-            let mut indices = vec![queue_family_indices.graphics_index, queue_family_indices.present_index];
+            let mut indices = vec![
+                queue_family_indices.graphics_index,
+                queue_family_indices.present_index,
+            ];
             indices.dedup();
 
             // Now we build an array of `DeviceQueueCreateInfo`.
@@ -2196,26 +2197,28 @@ impl VulkanApplication {
                 })
                 .collect::<Vec<_>>()
         };
-        
+
         let device_extensions = Self::get_required_device_extensions();
         let device_extensions_ptrs = device_extensions
             .iter()
             .map(|ext| ext.as_ptr())
             .collect::<Vec<_>>();
-        
+
         let device_features = vk::PhysicalDeviceFeatures::default().sampler_anisotropy(true);
-        
+
         let device_create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&queue_create_infos)
             .enabled_extension_names(&device_extensions_ptrs)
             .enabled_features(&device_features);
-        
-        let device  = unsafe { instance.create_device(selected_device, &device_create_info, None) }
+
+        let device = unsafe { instance.create_device(selected_device, &device_create_info, None) }
             .expect("Failed to create logical device.");
-        
+
         // graphics and present queue are created, but not retrieved yet
-        let graphics_queue = unsafe { device.get_device_queue(queue_family_indices.graphics_index, 0) };
-        let present_queue = unsafe { device.get_device_queue(queue_family_indices.present_index, 0) };
+        let graphics_queue =
+            unsafe { device.get_device_queue(queue_family_indices.graphics_index, 0) };
+        let present_queue =
+            unsafe { device.get_device_queue(queue_family_indices.present_index, 0) };
 
         (selected_device, device, graphics_queue, present_queue)
     }
