@@ -18,7 +18,7 @@ unsafe extern "system" fn vulkan_debug_callback(
 ) -> vk::Bool32 {
     use vk::DebugUtilsMessageSeverityFlagsEXT as Flag;
 
-    let message = CStr::from_ptr((*p_callback_data).p_message);
+    let message = unsafe { CStr::from_ptr((*p_callback_data).p_message) };
     match flag {
         Flag::VERBOSE => log::debug!("{:?} - {:?}", typ, message),
         Flag::INFO => log::info!("{:?} - {:?}", typ, message),
