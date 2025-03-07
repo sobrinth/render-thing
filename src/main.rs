@@ -15,6 +15,7 @@ use cgmath::{Deg, Matrix4, Point3, Vector3, vec3};
 use std::error::Error;
 use std::ffi::CStr;
 use std::path::Path;
+use itertools::Itertools;
 use tobj::GPU_LOAD_OPTIONS;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
@@ -553,7 +554,7 @@ impl VulkanApplication {
     ) -> Vec<vk::DescriptorSet> {
         let layouts = (0..uniform_buffers.len())
             .map(|_| layout)
-            .collect::<Vec<_>>();
+            .collect_vec();
         let alloc_info = vk::DescriptorSetAllocateInfo::default()
             .descriptor_pool(pool)
             .set_layouts(&layouts);
@@ -689,7 +690,7 @@ impl VulkanApplication {
                     vk::ImageAspectFlags::COLOR,
                 )
             })
-            .collect::<Vec<_>>()
+            .collect_vec()
     }
 
     fn create_image_view(
@@ -2195,14 +2196,14 @@ impl VulkanApplication {
                         .queue_family_index(*index)
                         .queue_priorities(&queue_priorities)
                 })
-                .collect::<Vec<_>>()
+                .collect_vec()
         };
 
         let device_extensions = Self::get_required_device_extensions();
         let device_extensions_ptrs = device_extensions
             .iter()
             .map(|ext| ext.as_ptr())
-            .collect::<Vec<_>>();
+            .collect_vec();
 
         let device_features = vk::PhysicalDeviceFeatures::default().sampler_anisotropy(true);
 
