@@ -38,6 +38,9 @@ impl VulkanRenderer {
             .queue_family_index(graphics_queue.family_index)
             .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
 
+        let semaphore_info = vk::SemaphoreCreateInfo::default();
+        let fence_info = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
+
         let mut frames = Vec::with_capacity(FRAME_OVERLAP as usize);
 
         for _ in 0..FRAME_OVERLAP {
@@ -56,9 +59,26 @@ impl VulkanRenderer {
                     .unwrap()[0]
             };
 
+            let swapchain_semaphore = unsafe {
+                context
+                    .device
+                    .create_semaphore(&semaphore_info, None)
+                    .unwrap()
+            };
+            let render_semaphore = unsafe {
+                context
+                    .device
+                    .create_semaphore(&semaphore_info, None)
+                    .unwrap()
+            };
+            let render_fence = unsafe { context.device.create_fence(&fence_info, None).unwrap() };
+
             let frame = FrameData {
                 command_pool: pool,
                 main_command_buffer: buffer,
+                swapchain_semaphore,
+                render_semaphore,
+                render_fence,
             };
             frames.push(frame);
         }
@@ -74,10 +94,8 @@ impl Drop for VulkanRenderer {
     fn drop(&mut self) {
         log::debug!("Start: Dropping renderer");
         self.wait_gpu_idle();
-        self.frames.iter().for_each(|frame| unsafe {
-            self.context
-                .device
-                .destroy_command_pool(frame.command_pool, None)
+        self.frames.iter_mut().for_each(|frame| unsafe {
+            frame.destroy(&self.context.device);
         });
 
         unsafe { self.swapchain.destroy(&self.context.device) }
@@ -88,6 +106,20 @@ impl Drop for VulkanRenderer {
 struct FrameData {
     command_pool: vk::CommandPool,
     main_command_buffer: vk::CommandBuffer,
+    swapchain_semaphore: vk::Semaphore,
+    render_semaphore: vk::Semaphore,
+    render_fence: vk::Fence,
+}
+
+impl FrameData {
+    pub fn destroy(&mut self, device: &ash::Device) {
+        unsafe {
+            device.destroy_command_pool(self.command_pool, None);
+            device.destroy_semaphore(self.swapchain_semaphore, None);
+            device.destroy_semaphore(self.render_semaphore, None);
+            device.destroy_fence(self.render_fence, None);
+        }
+    }
 }
 
 pub struct QueueData {
