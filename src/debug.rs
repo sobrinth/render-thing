@@ -1,12 +1,7 @@
 use ash::ext::debug_utils;
 use ash::{Entry, Instance, vk};
-use std::ffi::{CStr, CString, c_char, c_void};
 use itertools::Itertools;
-
-#[cfg(debug_assertions)]
-pub(crate) const ENABLE_VALIDATION_LAYERS: bool = true;
-#[cfg(not(debug_assertions))]
-pub(crate) const ENABLE_VALIDATION_LAYERS: bool = false;
+use std::ffi::{CStr, CString, c_char, c_void};
 
 pub(crate) const REQUIRED_LAYERS: [&str; 1] = ["VK_LAYER_KHRONOS_validation"];
 
@@ -64,7 +59,7 @@ pub(crate) fn setup_debug_messenger(
     entry: &Entry,
     instance: &Instance,
 ) -> Option<(debug_utils::Instance, vk::DebugUtilsMessengerEXT)> {
-    if !ENABLE_VALIDATION_LAYERS {
+    if !cfg!(debug_assertions) {
         return None;
     }
 
