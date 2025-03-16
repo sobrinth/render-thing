@@ -10,24 +10,24 @@ pub(crate) struct SwapchainSupportDetails {
 impl SwapchainSupportDetails {
     pub(crate) fn new(
         device: vk::PhysicalDevice,
-        surface: &surface::Instance,
-        surface_khr: vk::SurfaceKHR,
+        surface_fn: &surface::Instance,
+        surface: vk::SurfaceKHR,
     ) -> Self {
         let capabilities = unsafe {
-            surface
-                .get_physical_device_surface_capabilities(device, surface_khr)
+            surface_fn
+                .get_physical_device_surface_capabilities(device, surface)
                 .unwrap()
         };
 
         let formats = unsafe {
-            surface
-                .get_physical_device_surface_formats(device, surface_khr)
+            surface_fn
+                .get_physical_device_surface_formats(device, surface)
                 .unwrap()
         };
 
         let present_modes = unsafe {
-            surface
-                .get_physical_device_surface_present_modes(device, surface_khr)
+            surface_fn
+                .get_physical_device_surface_present_modes(device, surface)
                 .unwrap()
         };
 

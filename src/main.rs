@@ -3,10 +3,10 @@ mod debug;
 mod engine;
 mod math;
 mod primitives;
-mod swapchain;
+mod swapchain_old;
 mod texture;
 
-use crate::{camera::*, engine::context::*, primitives::*, swapchain::*, texture::*};
+use crate::{camera::*, engine::context::*, primitives::*, swapchain_old::*, texture::*};
 
 use ash::khr::swapchain as khr_swapchain;
 use ash::{Device, vk};
@@ -450,8 +450,8 @@ impl VulkanApplication {
     ) {
         let details = SwapchainSupportDetails::new(
             vk_context.physical_device(),
+            vk_context.surface_fn(),
             vk_context.surface(),
-            vk_context.surface_khr(),
         );
         let swapchain_properties = details.get_ideal_swapchain_properties(dimensions);
 
@@ -483,7 +483,7 @@ impl VulkanApplication {
 
         let create_info = {
             let mut default = vk::SwapchainCreateInfoKHR::default()
-                .surface(vk_context.surface_khr())
+                .surface(vk_context.surface())
                 .min_image_count(image_count)
                 .image_format(format.format)
                 .image_color_space(format.color_space)
@@ -2090,6 +2090,7 @@ impl ApplicationHandler for App {
     }
 }
 
+// TODO: db: Move
 #[derive(Clone, Copy)]
 struct QueueFamilyIndices {
     graphics_index: u32,
