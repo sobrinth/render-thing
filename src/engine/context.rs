@@ -2,7 +2,8 @@ use crate::QueueFamilyIndices;
 use crate::debug::{
     check_validation_layer_support, get_layer_names_and_pointers, setup_debug_messenger,
 };
-use crate::engine::swapchain;
+use crate::engine::renderer::QueueData;
+use crate::engine::{renderer, swapchain};
 use ash::Instance;
 use ash::ext::debug_utils;
 use ash::khr::surface;
@@ -96,7 +97,7 @@ impl VkContext {
         }
     }
 
-    pub fn initialize(window: &Window) -> Self {
+    pub fn initialize(window: &Window) -> (Self, QueueData) {
         log::debug!("Creating vulkan context");
         // TODO: db: Probably move reference to `winit` out of VkContext
         let vulkan_fn = unsafe { Entry::load().expect("Failed to create ash entrypoint") };
@@ -116,18 +117,21 @@ impl VkContext {
         }
         .unwrap();
 
-        let (physical_device, device, _, _) =
+        let (physical_device, device, graphics_queue, _) =
             Self::initialize_vulkan_device(&instance, &surface_fn, surface);
 
-        Self {
-            _vulkan_fn: vulkan_fn,
-            instance,
-            debug_report_callback,
-            surface_fn,
-            surface,
-            physical_device,
-            device,
-        }
+        (
+            Self {
+                _vulkan_fn: vulkan_fn,
+                instance,
+                debug_report_callback,
+                surface_fn,
+                surface,
+                physical_device,
+                device,
+            },
+            graphics_queue,
+        )
     }
 
     fn create_instance(vulkan_fn: &Entry, window: &Window) -> Result<Instance, Box<dyn Error>> {
@@ -167,7 +171,7 @@ impl VkContext {
         instance: &Instance,
         surface_fn: &surface::Instance,
         surface: vk::SurfaceKHR,
-    ) -> (vk::PhysicalDevice, Device, vk::Queue, vk::Queue) {
+    ) -> (vk::PhysicalDevice, Device, QueueData, vk::Queue) {
         // Select physical device
         let available_devices = unsafe { instance.enumerate_physical_devices() }.unwrap();
         let selected_device = available_devices
@@ -233,7 +237,12 @@ impl VkContext {
         let present_queue =
             unsafe { device.get_device_queue(queue_family_indices.present_index, 0) };
 
-        (selected_device, device, graphics_queue, present_queue)
+        let graphics_queue_data = renderer::QueueData {
+            queue: graphics_queue,
+            family_index: queue_family_indices.graphics_index,
+        };
+
+        (selected_device, device, graphics_queue_data, present_queue)
     }
     fn is_device_suitable(
         instance: &Instance,
