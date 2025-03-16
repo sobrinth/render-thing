@@ -5,8 +5,8 @@ use itertools::Itertools;
 
 pub struct Swapchain {
     properties: SwapchainProperties,
-    swapchain_fn: ash::khr::swapchain::Device,
-    swapchain: vk::SwapchainKHR,
+    pub swapchain_fn: ash::khr::swapchain::Device,
+    pub swapchain: vk::SwapchainKHR,
 
     images: Vec<vk::Image>,
     image_views: Vec<vk::ImageView>,
