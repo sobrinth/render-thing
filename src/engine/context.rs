@@ -240,7 +240,8 @@ impl VkContext {
         surface: vk::SurfaceKHR,
         physical_device: vk::PhysicalDevice,
     ) -> bool {
-        let (graphics, present) = Self::find_queue_families(instance, surface_fn, surface, physical_device);
+        let (graphics, present) =
+            Self::find_queue_families(instance, surface_fn, surface, physical_device);
 
         let extension_support = Self::check_device_extension_support(instance, physical_device);
 
@@ -256,7 +257,10 @@ impl VkContext {
             && features.sampler_anisotropy == vk::TRUE
     }
 
-    fn check_device_extension_support(instance: &Instance, physical_device: vk::PhysicalDevice) -> bool {
+    fn check_device_extension_support(
+        instance: &Instance,
+        physical_device: vk::PhysicalDevice,
+    ) -> bool {
         let required_extension = Self::get_required_device_extensions();
 
         let extension_properties =
@@ -303,7 +307,8 @@ impl VkContext {
         let mut graphics = None;
         let mut present = None;
 
-        let props = unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
+        let props =
+            unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
 
         for (index, family) in props.iter().filter(|f| f.queue_count > 0).enumerate() {
             let index = index as u32;
@@ -312,9 +317,10 @@ impl VkContext {
                 graphics = Some(index);
             }
 
-            let present_support =
-                unsafe { surface_fn.get_physical_device_surface_support(physical_device, index, surface) }
-                    .unwrap();
+            let present_support = unsafe {
+                surface_fn.get_physical_device_surface_support(physical_device, index, surface)
+            }
+            .unwrap();
 
             if present_support && present.is_none() {
                 present = Some(index);

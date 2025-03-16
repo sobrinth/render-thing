@@ -6,7 +6,7 @@ mod primitives;
 mod swapchain_old;
 mod texture;
 
-use crate::{camera::*, engine::context::*, primitives::*, swapchain_old::*, texture::*};
+use crate::{camera::*, engine::renderer::*, primitives::*, swapchain_old::*, texture::*};
 
 use ash::khr::swapchain as khr_swapchain;
 use ash::{Device, vk};
@@ -29,7 +29,7 @@ struct VulkanApplication {
     resize_dimensions: Option<[u32; 2]>,
     dirty_swapchain: bool,
 
-    vk_context: VkContext,
+    renderer: VulkanRenderer,
 
     camera: Camera,
     is_left_clicked: bool,
@@ -88,10 +88,10 @@ fn main() {
 }
 
 impl VulkanApplication {
-    fn new(window: &Window) -> Self {
+    fn start(window: &Window) -> Self {
         log::debug!("Creating vulkan context");
 
-        let _context = VkContext::initialize(window);
+        let _renderer = VulkanRenderer::initialize(window);
 
         todo!("All is well if we fail only here")
     }
@@ -101,25 +101,25 @@ impl VulkanApplication {
         let (swapchain, swapchain_khr, swapchain_properties, swapchain_images) =
             Self::create_swapchain_and_images(&vk_context, queue_family_indices, [WIDTH, HEIGHT]);
         let swapchain_image_views = Self::create_swapchain_image_views(
-            vk_context.device(),
+            vk_context.context.device(),
             &swapchain_images,
             swapchain_properties,
         );
 
-        let msaa_samples = vk_context.get_max_usable_sample_count();
+        let msaa_samples = vk_context.context.get_max_usable_sample_count();
         let depth_format = Self::find_depth_format(&vk_context);
 
         let render_pass = Self::create_render_pass(
-            vk_context.device(),
+            vk_context.context.device(),
             swapchain_properties,
             msaa_samples,
             depth_format,
         );
 
-        let descriptor_set_layout = Self::create_descriptor_set_layout(vk_context.device());
+        let descriptor_set_layout = Self::create_descriptor_set_layout(vk_context.context.device());
 
         let (pipeline, layout) = Self::create_pipeline(
-            vk_context.device(),
+            vk_context.context.device(),
             swapchain_properties,
             msaa_samples,
             render_pass,
@@ -127,13 +127,13 @@ impl VulkanApplication {
         );
 
         let command_pool = Self::create_command_pool(
-            vk_context.device(),
+            vk_context.context.device(),
             queue_family_indices,
             vk::CommandPoolCreateFlags::empty(),
         );
 
         let transient_command_pool = Self::create_command_pool(
-            vk_context.device(),
+            vk_context.context.device(),
             queue_family_indices,
             vk::CommandPoolCreateFlags::TRANSIENT,
         );
@@ -156,7 +156,7 @@ impl VulkanApplication {
         );
 
         let framebuffers = Self::create_framebuffers(
-            vk_context.device(),
+            vk_context.context.device(),
             &swapchain_image_views,
             color_texture,
             depth_texture,
@@ -187,9 +187,9 @@ impl VulkanApplication {
         let uniform_buffers = Self::create_uniform_buffers(&vk_context, swapchain_images.len());
 
         let descriptor_pool =
-            Self::create_descriptor_pool(vk_context.device(), swapchain_images.len() as _);
+            Self::create_descriptor_pool(vk_context.context.device(), swapchain_images.len() as _);
         let descriptor_sets = Self::create_descriptor_sets(
-            vk_context.device(),
+            vk_context.context.device(),
             descriptor_pool,
             descriptor_set_layout,
             &uniform_buffers,
@@ -197,7 +197,7 @@ impl VulkanApplication {
         );
 
         let command_buffers = Self::create_and_register_command_buffers(
-            vk_context.device(),
+            vk_context.context.device(),
             command_pool,
             &framebuffers,
             render_pass,
@@ -209,7 +209,7 @@ impl VulkanApplication {
             pipeline,
         );
 
-        let in_flight_frames = Self::create_sync_objects(vk_context.device());
+        let in_flight_frames = Self::create_sync_objects(vk_context.context.device());
 
         Self {
             resize_dimensions: None,
@@ -264,7 +264,8 @@ impl VulkanApplication {
 
         // wait for available fence
         unsafe {
-            self.vk_context
+            self.renderer
+                .context
                 .device()
                 .wait_for_fences(&wait_fences, true, u64::MAX)
         }
@@ -288,7 +289,7 @@ impl VulkanApplication {
             Err(error) => panic!("Error while acquiring next image. Cause: {}", error),
         };
 
-        unsafe { self.vk_context.device().reset_fences(&wait_fences) }.unwrap();
+        unsafe { self.renderer.context.device().reset_fences(&wait_fences) }.unwrap();
 
         self.update_uniform_buffers(image_index);
 
@@ -307,7 +308,7 @@ impl VulkanApplication {
             let submit_infos = [submit_info];
 
             unsafe {
-                self.vk_context.device().queue_submit(
+                self.renderer.context.device().queue_submit(
                     self.graphics_queue,
                     &submit_infos,
                     in_flight_fence,
@@ -350,7 +351,7 @@ impl VulkanApplication {
     }
 
     pub(crate) fn wait_gpu_idle(&self) {
-        unsafe { self.vk_context.device().device_wait_idle() }.unwrap();
+        unsafe { self.renderer.context.device().device_wait_idle() }.unwrap();
     }
 
     fn create_descriptor_set_layout(device: &Device) -> vk::DescriptorSetLayout {
@@ -439,7 +440,7 @@ impl VulkanApplication {
 
     /// Create the swapchain with optimal settings possible with `device`
     fn create_swapchain_and_images(
-        vk_context: &VkContext,
+        vk_context: &VulkanRenderer,
         queue_family_indices: QueueFamilyIndices,
         dimensions: [u32; 2],
     ) -> (
@@ -449,9 +450,9 @@ impl VulkanApplication {
         Vec<vk::Image>,
     ) {
         let details = SwapchainSupportDetails::new(
-            vk_context.physical_device(),
-            vk_context.surface_fn(),
-            vk_context.surface(),
+            vk_context.context.physical_device(),
+            vk_context.context.surface_fn(),
+            vk_context.context.surface(),
         );
         let swapchain_properties = details.get_ideal_swapchain_properties(dimensions);
 
@@ -483,7 +484,7 @@ impl VulkanApplication {
 
         let create_info = {
             let mut default = vk::SwapchainCreateInfoKHR::default()
-                .surface(vk_context.surface())
+                .surface(vk_context.context.surface())
                 .min_image_count(image_count)
                 .image_format(format.format)
                 .image_color_space(format.color_space)
@@ -506,7 +507,8 @@ impl VulkanApplication {
                 .clipped(true)
         };
 
-        let swapchain = khr_swapchain::Device::new(vk_context.instance(), vk_context.device());
+        let swapchain =
+            khr_swapchain::Device::new(vk_context.context.instance(), vk_context.context.device());
         let swapchain_khr = unsafe { swapchain.create_swapchain(&create_info, None).unwrap() };
         let images = unsafe { swapchain.get_swapchain_images(swapchain_khr).unwrap() };
         (swapchain, swapchain_khr, swapchain_properties, images)
@@ -994,13 +996,14 @@ impl VulkanApplication {
 
         unsafe {
             let data_ptr = self
-                .vk_context
+                .renderer
+                .context
                 .device()
                 .map_memory(buffer_mem, 0, size, vk::MemoryMapFlags::empty())
                 .unwrap();
             let mut align = ash::util::Align::new(data_ptr, align_of::<f32>() as _, size);
             align.copy_from_slice(&ubos);
-            self.vk_context.device().unmap_memory(buffer_mem);
+            self.renderer.context.device().unmap_memory(buffer_mem);
         }
     }
 
@@ -1066,22 +1069,22 @@ impl VulkanApplication {
         ]);
 
         let (swapchain, swapchain_khr, properties, images) = Self::create_swapchain_and_images(
-            &self.vk_context,
+            &self.renderer,
             self.queue_family_indices,
             dimensions,
         );
         let swapchain_image_views =
-            Self::create_swapchain_image_views(self.vk_context.device(), &images, properties);
+            Self::create_swapchain_image_views(self.renderer.context.device(), &images, properties);
 
         let render_pass = Self::create_render_pass(
-            self.vk_context.device(),
+            self.renderer.context.device(),
             properties,
             self.msaa_samples,
             self.depth_format,
         );
 
         let (pipeline, layout) = Self::create_pipeline(
-            self.vk_context.device(),
+            self.renderer.context.device(),
             self.swapchain_properties,
             self.msaa_samples,
             render_pass,
@@ -1089,7 +1092,7 @@ impl VulkanApplication {
         );
 
         let color_texture = Self::create_color_texture(
-            &self.vk_context,
+            &self.renderer,
             self.command_pool,
             self.graphics_queue,
             properties,
@@ -1097,7 +1100,7 @@ impl VulkanApplication {
         );
 
         let depth_texture = Self::create_depth_texture(
-            &self.vk_context,
+            &self.renderer,
             self.command_pool,
             self.graphics_queue,
             self.depth_format,
@@ -1106,7 +1109,7 @@ impl VulkanApplication {
         );
 
         let framebuffers = Self::create_framebuffers(
-            self.vk_context.device(),
+            self.renderer.context.device(),
             &swapchain_image_views,
             color_texture,
             depth_texture,
@@ -1115,7 +1118,7 @@ impl VulkanApplication {
         );
 
         let command_buffers = Self::create_and_register_command_buffers(
-            self.vk_context.device(),
+            self.renderer.context.device(),
             self.command_pool,
             &framebuffers,
             render_pass,
@@ -1143,11 +1146,11 @@ impl VulkanApplication {
     }
 
     fn create_texture_image(
-        vk_context: &VkContext,
+        vk_context: &VulkanRenderer,
         command_pool: vk::CommandPool,
         transition_queue: vk::Queue,
     ) -> Texture {
-        let device = vk_context.device();
+        let device = vk_context.context.device();
 
         let image = image::open("assets/images/chalet.jpg").unwrap().flipv();
         let image_as_rgb = image.to_rgba8();
@@ -1291,7 +1294,7 @@ impl VulkanApplication {
     }
 
     fn create_image(
-        vk_context: &VkContext,
+        vk_context: &VulkanRenderer,
         mem_properties: vk::MemoryPropertyFlags,
         extent: vk::Extent2D,
         mip_levels: u32,
@@ -1300,7 +1303,7 @@ impl VulkanApplication {
         tiling: vk::ImageTiling,
         usage: vk::ImageUsageFlags,
     ) -> (vk::Image, vk::DeviceMemory) {
-        let device = vk_context.device();
+        let device = vk_context.context.device();
         let image_info = vk::ImageCreateInfo::default()
             .image_type(vk::ImageType::TYPE_2D)
             .extent(vk::Extent3D {
@@ -1322,7 +1325,7 @@ impl VulkanApplication {
         let mem_requirements = unsafe { device.get_image_memory_requirements(image) };
         let mem_type_index = Self::find_memory_type(
             mem_requirements,
-            vk_context.get_mem_properties(),
+            vk_context.context.get_mem_properties(),
             mem_properties,
         );
 
@@ -1517,7 +1520,7 @@ impl VulkanApplication {
     }
 
     fn create_vertex_buffer(
-        vk_context: &VkContext,
+        vk_context: &VulkanRenderer,
         command_pool: vk::CommandPool,
         transfer_queue: vk::Queue,
         vertices: &[Vertex],
@@ -1532,7 +1535,7 @@ impl VulkanApplication {
     }
 
     fn create_index_buffer(
-        vk_context: &VkContext,
+        vk_context: &VulkanRenderer,
         command_pool: vk::CommandPool,
         transfer_queue: vk::Queue,
         indices: &[u32],
@@ -1557,13 +1560,13 @@ impl VulkanApplication {
     /// A - Memory alignment of data
     /// T - Type of data
     fn create_device_local_buffer_with_data<A, T: Copy>(
-        vk_context: &VkContext,
+        vk_context: &VulkanRenderer,
         command_pool: vk::CommandPool,
         transfer_queue: vk::Queue,
         usage: vk::BufferUsageFlags,
         data: &[T],
     ) -> AllocatedBuffer {
-        let device = vk_context.device();
+        let device = vk_context.context.device();
         let size = size_of_val(data) as vk::DeviceSize;
         let mut staging_buffer = Self::create_buffer(
             vk_context,
@@ -1602,7 +1605,7 @@ impl VulkanApplication {
         device_buffer
     }
 
-    fn create_uniform_buffers(vk_context: &VkContext, count: usize) -> Vec<AllocatedBuffer> {
+    fn create_uniform_buffers(vk_context: &VulkanRenderer, count: usize) -> Vec<AllocatedBuffer> {
         let size = size_of::<CameraUBO>() as vk::DeviceSize;
         let mut buffers = Vec::new();
 
@@ -1625,12 +1628,12 @@ impl VulkanApplication {
     /// The buffer, its memory and the actual size in bytes of the
     /// allocated memory since it may differ from the requested size.
     fn create_buffer(
-        vk_context: &VkContext,
+        vk_context: &VulkanRenderer,
         size: vk::DeviceSize,
         usage: vk::BufferUsageFlags,
         mem_properties: vk::MemoryPropertyFlags,
     ) -> AllocatedBuffer {
-        let device = vk_context.device();
+        let device = vk_context.context.device();
         let buffer = {
             let buffer_info = vk::BufferCreateInfo::default()
                 .size(size)
@@ -1643,7 +1646,7 @@ impl VulkanApplication {
         let memory = {
             let mem_type = Self::find_memory_type(
                 mem_requirements,
-                vk_context.get_mem_properties(),
+                vk_context.context.get_mem_properties(),
                 mem_properties,
             );
 
@@ -1706,13 +1709,14 @@ impl VulkanApplication {
         panic!("Failed to find suitable memory type.")
     }
 
-    fn find_depth_format(vk_context: &VkContext) -> vk::Format {
+    fn find_depth_format(vk_context: &VulkanRenderer) -> vk::Format {
         let candidates = vec![
             vk::Format::D32_SFLOAT,
             vk::Format::D32_SFLOAT_S8_UINT,
             vk::Format::D24_UNORM_S8_UINT,
         ];
         vk_context
+            .context
             .find_supported_format(
                 &candidates,
                 vk::ImageTiling::OPTIMAL,
@@ -1726,7 +1730,7 @@ impl VulkanApplication {
     /// This function also transitions the image to be ready to be used
     /// as a depth/stencil attachment.
     fn create_depth_texture(
-        vk_context: &VkContext,
+        vk_context: &VulkanRenderer,
         command_pool: vk::CommandPool,
         transition_queue: vk::Queue,
         format: vk::Format,
@@ -1745,7 +1749,7 @@ impl VulkanApplication {
         );
 
         Self::transition_image_layout(
-            vk_context.device(),
+            vk_context.context.device(),
             command_pool,
             transition_queue,
             image,
@@ -1756,7 +1760,7 @@ impl VulkanApplication {
         );
 
         let view = Self::create_image_view(
-            vk_context.device(),
+            vk_context.context.device(),
             image,
             format,
             1,
@@ -1767,7 +1771,7 @@ impl VulkanApplication {
     }
 
     fn create_color_texture(
-        vk_context: &VkContext,
+        vk_context: &VulkanRenderer,
         command_pool: vk::CommandPool,
         transition_queue: vk::Queue,
         swapchain_properties: SwapchainProperties,
@@ -1786,7 +1790,7 @@ impl VulkanApplication {
         );
 
         Self::transition_image_layout(
-            vk_context.device(),
+            vk_context.context.device(),
             command_pool,
             transition_queue,
             image,
@@ -1797,7 +1801,7 @@ impl VulkanApplication {
         );
 
         let view = Self::create_image_view(
-            vk_context.device(),
+            vk_context.context.device(),
             image,
             format,
             1,
@@ -1812,7 +1816,7 @@ impl VulkanApplication {
     }
 
     fn create_mipmaps(
-        vk_context: &VkContext,
+        vk_context: &VulkanRenderer,
         command_pool: vk::CommandPool,
         transfer_queue: vk::Queue,
         image: vk::Image,
@@ -1822,8 +1826,9 @@ impl VulkanApplication {
     ) {
         let format_properties = unsafe {
             vk_context
+                .context
                 .instance()
-                .get_physical_device_format_properties(vk_context.physical_device(), format)
+                .get_physical_device_format_properties(vk_context.context.physical_device(), format)
         };
 
         if !format_properties
@@ -1834,7 +1839,7 @@ impl VulkanApplication {
         }
 
         Self::execute_one_time_command(
-            vk_context.device(),
+            vk_context.context.device(),
             command_pool,
             transfer_queue,
             |buffer| {
@@ -1872,7 +1877,7 @@ impl VulkanApplication {
                     let barriers = [barrier];
 
                     unsafe {
-                        vk_context.device().cmd_pipeline_barrier(
+                        vk_context.context.device().cmd_pipeline_barrier(
                             buffer,
                             vk::PipelineStageFlags::TRANSFER,
                             vk::PipelineStageFlags::TRANSFER,
@@ -1916,7 +1921,7 @@ impl VulkanApplication {
                     let blits = [blit];
 
                     unsafe {
-                        vk_context.device().cmd_blit_image(
+                        vk_context.context.device().cmd_blit_image(
                             buffer,
                             image,
                             vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
@@ -1934,7 +1939,7 @@ impl VulkanApplication {
                     let barriers = [barrier];
 
                     unsafe {
-                        vk_context.device().cmd_pipeline_barrier(
+                        vk_context.context.device().cmd_pipeline_barrier(
                             buffer,
                             vk::PipelineStageFlags::TRANSFER,
                             vk::PipelineStageFlags::FRAGMENT_SHADER,
@@ -1957,7 +1962,7 @@ impl VulkanApplication {
                 let barriers = [barrier];
 
                 unsafe {
-                    vk_context.device().cmd_pipeline_barrier(
+                    vk_context.context.device().cmd_pipeline_barrier(
                         buffer,
                         vk::PipelineStageFlags::TRANSFER,
                         vk::PipelineStageFlags::FRAGMENT_SHADER,
@@ -1972,7 +1977,7 @@ impl VulkanApplication {
     }
 
     fn cleanup_swapchain(&mut self) {
-        let device = self.vk_context.device();
+        let device = self.renderer.context.device();
         unsafe {
             self.depth_texture.destroy(device);
             self.color_texture.destroy(device);
@@ -1995,7 +2000,7 @@ impl Drop for VulkanApplication {
     fn drop(&mut self) {
         log::debug!("Dropping application");
         self.cleanup_swapchain();
-        let device = self.vk_context.device();
+        let device = self.renderer.context.device();
         self.in_flight_frames.destroy(device);
         unsafe {
             device.destroy_descriptor_pool(self.descriptor_pool, None);
@@ -2027,7 +2032,7 @@ impl ApplicationHandler for App {
             )
             .unwrap();
 
-        self.vulkan = Some(VulkanApplication::new(&window));
+        self.vulkan = Some(VulkanApplication::start(&window));
         self.window = Some(window);
     }
 
