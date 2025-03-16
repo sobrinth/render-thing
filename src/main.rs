@@ -1,3 +1,4 @@
+#![allow(clippy::all)]
 mod camera;
 mod debug;
 mod engine;
@@ -16,7 +17,7 @@ use std::path::Path;
 use tobj::GPU_LOAD_OPTIONS;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::{ElementState, MouseButton, MouseScrollDelta, StartCause, WindowEvent};
+use winit::event::{MouseScrollDelta, StartCause, WindowEvent};
 use winit::event_loop::ControlFlow::Poll;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowId};
@@ -25,7 +26,7 @@ const WIDTH: u32 = 800;
 const HEIGHT: u32 = 600;
 const MAX_FRAMES_IN_FLIGHT: u32 = 2;
 
-struct VulkanApplication {
+struct VulkanApplicationOld {
     resize_dimensions: Option<[u32; 2]>,
     dirty_swapchain: bool,
 
@@ -71,6 +72,10 @@ struct VulkanApplication {
     in_flight_frames: InFlightFrames,
 }
 
+struct VulkanApplication {
+    renderer: VulkanRenderer,
+}
+
 #[derive(Default)]
 struct App {
     window: Option<Window>,
@@ -88,6 +93,13 @@ fn main() {
 }
 
 impl VulkanApplication {
+    fn start(window: &Window) -> Self {
+        let renderer = VulkanRenderer::initialize(window);
+        Self { renderer }
+    }
+}
+
+impl VulkanApplicationOld {
     fn start(window: &Window) -> Self {
         log::debug!("Creating vulkan context");
 
@@ -1996,7 +2008,7 @@ impl VulkanApplication {
     }
 }
 
-impl Drop for VulkanApplication {
+impl Drop for VulkanApplicationOld {
     fn drop(&mut self) {
         log::debug!("Dropping application");
         self.cleanup_swapchain();
@@ -2018,8 +2030,8 @@ impl Drop for VulkanApplication {
 
 impl ApplicationHandler for App {
     fn new_events(&mut self, _: &ActiveEventLoop, _: StartCause) {
-        if let Some(app) = self.vulkan.as_mut() {
-            app.wheel_delta = None;
+        if let Some(_app) = self.vulkan.as_mut() {
+            // app.wheel_delta = None;
         }
     }
 
@@ -2047,27 +2059,27 @@ impl ApplicationHandler for App {
                 event_loop.exit();
             }
             WindowEvent::Resized { .. } => {
-                self.vulkan.as_mut().unwrap().dirty_swapchain = true;
+                // self.vulkan.as_mut().unwrap().dirty_swapchain = true;
             }
-            WindowEvent::MouseInput { button, state, .. } => {
-                self.vulkan.as_mut().unwrap().is_left_clicked =
-                    state == ElementState::Pressed && button == MouseButton::Left;
+            WindowEvent::MouseInput { .. } => {
+                // self.vulkan.as_mut().unwrap().is_left_clicked =
+                //     state == ElementState::Pressed && button == MouseButton::Left;
             }
             WindowEvent::CursorMoved { position, .. } => {
-                let app = self.vulkan.as_mut().unwrap();
+                let _app = self.vulkan.as_mut().unwrap();
 
-                let position: (i32, i32) = position.into();
-                app.cursor_delta = Some([
-                    app.cursor_position[0] - position.0,
-                    app.cursor_position[1] - position.1,
-                ]);
-                app.cursor_position = [position.0, position.1];
+                let _position: (i32, i32) = position.into();
+                // app.cursor_delta = Some([
+                //     app.cursor_position[0] - position.0,
+                //     app.cursor_position[1] - position.1,
+                // ]);
+                // app.cursor_position = [position.0, position.1];
             }
             WindowEvent::MouseWheel {
-                delta: MouseScrollDelta::LineDelta(_, v_lines),
+                delta: MouseScrollDelta::LineDelta(_, _v_lines),
                 ..
             } => {
-                self.vulkan.as_mut().unwrap().wheel_delta = Some(v_lines);
+                // self.vulkan.as_mut().unwrap().wheel_delta = Some(v_lines);
             }
             _ => (),
         }
@@ -2076,22 +2088,22 @@ impl ApplicationHandler for App {
     /// This is not the ideal place to drive rendering from.
     /// Should really be done with the RedrawRequested Event, but here we are for now.
     fn about_to_wait(&mut self, _: &ActiveEventLoop) {
-        let app = self.vulkan.as_mut().unwrap();
-        let window = self.window.as_ref().unwrap();
+        let _app = self.vulkan.as_mut().unwrap();
+        let _window = self.window.as_ref().unwrap();
 
-        if app.dirty_swapchain {
-            let size = window.inner_size();
-            if size.width > 0 && size.height > 0 {
-                app.recreate_swapchain();
-            } else {
-                return;
-            }
-        }
-        app.dirty_swapchain = app.draw_frame();
+        // if app.dirty_swapchain {
+        //     let size = window.inner_size();
+        //     if size.width > 0 && size.height > 0 {
+        //         // app.recreate_swapchain();
+        //     } else {
+        //         return;
+        //     }
+        // }
+        // app.dirty_swapchain = app.draw_frame();
     }
 
     fn exiting(&mut self, _: &ActiveEventLoop) {
-        self.vulkan.as_ref().unwrap().wait_gpu_idle();
+        self.vulkan.as_ref().unwrap().renderer.wait_gpu_idle();
     }
 }
 

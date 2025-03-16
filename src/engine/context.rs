@@ -2,7 +2,7 @@ use crate::QueueFamilyIndices;
 use crate::debug::{
     check_validation_layer_support, get_layer_names_and_pointers, setup_debug_messenger,
 };
-use crate::swapchain_old::SwapchainSupportDetails;
+use crate::engine::swapchain;
 use ash::Instance;
 use ash::ext::debug_utils;
 use ash::khr::surface;
@@ -97,6 +97,7 @@ impl VkContext {
     }
 
     pub fn initialize(window: &Window) -> Self {
+        log::debug!("Creating vulkan context");
         // TODO: db: Probably move reference to `winit` out of VkContext
         let vulkan_fn = unsafe { Entry::load().expect("Failed to create ash entrypoint") };
         let instance = Self::create_instance(&vulkan_fn, window).unwrap();
@@ -246,7 +247,8 @@ impl VkContext {
         let extension_support = Self::check_device_extension_support(instance, physical_device);
 
         let is_swapchain_usable = {
-            let details = SwapchainSupportDetails::new(physical_device, surface_fn, surface);
+            let details =
+                swapchain::SwapchainSupportDetails::new(physical_device, surface_fn, surface);
             !details.formats.is_empty() && !details.present_modes.is_empty()
         };
         let features = unsafe { instance.get_physical_device_features(physical_device) };
@@ -337,7 +339,7 @@ impl VkContext {
 
 impl Drop for VkContext {
     fn drop(&mut self) {
-        log::debug!("Dropping vkContext");
+        log::debug!("Start: Dropping context");
         unsafe {
             self.device.destroy_device(None);
             self.surface_fn.destroy_surface(self.surface, None);
@@ -346,5 +348,6 @@ impl Drop for VkContext {
             }
             self.instance.destroy_instance(None);
         }
+        log::debug!("End: Dropping context");
     }
 }
