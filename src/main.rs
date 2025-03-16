@@ -1,12 +1,12 @@
 mod camera;
-mod context;
 mod debug;
+mod engine;
 mod math;
 mod primitives;
 mod swapchain;
 mod texture;
 
-use crate::{camera::*, context::*, primitives::*, swapchain::*, texture::*};
+use crate::{camera::*, engine::context::*, primitives::*, swapchain::*, texture::*};
 
 use ash::khr::swapchain as khr_swapchain;
 use ash::{Device, vk};
