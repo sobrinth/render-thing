@@ -2,7 +2,7 @@ use crate::QueueFamilyIndices;
 use crate::debug::{
     check_validation_layer_support, get_layer_names_and_pointers, setup_debug_messenger,
 };
-use crate::swapchain::SwapchainSupportDetails;
+use crate::swapchain_old::SwapchainSupportDetails;
 use ash::Instance;
 use ash::ext::debug_utils;
 use ash::khr::surface;
@@ -14,11 +14,11 @@ use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::Window;
 
 pub struct VkContext {
-    _entry: Entry,
+    _vulkan_fn: Entry,
     pub instance: Instance,
     debug_report_callback: Option<(debug_utils::Instance, vk::DebugUtilsMessengerEXT)>,
-    pub surface: surface::Instance,
-    pub surface_khr: vk::SurfaceKHR,
+    pub surface_fn: surface::Instance,
+    pub surface: vk::SurfaceKHR,
     pub physical_device: vk::PhysicalDevice,
     pub device: Device,
 }
@@ -28,12 +28,12 @@ impl VkContext {
         &self.instance
     }
 
-    pub fn surface(&self) -> &surface::Instance {
-        &self.surface
+    pub fn surface_fn(&self) -> &surface::Instance {
+        &self.surface_fn
     }
 
-    pub fn surface_khr(&self) -> vk::SurfaceKHR {
-        self.surface_khr
+    pub fn surface(&self) -> vk::SurfaceKHR {
+        self.surface
     }
 
     pub fn physical_device(&self) -> vk::PhysicalDevice {
@@ -97,15 +97,16 @@ impl VkContext {
     }
 
     pub fn initialize(window: &Window) -> Self {
-        let entry = unsafe { Entry::load().expect("Failed to create ash entrypoint") };
-        let instance = Self::create_instance(&entry, window).unwrap();
+        // TODO: db: Probably move reference to `winit` out of VkContext
+        let vulkan_fn = unsafe { Entry::load().expect("Failed to create ash entrypoint") };
+        let instance = Self::create_instance(&vulkan_fn, window).unwrap();
 
-        let debug_report_callback = setup_debug_messenger(&entry, &instance);
+        let debug_report_callback = setup_debug_messenger(&vulkan_fn, &instance);
 
-        let surface = surface::Instance::new(&entry, &instance);
-        let surface_khr = unsafe {
+        let surface_fn = surface::Instance::new(&vulkan_fn, &instance);
+        let surface = unsafe {
             ash_window::create_surface(
-                &entry,
+                &vulkan_fn,
                 &instance,
                 window.display_handle().unwrap().as_raw(),
                 window.window_handle().unwrap().as_raw(),
@@ -115,20 +116,20 @@ impl VkContext {
         .unwrap();
 
         let (physical_device, device, _, _) =
-            Self::initialize_vulkan_device(&instance, &surface, surface_khr);
+            Self::initialize_vulkan_device(&instance, &surface_fn, surface);
 
         Self {
-            _entry: entry,
+            _vulkan_fn: vulkan_fn,
             instance,
             debug_report_callback,
+            surface_fn,
             surface,
-            surface_khr,
             physical_device,
             device,
         }
     }
 
-    fn create_instance(entry: &Entry, window: &Window) -> Result<Instance, Box<dyn Error>> {
+    fn create_instance(vulkan_fn: &Entry, window: &Window) -> Result<Instance, Box<dyn Error>> {
         let app_name = c"Vulkan Application";
         let engine_name = c"No Engine";
         let app_info = vk::ApplicationInfo::default()
@@ -154,23 +155,23 @@ impl VkContext {
             .enabled_extension_names(&extension_names);
 
         if cfg!(debug_assertions) {
-            check_validation_layer_support(entry);
+            check_validation_layer_support(vulkan_fn);
             instance_create_info = instance_create_info.enabled_layer_names(&layer_names_ptrs);
         }
 
-        unsafe { Ok(entry.create_instance(&instance_create_info, None)?) }
+        unsafe { Ok(vulkan_fn.create_instance(&instance_create_info, None)?) }
     }
 
     fn initialize_vulkan_device(
         instance: &Instance,
-        surface: &surface::Instance,
-        surface_khr: vk::SurfaceKHR,
+        surface_fn: &surface::Instance,
+        surface: vk::SurfaceKHR,
     ) -> (vk::PhysicalDevice, Device, vk::Queue, vk::Queue) {
         // Select physical device
         let available_devices = unsafe { instance.enumerate_physical_devices() }.unwrap();
         let selected_device = available_devices
             .into_iter()
-            .find(|d| Self::is_device_suitable(instance, surface, surface_khr, *d))
+            .find(|d| Self::is_device_suitable(instance, surface_fn, surface, *d))
             .expect("No suitable physical device found.");
 
         let props = unsafe { instance.get_physical_device_properties(selected_device) };
@@ -180,7 +181,7 @@ impl VkContext {
 
         // Queue families for graphics and present queue
         let (graphics, present) =
-            Self::find_queue_families(instance, surface, surface_khr, selected_device);
+            Self::find_queue_families(instance, surface_fn, surface, selected_device);
         let queue_family_indices = QueueFamilyIndices {
             graphics_index: graphics.unwrap(),
             present_index: present.unwrap(),
@@ -235,19 +236,19 @@ impl VkContext {
     }
     fn is_device_suitable(
         instance: &Instance,
-        surface: &surface::Instance,
-        surface_khr: vk::SurfaceKHR,
-        device: vk::PhysicalDevice,
+        surface_fn: &surface::Instance,
+        surface: vk::SurfaceKHR,
+        physical_device: vk::PhysicalDevice,
     ) -> bool {
-        let (graphics, present) = Self::find_queue_families(instance, surface, surface_khr, device);
+        let (graphics, present) = Self::find_queue_families(instance, surface_fn, surface, physical_device);
 
-        let extension_support = Self::check_device_extension_support(instance, device);
+        let extension_support = Self::check_device_extension_support(instance, physical_device);
 
         let is_swapchain_usable = {
-            let details = SwapchainSupportDetails::new(device, surface, surface_khr);
+            let details = SwapchainSupportDetails::new(physical_device, surface_fn, surface);
             !details.formats.is_empty() && !details.present_modes.is_empty()
         };
-        let features = unsafe { instance.get_physical_device_features(device) };
+        let features = unsafe { instance.get_physical_device_features(physical_device) };
         graphics.is_some()
             && present.is_some()
             && extension_support
@@ -255,11 +256,11 @@ impl VkContext {
             && features.sampler_anisotropy == vk::TRUE
     }
 
-    fn check_device_extension_support(instance: &Instance, device: vk::PhysicalDevice) -> bool {
+    fn check_device_extension_support(instance: &Instance, physical_device: vk::PhysicalDevice) -> bool {
         let required_extension = Self::get_required_device_extensions();
 
         let extension_properties =
-            unsafe { instance.enumerate_device_extension_properties(device) }.unwrap();
+            unsafe { instance.enumerate_device_extension_properties(physical_device) }.unwrap();
 
         for extension in required_extension.iter() {
             let found_ext = extension_properties.iter().any(|ext| {
@@ -295,14 +296,14 @@ impl VkContext {
     /// Return a tuple (Option<graphics_family_index>, Option<present_family_index>).
     fn find_queue_families(
         instance: &Instance,
-        surface: &surface::Instance,
-        surface_khr: vk::SurfaceKHR,
-        device: vk::PhysicalDevice,
+        surface_fn: &surface::Instance,
+        surface: vk::SurfaceKHR,
+        physical_device: vk::PhysicalDevice,
     ) -> (Option<u32>, Option<u32>) {
         let mut graphics = None;
         let mut present = None;
 
-        let props = unsafe { instance.get_physical_device_queue_family_properties(device) };
+        let props = unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
 
         for (index, family) in props.iter().filter(|f| f.queue_count > 0).enumerate() {
             let index = index as u32;
@@ -312,7 +313,7 @@ impl VkContext {
             }
 
             let present_support =
-                unsafe { surface.get_physical_device_surface_support(device, index, surface_khr) }
+                unsafe { surface_fn.get_physical_device_surface_support(physical_device, index, surface) }
                     .unwrap();
 
             if present_support && present.is_none() {
@@ -330,9 +331,10 @@ impl VkContext {
 
 impl Drop for VkContext {
     fn drop(&mut self) {
+        log::debug!("Dropping vkContext");
         unsafe {
             self.device.destroy_device(None);
-            self.surface.destroy_surface(self.surface_khr, None);
+            self.surface_fn.destroy_surface(self.surface, None);
             if let Some((report, callback)) = self.debug_report_callback.take() {
                 report.destroy_debug_utils_messenger(callback, None);
             }

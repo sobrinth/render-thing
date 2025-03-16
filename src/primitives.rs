@@ -2,6 +2,7 @@ use ash::vk;
 use cgmath::Matrix4;
 use std::mem::offset_of;
 
+// TODO: db: This should really be repr c
 #[derive(Clone, Copy)]
 #[allow(dead_code)]
 pub(crate) struct Vertex {
