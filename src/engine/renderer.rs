@@ -74,14 +74,15 @@ impl VulkanRenderer {
                 .reset_command_buffer(cmd, CommandBufferResetFlags::default())
                 .unwrap()
         }
-        
+
         let cmd_begin_info = vk::CommandBufferBeginInfo::default()
             .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-        
+
         unsafe {
             self.context
                 .device
-                .begin_command_buffer(cmd, &cmd_begin_info).unwrap()
+                .begin_command_buffer(cmd, &cmd_begin_info)
+                .unwrap()
         }
     }
 
