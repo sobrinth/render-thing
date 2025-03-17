@@ -153,6 +153,12 @@ impl VkContext {
             extension_names.push(debug_utils::NAME.as_ptr());
         }
 
+        Self::get_required_instance_extensions()
+            .iter()
+            .for_each(|ext| {
+                extension_names.push(ext.as_ptr());
+            });
+
         let (_layer_names, layer_names_ptrs) = get_layer_names_and_pointers();
 
         let mut instance_create_info = vk::InstanceCreateInfo::default()
@@ -291,7 +297,7 @@ impl VkContext {
         true
     }
 
-    fn get_required_device_extensions() -> [&'static CStr; 7] {
+    fn get_required_device_extensions() -> [&'static CStr; 11] {
         [
             c"VK_KHR_swapchain",
             c"VK_KHR_dynamic_rendering",
@@ -300,6 +306,17 @@ impl VkContext {
             c"VK_KHR_depth_stencil_resolve",
             c"VK_KHR_buffer_device_address",
             c"VK_EXT_descriptor_indexing",
+            c"VK_KHR_multiview",
+            c"VK_KHR_maintenance2",
+            c"VK_KHR_maintenance3",
+            c"VK_KHR_device_group",
+        ]
+    }
+
+    fn get_required_instance_extensions() -> [&'static CStr; 2] {
+        [
+            c"VK_KHR_get_physical_device_properties2",
+            c"VK_KHR_device_group_creation",
         ]
     }
 

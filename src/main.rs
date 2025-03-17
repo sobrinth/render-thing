@@ -78,8 +78,9 @@ struct VulkanApplication {
 
 #[derive(Default)]
 struct App {
-    window: Option<Window>,
     vulkan: Option<VulkanApplication>,
+    // window needs to be dropped last as Vulkan has a window reference
+    window: Option<Window>,
 }
 
 fn main() {
