@@ -1,5 +1,4 @@
-use crate::QueueFamilyIndices;
-use crate::debug::{
+use crate::engine::debug::{
     check_validation_layer_support, get_layer_names_and_pointers, setup_debug_messenger,
 };
 use crate::engine::renderer::QueueData;
@@ -25,78 +24,6 @@ pub struct VkContext {
 }
 
 impl VkContext {
-    pub fn instance(&self) -> &Instance {
-        &self.instance
-    }
-
-    pub fn surface_fn(&self) -> &surface::Instance {
-        &self.surface_fn
-    }
-
-    pub fn surface(&self) -> vk::SurfaceKHR {
-        self.surface
-    }
-
-    pub fn physical_device(&self) -> vk::PhysicalDevice {
-        self.physical_device
-    }
-
-    pub fn device(&self) -> &Device {
-        &self.device
-    }
-
-    pub fn get_mem_properties(&self) -> vk::PhysicalDeviceMemoryProperties {
-        unsafe {
-            self.instance
-                .get_physical_device_memory_properties(self.physical_device)
-        }
-    }
-
-    /// Find the first compatible format from `candidates`.
-    pub fn find_supported_format(
-        &self,
-        candidates: &[vk::Format],
-        tiling: vk::ImageTiling,
-        features: vk::FormatFeatureFlags,
-    ) -> Option<vk::Format> {
-        candidates.iter().cloned().find(|candidate| {
-            let props = unsafe {
-                self.instance
-                    .get_physical_device_format_properties(self.physical_device, *candidate)
-            };
-            (tiling == vk::ImageTiling::LINEAR && props.linear_tiling_features.contains(features))
-                || (tiling == vk::ImageTiling::OPTIMAL
-                    && props.optimal_tiling_features.contains(features))
-        })
-    }
-
-    pub fn get_max_usable_sample_count(&self) -> vk::SampleCountFlags {
-        let props = unsafe {
-            self.instance
-                .get_physical_device_properties(self.physical_device)
-        };
-
-        let color_sample_counts = props.limits.framebuffer_color_sample_counts;
-        let depth_sample_counts = props.limits.framebuffer_depth_sample_counts;
-        let sample_counts = color_sample_counts.min(depth_sample_counts);
-
-        if sample_counts.contains(vk::SampleCountFlags::TYPE_64) {
-            vk::SampleCountFlags::TYPE_64
-        } else if sample_counts.contains(vk::SampleCountFlags::TYPE_32) {
-            vk::SampleCountFlags::TYPE_32
-        } else if sample_counts.contains(vk::SampleCountFlags::TYPE_16) {
-            vk::SampleCountFlags::TYPE_16
-        } else if sample_counts.contains(vk::SampleCountFlags::TYPE_8) {
-            vk::SampleCountFlags::TYPE_8
-        } else if sample_counts.contains(vk::SampleCountFlags::TYPE_4) {
-            vk::SampleCountFlags::TYPE_4
-        } else if sample_counts.contains(vk::SampleCountFlags::TYPE_2) {
-            vk::SampleCountFlags::TYPE_2
-        } else {
-            vk::SampleCountFlags::TYPE_1
-        }
-    }
-
     pub fn initialize(window: &Window) -> (Self, QueueData) {
         log::debug!("Creating vulkan context");
         // TODO: db: Probably move reference to `winit` out of VkContext
@@ -221,9 +148,8 @@ impl VkContext {
             .map(|ext| ext.as_ptr())
             .collect_vec();
 
-        let device_features = vk::PhysicalDeviceFeatures::default()
-            .sampler_anisotropy(true);
-        
+        let device_features = vk::PhysicalDeviceFeatures::default().sampler_anisotropy(true);
+
         let mut device_features12 = vk::PhysicalDeviceVulkan12Features::default()
             .buffer_device_address(true)
             .descriptor_indexing(true);
@@ -303,9 +229,7 @@ impl VkContext {
     }
 
     fn get_required_device_extensions() -> [&'static CStr; 1] {
-        [
-            c"VK_KHR_swapchain",
-        ]
+        [c"VK_KHR_swapchain"]
     }
 
     /// Find a queue family with at least one graphics queue and one with
@@ -364,4 +288,10 @@ impl Drop for VkContext {
         }
         log::debug!("End: Dropping context");
     }
+}
+
+#[derive(Clone, Copy)]
+struct QueueFamilyIndices {
+    graphics_index: u32,
+    present_index: u32,
 }

@@ -4,7 +4,7 @@ use ash::{Device, vk};
 use itertools::Itertools;
 
 pub struct Swapchain {
-    properties: SwapchainProperties,
+    _properties: SwapchainProperties,
     pub swapchain_fn: ash::khr::swapchain::Device,
     pub swapchain: vk::SwapchainKHR,
 
@@ -86,7 +86,7 @@ impl Swapchain {
             .collect_vec();
 
         Self {
-            properties: swapchain_properties,
+            _properties: swapchain_properties,
             swapchain_fn,
             swapchain,
             images: swapchain_images,
