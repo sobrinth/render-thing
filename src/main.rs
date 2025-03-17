@@ -98,6 +98,10 @@ impl VulkanApplication {
         let renderer = VulkanRenderer::initialize(window);
         Self { renderer }
     }
+
+    fn draw(&mut self) {
+        self.renderer.draw();
+    }
 }
 
 impl VulkanApplicationOld {
@@ -2089,8 +2093,11 @@ impl ApplicationHandler for App {
     /// This is not the ideal place to drive rendering from.
     /// Should really be done with the RedrawRequested Event, but here we are for now.
     fn about_to_wait(&mut self, _: &ActiveEventLoop) {
-        let _app = self.vulkan.as_mut().unwrap();
+        let app = self.vulkan.as_mut().unwrap();
         let _window = self.window.as_ref().unwrap();
+
+        // TODO: db: This will run as fast as possible! Not good.
+        app.draw();
 
         // if app.dirty_swapchain {
         //     let size = window.inner_size();
