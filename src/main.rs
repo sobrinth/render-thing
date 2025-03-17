@@ -1,7 +1,6 @@
 mod engine;
 
-use crate::engine::renderer::*;
-
+use crate::engine::Engine;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{MouseScrollDelta, StartCause, WindowEvent};
@@ -18,35 +17,20 @@ fn main() {
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(Poll);
 
-    let mut app = App::default();
+    let mut app = Application::default();
     event_loop.run_app(&mut app).unwrap();
 }
 
 #[derive(Default)]
-struct App {
-    vulkan: Option<VulkanApplication>,
+struct Application {
+    engine: Option<Engine>,
     // window needs to be dropped last as Vulkan has a window reference
     window: Option<Window>,
 }
 
-struct VulkanApplication {
-    renderer: VulkanRenderer,
-}
-
-impl VulkanApplication {
-    fn start(window: &Window) -> Self {
-        let renderer = VulkanRenderer::initialize(window);
-        Self { renderer }
-    }
-
-    fn draw(&mut self) {
-        self.renderer.draw();
-    }
-}
-
-impl ApplicationHandler for App {
+impl ApplicationHandler for Application {
     fn new_events(&mut self, _: &ActiveEventLoop, _: StartCause) {
-        if let Some(_app) = self.vulkan.as_mut() {
+        if let Some(_app) = self.engine.as_mut() {
             // app.wheel_delta = None;
         }
     }
@@ -60,7 +44,7 @@ impl ApplicationHandler for App {
             )
             .unwrap();
 
-        self.vulkan = Some(VulkanApplication::start(&window));
+        self.engine = Some(Engine::initialize(&window));
         self.window = Some(window);
     }
 
@@ -82,7 +66,7 @@ impl ApplicationHandler for App {
                 //     state == ElementState::Pressed && button == MouseButton::Left;
             }
             WindowEvent::CursorMoved { position, .. } => {
-                let _app = self.vulkan.as_mut().unwrap();
+                let _app = self.engine.as_mut().unwrap();
 
                 let _position: (i32, i32) = position.into();
                 // app.cursor_delta = Some([
@@ -104,7 +88,7 @@ impl ApplicationHandler for App {
     /// This is not the ideal place to drive rendering from.
     /// Should really be done with the RedrawRequested Event, but here we are for now.
     fn about_to_wait(&mut self, _: &ActiveEventLoop) {
-        let app = self.vulkan.as_mut().unwrap();
+        let app = self.engine.as_mut().unwrap();
         let _window = self.window.as_ref().unwrap();
 
         // TODO: db: This will run as fast as possible! Not good.
@@ -122,6 +106,6 @@ impl ApplicationHandler for App {
     }
 
     fn exiting(&mut self, _: &ActiveEventLoop) {
-        self.vulkan.as_ref().unwrap().renderer.wait_gpu_idle();
+        self.engine.as_mut().unwrap().stop();
     }
 }
