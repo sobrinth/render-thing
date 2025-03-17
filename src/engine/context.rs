@@ -153,12 +153,6 @@ impl VkContext {
             extension_names.push(debug_utils::NAME.as_ptr());
         }
 
-        Self::get_required_instance_extensions()
-            .iter()
-            .for_each(|ext| {
-                extension_names.push(ext.as_ptr());
-            });
-
         let (_layer_names, layer_names_ptrs) = get_layer_names_and_pointers();
 
         let mut instance_create_info = vk::InstanceCreateInfo::default()
@@ -227,7 +221,12 @@ impl VkContext {
             .map(|ext| ext.as_ptr())
             .collect_vec();
 
-        let device_features = vk::PhysicalDeviceFeatures::default().sampler_anisotropy(true);
+        let device_features = vk::PhysicalDeviceFeatures::default()
+            .sampler_anisotropy(true);
+        
+        let mut device_features12 = vk::PhysicalDeviceVulkan12Features::default()
+            .buffer_device_address(true)
+            .descriptor_indexing(true);
 
         let mut device_features13 = vk::PhysicalDeviceVulkan13Features::default()
             .dynamic_rendering(true)
@@ -237,6 +236,7 @@ impl VkContext {
             .queue_create_infos(&queue_create_infos)
             .enabled_extension_names(&device_extensions_ptrs)
             .enabled_features(&device_features)
+            .push_next(&mut device_features12)
             .push_next(&mut device_features13);
 
         let device = unsafe { instance.create_device(selected_device, &device_create_info, None) }
@@ -302,28 +302,9 @@ impl VkContext {
         true
     }
 
-    // TODO: db: What is actually needed here, now that I derped on the vk version...
-    fn get_required_device_extensions() -> [&'static CStr; 11] {
+    fn get_required_device_extensions() -> [&'static CStr; 1] {
         [
             c"VK_KHR_swapchain",
-            c"VK_KHR_dynamic_rendering",
-            c"VK_KHR_synchronization2",
-            c"VK_KHR_create_renderpass2",
-            c"VK_KHR_depth_stencil_resolve",
-            c"VK_KHR_buffer_device_address",
-            c"VK_EXT_descriptor_indexing",
-            c"VK_KHR_multiview",
-            c"VK_KHR_maintenance2",
-            c"VK_KHR_maintenance3",
-            c"VK_KHR_device_group",
-        ]
-    }
-
-    // TODO: db: What is actually needed here, now that I derped on the vk version...
-    fn get_required_instance_extensions() -> [&'static CStr; 2] {
-        [
-            c"VK_KHR_get_physical_device_properties2",
-            c"VK_KHR_device_group_creation",
         ]
     }
 
