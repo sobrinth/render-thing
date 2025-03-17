@@ -36,6 +36,7 @@ impl VulkanRenderer {
     }
 
     pub fn draw(&mut self) {
+        const ONE_SECOND: u64 = 1_000_000_000;
         let frame_index = self.frame_number % FRAME_OVERLAP;
         let frame = self.frames[frame_index as usize];
 
@@ -43,15 +44,16 @@ impl VulkanRenderer {
         let gpu = &self.context.device;
 
         unsafe {
-            gpu.wait_for_fences(&[frame.render_fence], true, 1_000_000_000)
+            gpu.wait_for_fences(&[frame.render_fence], true, ONE_SECOND)
                 .unwrap();
             gpu.reset_fences(&[frame.render_fence]).unwrap();
         }
 
         let res = unsafe {
+            
             self.swapchain.swapchain_fn.acquire_next_image(
                 self.swapchain.swapchain,
-                1_000_000_000,
+                ONE_SECOND,
                 frame.swapchain_semaphore,
                 vk::Fence::null(),
             )
@@ -74,7 +76,7 @@ impl VulkanRenderer {
         unsafe { gpu.begin_command_buffer(cmd, &cmd_begin_info).unwrap() }
 
         // transition swapchain-image to writable layout before rendering
-        Self::transistion_image(
+        Self::transition_image(
             gpu,
             cmd,
             self.swapchain.images[image_index],
@@ -108,7 +110,7 @@ impl VulkanRenderer {
         }
 
         // make swapchain image presentable
-        Self::transistion_image(
+        Self::transition_image(
             gpu,
             cmd,
             self.swapchain.images[image_index],
@@ -180,7 +182,7 @@ impl VulkanRenderer {
         self.frame_number += 1;
     }
 
-    fn transistion_image(
+    fn transition_image(
         device: &Device,
         cmd: vk::CommandBuffer,
         image: vk::Image,
