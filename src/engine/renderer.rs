@@ -1,13 +1,12 @@
 use crate::engine::context::VkContext;
 use crate::engine::swapchain::Swapchain;
-use ash::vk::CommandBufferResetFlags;
 use ash::{Device, vk};
 use winit::window::Window;
 
 const FRAME_OVERLAP: u32 = 2;
 
 pub struct VulkanRenderer {
-    frame_index: usize,
+    frame_number: u32,
     pub context: VkContext,
 
     swapchain: Swapchain,
@@ -28,7 +27,7 @@ impl VulkanRenderer {
         let frames = Self::create_framedata(&context, &graphics_queue);
 
         Self {
-            frame_index: 0,
+            frame_number: 0,
             context,
             swapchain,
             frames,
@@ -37,18 +36,16 @@ impl VulkanRenderer {
     }
 
     pub fn draw(&mut self) {
-        let frame = self.frames[self.frame_index];
-        self.frame_index = (self.frame_index + 1) % FRAME_OVERLAP as usize;
+        let frame_index = self.frame_number % FRAME_OVERLAP;
+        let frame = self.frames[frame_index as usize];
+
+        let cmd = frame.main_command_buffer;
+        let gpu = &self.context.device;
 
         unsafe {
-            self.context
-                .device
-                .wait_for_fences(&[frame.render_fence], true, 1_000_000_000)
+            gpu.wait_for_fences(&[frame.render_fence], true, 1_000_000_000)
                 .unwrap();
-            self.context
-                .device
-                .reset_fences(&[frame.render_fence])
-                .unwrap();
+            gpu.reset_fences(&[frame.render_fence]).unwrap();
         }
 
         let res = unsafe {
@@ -61,29 +58,165 @@ impl VulkanRenderer {
         };
 
         let image_index = match res {
-            Ok((image_index, _)) => image_index,
+            Ok((image_index, _)) => image_index as usize,
             Err(err) => panic!("Failed to acquire next image. Cause: {err}"),
         };
 
-        let cmd = frame.main_command_buffer;
-
         // Reset and begin command buffer for the frame
         unsafe {
-            self.context
-                .device
-                .reset_command_buffer(cmd, CommandBufferResetFlags::default())
+            gpu.reset_command_buffer(cmd, vk::CommandBufferResetFlags::default())
                 .unwrap()
         }
 
         let cmd_begin_info = vk::CommandBufferBeginInfo::default()
             .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
 
+        unsafe { gpu.begin_command_buffer(cmd, &cmd_begin_info).unwrap() }
+
+        // transition swapchain-image to writable layout before rendering
+        Self::transistion_image(
+            gpu,
+            cmd,
+            self.swapchain.images[image_index],
+            vk::ImageLayout::UNDEFINED,
+            vk::ImageLayout::GENERAL,
+        );
+
+        // create a clear color based on the frame-number
+        let flash = f32::abs(f32::sin(self.frame_number as f32 / 1000.0));
+        let clear_color = vk::ClearColorValue {
+            float32: [0.0, 0.0, flash, 1.0],
+        };
+
+        let clear_subrange = vk::ImageSubresourceRange::default()
+            .aspect_mask(vk::ImageAspectFlags::COLOR)
+            .base_mip_level(0)
+            .level_count(vk::REMAINING_MIP_LEVELS)
+            .base_array_layer(0)
+            .layer_count(vk::REMAINING_ARRAY_LAYERS);
+
+        // clear image
+        let ranges = &[clear_subrange];
         unsafe {
-            self.context
-                .device
-                .begin_command_buffer(cmd, &cmd_begin_info)
-                .unwrap()
+            gpu.cmd_clear_color_image(
+                cmd,
+                self.swapchain.images[image_index],
+                vk::ImageLayout::GENERAL,
+                &clear_color,
+                ranges,
+            )
         }
+
+        // make swapchain image presentable
+        Self::transistion_image(
+            gpu,
+            cmd,
+            self.swapchain.images[image_index],
+            vk::ImageLayout::GENERAL,
+            vk::ImageLayout::PRESENT_SRC_KHR,
+        );
+
+        // finalize command buffer
+        unsafe { gpu.end_command_buffer(cmd).unwrap() }
+
+        // prepare queue submission
+        // we want to wait on the present_semaphore, as that is signaled when the swapchain is ready
+        // we will signal render_semaphore, to signal rendering has finished
+        let cmd_info = vk::CommandBufferSubmitInfo::default()
+            .command_buffer(cmd)
+            .device_mask(0);
+        let cmd_infos = &[cmd_info];
+
+        let wait_info = vk::SemaphoreSubmitInfo::default()
+            .semaphore(frame.swapchain_semaphore)
+            .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+            .device_index(0)
+            .value(1);
+        let wait_infos = &[wait_info];
+
+        let signal_info = vk::SemaphoreSubmitInfo::default()
+            .semaphore(frame.render_semaphore)
+            .stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS)
+            .device_index(0)
+            .value(1);
+        let signal_infos = &[signal_info];
+
+        let submit_info = vk::SubmitInfo2::default()
+            .wait_semaphore_infos(wait_infos)
+            .signal_semaphore_infos(signal_infos)
+            .command_buffer_infos(cmd_infos);
+
+        // submit command buffer to the queue and execute it.
+        // render_fence will now block until the graphic commands finish execution
+        unsafe {
+            gpu.queue_submit2(
+                self.graphics_queue.queue,
+                &[submit_info],
+                frame.render_fence,
+            )
+            .unwrap()
+        }
+
+        // prepare present
+        // this will put the image just rendered to into the visible window
+        // wait on render_semaphore for that, as its necessary that drawing commands have finished
+        let swapchains = &[self.swapchain.swapchain];
+        let wait_semaphores = &[frame.render_semaphore];
+        let image_indices = &[image_index as u32];
+
+        let present_info = vk::PresentInfoKHR::default()
+            .swapchains(swapchains)
+            .wait_semaphores(wait_semaphores)
+            .image_indices(image_indices);
+
+        unsafe {
+            self.swapchain
+                .swapchain_fn
+                .queue_present(self.graphics_queue.queue, &present_info)
+        }
+        .unwrap();
+
+        // increase the number of frames drawn
+        self.frame_number += 1;
+    }
+
+    fn transistion_image(
+        device: &Device,
+        cmd: vk::CommandBuffer,
+        image: vk::Image,
+        current_layout: vk::ImageLayout,
+        new_layout: vk::ImageLayout,
+    ) {
+        let aspect_mask = if current_layout == vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL {
+            vk::ImageAspectFlags::DEPTH
+        } else {
+            vk::ImageAspectFlags::COLOR
+        };
+
+        let subresource_range = vk::ImageSubresourceRange::default()
+            .aspect_mask(aspect_mask)
+            .base_mip_level(0)
+            .level_count(vk::REMAINING_MIP_LEVELS)
+            .base_array_layer(0)
+            .layer_count(vk::REMAINING_ARRAY_LAYERS);
+
+        let image_barrier = vk::ImageMemoryBarrier2::default()
+            // Using ALL_COMMANDS is inefficient as it will stop gpu commands completely when it arrives at the barrier
+            // for more complex applications use correct stage masks
+            .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+            .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
+            .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+            .dst_access_mask(vk::AccessFlags2::MEMORY_WRITE | vk::AccessFlags2::MEMORY_READ)
+            .old_layout(current_layout)
+            .new_layout(new_layout)
+            .subresource_range(subresource_range)
+            .image(image);
+
+        let barriers = [image_barrier];
+
+        let dependency_info = vk::DependencyInfo::default().image_memory_barriers(&barriers);
+
+        unsafe { device.cmd_pipeline_barrier2(cmd, &dependency_info) }
     }
 
     fn create_framedata(context: &VkContext, graphics_queue: &QueueData) -> Vec<FrameData> {

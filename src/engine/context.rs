@@ -142,7 +142,7 @@ impl VkContext {
             .application_version(vk::make_api_version(0, 1, 0, 0))
             .engine_name(engine_name)
             .engine_version(vk::make_api_version(0, 1, 0, 0))
-            .api_version(vk::make_api_version(0, 1, 0, 0));
+            .api_version(vk::make_api_version(0, 1, 3, 0));
 
         let mut extension_names =
             ash_window::enumerate_required_extensions(window.display_handle().unwrap().as_raw())
@@ -229,10 +229,15 @@ impl VkContext {
 
         let device_features = vk::PhysicalDeviceFeatures::default().sampler_anisotropy(true);
 
+        let mut device_features13 = vk::PhysicalDeviceVulkan13Features::default()
+            .dynamic_rendering(true)
+            .synchronization2(true);
+
         let device_create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&queue_create_infos)
             .enabled_extension_names(&device_extensions_ptrs)
-            .enabled_features(&device_features);
+            .enabled_features(&device_features)
+            .push_next(&mut device_features13);
 
         let device = unsafe { instance.create_device(selected_device, &device_create_info, None) }
             .expect("Failed to create logical device.");
@@ -297,6 +302,7 @@ impl VkContext {
         true
     }
 
+    // TODO: db: What is actually needed here, now that I derped on the vk version...
     fn get_required_device_extensions() -> [&'static CStr; 11] {
         [
             c"VK_KHR_swapchain",
@@ -313,6 +319,7 @@ impl VkContext {
         ]
     }
 
+    // TODO: db: What is actually needed here, now that I derped on the vk version...
     fn get_required_instance_extensions() -> [&'static CStr; 2] {
         [
             c"VK_KHR_get_physical_device_properties2",

@@ -8,7 +8,7 @@ pub struct Swapchain {
     pub swapchain_fn: ash::khr::swapchain::Device,
     pub swapchain: vk::SwapchainKHR,
 
-    images: Vec<vk::Image>,
+    pub images: Vec<vk::Image>,
     image_views: Vec<vk::ImageView>,
 }
 
@@ -48,7 +48,9 @@ impl Swapchain {
                 .image_color_space(swapchain_properties.format.color_space)
                 .image_extent(swapchain_properties.extent)
                 .image_array_layers(1)
-                .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT);
+                .image_usage(
+                    vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::COLOR_ATTACHMENT,
+                );
 
             // TODO: db: Handle image sharing mode if graphics / present queue are different
 
