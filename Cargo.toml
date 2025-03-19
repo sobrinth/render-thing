@@ -1,10 +1,28 @@
-[package]
-name = "vulkan-rust"
-version = "0.1.0"
-authors = ["Dominik Baumann <hey@sobrinth.com>"]
-edition = "2024"
+[workspace]
+resolver = "3"
 
-[dependencies]
+members = ["crates/*"]
+default-members = ["crates/application"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+authors = ["Dominik Baumann <hey@sobrinth.com>"]
+
+[workspace.dependencies]
+
+#
+# Workspace member crates 
+#
+
+engine = { path = "crates/engine" }
+assets = { path = "crates/assets" }
+
+#
+# External crates
+#
+
 ash = "0.38"
 ash-window = "0.13"
 winit = "0.30"

@@ -1,6 +1,4 @@
-mod engine;
-
-use crate::engine::Engine;
+use engine::Engine;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{MouseScrollDelta, StartCause, WindowEvent};

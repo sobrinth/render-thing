@@ -1,5 +1,5 @@
-use crate::engine::context::VkContext;
-use crate::engine::swapchain::Swapchain;
+use crate::context::VkContext;
+use crate::swapchain::Swapchain;
 use ash::{Device, vk};
 use winit::window::Window;
 
@@ -50,7 +50,6 @@ impl VulkanRenderer {
         }
 
         let res = unsafe {
-            
             self.swapchain.swapchain_fn.acquire_next_image(
                 self.swapchain.swapchain,
                 ONE_SECOND,
