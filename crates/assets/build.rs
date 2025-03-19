@@ -12,8 +12,8 @@ fn main() {
         compile_shaders();
     }
     println!("cargo::rerun-if-changed=build.rs");
-    println!("cargo::rerun-if-changed=assets/shaders/shader.frag");
-    println!("cargo::rerun-if-changed=assets/shaders/shader.vert");
+    println!("cargo::rerun-if-changed=../../assets/shaders/shader.frag");
+    println!("cargo::rerun-if-changed=../../assets/shaders/shader.vert");
 }
 
 fn should_skip_shader_compilation() -> bool {
@@ -51,13 +51,13 @@ fn compile_shaders() {
 }
 
 fn get_shader_source_dir_path() -> PathBuf {
-    let path = get_root_path().join("assets").join("shaders");
+    let path = get_workspace_root_path().join("assets").join("shaders");
     println!("Shader source directory: {:?}", path.as_os_str());
     path
 }
 
-fn get_root_path() -> &'static Path {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn get_workspace_root_path() -> &'static Path {
+    Path::new(env!("CARGO_WORKSPACE_DIR"))
 }
 
 fn handle_program_result(result: Result<Output>) {
