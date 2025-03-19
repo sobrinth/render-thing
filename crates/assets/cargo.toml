@@ -1,0 +1,10 @@
+﻿[package]
+name = "assets"
+version = "0.0.0"
+authors.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+
+[lib]
+path = "src/assets.rs"

@@ -1,4 +1,4 @@
-use crate::engine::renderer::VulkanRenderer;
+use crate::renderer::VulkanRenderer;
 use winit::window::Window;
 
 mod renderer;

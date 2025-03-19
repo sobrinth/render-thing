@@ -1,8 +1,8 @@
-use crate::engine::debug::{
+use crate::debug::{
     check_validation_layer_support, get_layer_names_and_pointers, setup_debug_messenger,
 };
-use crate::engine::renderer::QueueData;
-use crate::engine::{renderer, swapchain};
+use crate::renderer::QueueData;
+use crate::{renderer, swapchain};
 use ash::Instance;
 use ash::ext::debug_utils;
 use ash::khr::surface;
