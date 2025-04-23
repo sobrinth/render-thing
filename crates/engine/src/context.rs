@@ -2,7 +2,7 @@ use crate::debug::{
     check_validation_layer_support, get_layer_names_and_pointers, setup_debug_messenger,
 };
 use crate::renderer::QueueData;
-use crate::{renderer, swapchain};
+use crate::{swapchain};
 use ash::Instance;
 use ash::ext::debug_utils;
 use ash::khr::surface;
@@ -21,6 +21,7 @@ pub struct VkContext {
     pub surface: vk::SurfaceKHR,
     pub physical_device: vk::PhysicalDevice,
     pub device: Device,
+    pub allocator: vk_mem::Allocator,
 }
 
 impl VkContext {
@@ -47,6 +48,12 @@ impl VkContext {
         let (physical_device, device, graphics_queue, _) =
             Self::initialize_vulkan_device(&instance, &surface_fn, surface);
 
+        let mut alloc_info = vk_mem::AllocatorCreateInfo::new(&instance, &device, physical_device);
+        alloc_info.vulkan_api_version = vk::make_api_version(0, 1, 3, 0);
+        alloc_info.flags |= vk_mem::AllocatorCreateFlags::BUFFER_DEVICE_ADDRESS;
+
+        let allocator = unsafe { vk_mem::Allocator::new(alloc_info) }.unwrap();
+
         (
             Self {
                 _vulkan_fn: vulkan_fn,
@@ -56,6 +63,7 @@ impl VkContext {
                 surface,
                 physical_device,
                 device,
+                allocator,
             },
             graphics_queue,
         )
@@ -99,7 +107,7 @@ impl VkContext {
         surface_fn: &surface::Instance,
         surface: vk::SurfaceKHR,
     ) -> (vk::PhysicalDevice, Device, QueueData, vk::Queue) {
-        // Select physical device
+        // Select a physical device
         let available_devices = unsafe { instance.enumerate_physical_devices() }.unwrap();
         let selected_device = available_devices
             .into_iter()
@@ -123,7 +131,7 @@ impl VkContext {
         let queue_priorities = [1.0_f32];
         let queue_create_infos = {
             // Vulkan spec does not allow passing an array containing duplicated family indices.
-            // And since the family for graphics and presentation could be the same we need to dedup it.
+            // And since the family for graphics and presentation could be the same, we need to dedup it.
             let mut indices = vec![
                 queue_family_indices.graphics_index,
                 queue_family_indices.present_index,
@@ -168,13 +176,13 @@ impl VkContext {
         let device = unsafe { instance.create_device(selected_device, &device_create_info, None) }
             .expect("Failed to create logical device.");
 
-        // graphics and present queue are created, but not retrieved yet
+        // graphics and present queue are created but not retrieved yet
         let graphics_queue =
             unsafe { device.get_device_queue(queue_family_indices.graphics_index, 0) };
         let present_queue =
             unsafe { device.get_device_queue(queue_family_indices.present_index, 0) };
 
-        let graphics_queue_data = renderer::QueueData {
+        let graphics_queue_data = QueueData {
             queue: graphics_queue,
             family_index: queue_family_indices.graphics_index,
         };
