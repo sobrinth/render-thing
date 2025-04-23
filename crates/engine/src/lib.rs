@@ -5,6 +5,7 @@ mod renderer;
 
 mod context;
 mod debug;
+mod descriptor;
 mod swapchain;
 
 pub struct Engine {

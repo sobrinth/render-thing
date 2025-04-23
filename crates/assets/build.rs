@@ -14,6 +14,7 @@ fn main() {
     println!("cargo::rerun-if-changed=build.rs");
     println!("cargo::rerun-if-changed=../../assets/shaders/shader.frag");
     println!("cargo::rerun-if-changed=../../assets/shaders/shader.vert");
+    println!("cargo::rerun-if-changed=../../assets/shaders/gradient.comp");
 }
 
 fn should_skip_shader_compilation() -> bool {

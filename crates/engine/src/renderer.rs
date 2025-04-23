@@ -1,4 +1,5 @@
 use crate::context::VkContext;
+use crate::descriptor;
 use crate::swapchain::Swapchain;
 use ash::{Device, vk};
 use vk_mem::Alloc;
@@ -15,7 +16,11 @@ pub struct VulkanRenderer {
     frames: Vec<FrameData>,
     graphics_queue: QueueData,
 
+    descriptor_allocator: descriptor::Allocator,
+
     draw_image: AllocatedImage,
+    draw_image_descriptors: vk::DescriptorSet,
+    draw_image_descriptor_layout: vk::DescriptorSetLayout,
 }
 
 impl VulkanRenderer {
@@ -34,13 +39,19 @@ impl VulkanRenderer {
             (window.inner_size().width, window.inner_size().height),
         );
 
+        let (descriptor_allocator, draw_image_descriptor_layout, draw_image_descriptors) =
+            Self::init_descriptors(&context, &draw_image);
+
         Self {
             frame_number: 0,
             context,
             swapchain,
             frames,
             graphics_queue,
+            descriptor_allocator,
             draw_image,
+            draw_image_descriptors,
+            draw_image_descriptor_layout,
         }
     }
 
@@ -433,6 +444,40 @@ impl VulkanRenderer {
             _format: format,
         }
     }
+
+    fn init_descriptors(
+        context: &VkContext,
+        draw_image: &AllocatedImage,
+    ) -> (
+        descriptor::Allocator,
+        vk::DescriptorSetLayout,
+        vk::DescriptorSet,
+    ) {
+        let pool_sizes = vec![descriptor::PoolSizeRatio {
+            descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
+            ratio: 1f32,
+        }];
+        let pool = descriptor::Allocator::init_pool(&context.device, 10, pool_sizes);
+
+        let mut builder = descriptor::LayoutBuilder::new();
+        builder.add_binding(0, vk::DescriptorType::STORAGE_IMAGE);
+        let layout = builder.build(&context.device, vk::ShaderStageFlags::COMPUTE, None);
+
+        let draw_image_descriptors = pool.allocate(&context.device, layout);
+
+        let image_info = &[vk::DescriptorImageInfo::default()
+            .image_layout(vk::ImageLayout::GENERAL)
+            .image_view(draw_image.view)];
+
+        let write_info = &[vk::WriteDescriptorSet::default()
+            .dst_binding(0)
+            .dst_set(draw_image_descriptors)
+            .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+            .image_info(image_info)];
+
+        unsafe { context.device.update_descriptor_sets(write_info, &[]) }
+        (pool, layout, draw_image_descriptors)
+    }
 }
 
 impl Drop for VulkanRenderer {
@@ -446,6 +491,12 @@ impl Drop for VulkanRenderer {
         unsafe { self.swapchain.destroy(&self.context.device) }
         self.draw_image
             .destroy(&self.context.device, &self.context.allocator);
+        self.descriptor_allocator.destroy_pool(&self.context.device);
+        unsafe {
+            self.context
+                .device
+                .destroy_descriptor_set_layout(self.draw_image_descriptor_layout, None)
+        }
         log::debug!("End: Dropping renderer");
     }
 }
