@@ -1,4 +1,4 @@
-﻿use std::{
+use std::{
     env::var,
     ffi::OsStr,
     fs,
