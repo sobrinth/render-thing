@@ -11,3 +11,4 @@ ash-window.workspace = true
 winit.workspace = true
 itertools.workspace = true
 log.workspace = true
+vk-mem.workspace = true

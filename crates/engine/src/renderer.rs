@@ -38,16 +38,18 @@ impl VulkanRenderer {
     pub fn draw(&mut self) {
         const ONE_SECOND: u64 = 1_000_000_000;
         let frame_index = self.frame_number % FRAME_OVERLAP;
-        let frame = self.frames[frame_index as usize];
+        let mut frame = self.frames[frame_index as usize];
 
         let cmd = frame.main_command_buffer;
         let gpu = &self.context.device;
 
         unsafe {
+            // wait for the GPU to have finished the last rendering of this frame.
             gpu.wait_for_fences(&[frame.render_fence], true, ONE_SECOND)
                 .unwrap();
             gpu.reset_fences(&[frame.render_fence]).unwrap();
         }
+        frame.clean_resources();
 
         let res = unsafe {
             self.swapchain.swapchain_fn.acquire_next_image(
@@ -120,8 +122,8 @@ impl VulkanRenderer {
         // finalize command buffer
         unsafe { gpu.end_command_buffer(cmd).unwrap() }
 
-        // prepare queue submission
-        // we want to wait on the present_semaphore, as that is signaled when the swapchain is ready
+        // Prepare queue submission
+        // we want to wait on the present_semaphore, as that is signaled when the swapchain is ready,
         // we will signal render_semaphore, to signal rendering has finished
         let cmd_info = vk::CommandBufferSubmitInfo::default()
             .command_buffer(cmd)
@@ -147,7 +149,7 @@ impl VulkanRenderer {
             .signal_semaphore_infos(signal_infos)
             .command_buffer_infos(cmd_infos);
 
-        // submit command buffer to the queue and execute it.
+        // submit a command buffer to the queue and execute it.
         // render_fence will now block until the graphic commands finish execution
         unsafe {
             gpu.queue_submit2(
@@ -158,9 +160,9 @@ impl VulkanRenderer {
             .unwrap()
         }
 
-        // prepare present
+        // Prepare presentation
         // this will put the image just rendered to into the visible window
-        // wait on render_semaphore for that, as its necessary that drawing commands have finished
+        // wait on render_semaphore for that, as it's necessary that drawing commands have finished
         let swapchains = &[self.swapchain.swapchain];
         let wait_semaphores = &[frame.render_semaphore];
         let image_indices = &[image_index as u32];
@@ -307,6 +309,10 @@ impl FrameData {
             device.destroy_semaphore(self.render_semaphore, None);
             device.destroy_fence(self.render_fence, None);
         }
+        self.clean_resources()
+    }
+    
+    pub fn clean_resources(&mut self) {
     }
 }
 
