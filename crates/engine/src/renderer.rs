@@ -199,9 +199,14 @@ impl VulkanRenderer {
         self.frame_number += 1;
     }
 
-    fn draw_background(cmd: vk::CommandBuffer, gpu: &Device, frame_number: f32, draw_image: vk::Image) {
+    fn draw_background(
+        cmd: vk::CommandBuffer,
+        gpu: &Device,
+        frame_number: f32,
+        draw_image: vk::Image,
+    ) {
         // create a clear color based on the frame-number
-        let flash = f32::abs(f32::sin(frame_number / 1000.0));
+        let flash = f32::abs(f32::sin(frame_number / 120.0));
         let clear_color = vk::ClearColorValue {
             float32: [0.0, 0.0, flash, 1.0],
         };

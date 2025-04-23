@@ -79,28 +79,19 @@ impl ApplicationHandler for Application {
             } => {
                 // self.vulkan.as_mut().unwrap().wheel_delta = Some(v_lines);
             }
+            WindowEvent::RedrawRequested => {
+                let app = self.engine.as_mut().unwrap();
+                let window = self.window.as_ref().unwrap();
+
+                window.pre_present_notify();
+
+                app.draw();
+
+                std::thread::sleep(std::time::Duration::from_millis(1000 / 60)); // not really 60 fps
+                window.request_redraw();
+            }
             _ => (),
         }
-    }
-
-    /// This is not the ideal place to drive rendering from.
-    /// Should really be done with the RedrawRequested Event, but here we are for now.
-    fn about_to_wait(&mut self, _: &ActiveEventLoop) {
-        let app = self.engine.as_mut().unwrap();
-        let _window = self.window.as_ref().unwrap();
-
-        // TODO: db: This will run as fast as possible! Not good.
-        app.draw();
-
-        // if app.dirty_swapchain {
-        //     let size = window.inner_size();
-        //     if size.width > 0 && size.height > 0 {
-        //         // app.recreate_swapchain();
-        //     } else {
-        //         return;
-        //     }
-        // }
-        // app.dirty_swapchain = app.draw_frame();
     }
 
     fn exiting(&mut self, _: &ActiveEventLoop) {
