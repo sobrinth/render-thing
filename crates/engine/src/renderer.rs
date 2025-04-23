@@ -1,6 +1,7 @@
 use crate::context::VkContext;
 use crate::swapchain::Swapchain;
 use ash::{Device, vk};
+use vk_mem::Alloc;
 use winit::window::Window;
 
 const FRAME_OVERLAP: u32 = 2;
@@ -13,6 +14,8 @@ pub struct VulkanRenderer {
 
     frames: Vec<FrameData>,
     graphics_queue: QueueData,
+
+    draw_image: AllocatedImage,
 }
 
 impl VulkanRenderer {
@@ -26,12 +29,18 @@ impl VulkanRenderer {
 
         let frames = Self::create_framedata(&context, &graphics_queue);
 
+        let draw_image = Self::create_draw_image(
+            &context,
+            (window.inner_size().width, window.inner_size().height),
+        );
+
         Self {
             frame_number: 0,
             context,
             swapchain,
             frames,
             graphics_queue,
+            draw_image,
         }
     }
 
@@ -277,6 +286,62 @@ impl VulkanRenderer {
     pub fn wait_gpu_idle(&self) {
         unsafe { self.context.device.device_wait_idle() }.unwrap();
     }
+
+    fn create_draw_image(context: &VkContext, window_size: (u32, u32)) -> AllocatedImage {
+        let extent = vk::Extent3D {
+            width: window_size.0,
+            height: window_size.1,
+            depth: 1,
+        };
+
+        let format = vk::Format::R16G16B16A16_SFLOAT;
+        let usage = vk::ImageUsageFlags::TRANSFER_SRC
+            | vk::ImageUsageFlags::TRANSFER_DST
+            | vk::ImageUsageFlags::STORAGE
+            | vk::ImageUsageFlags::COLOR_ATTACHMENT;
+
+        let create_info = vk::ImageCreateInfo::default()
+            .image_type(vk::ImageType::TYPE_2D)
+            .format(format)
+            .extent(extent)
+            .mip_levels(1)
+            .array_layers(1)
+            .samples(vk::SampleCountFlags::TYPE_1)
+            .tiling(vk::ImageTiling::OPTIMAL)
+            .usage(usage);
+
+        let alloc_info = vk_mem::AllocationCreateInfo {
+            usage: vk_mem::MemoryUsage::AutoPreferDevice,
+            required_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            ..Default::default()
+        };
+
+        let (image, allocation) =
+            unsafe { context.allocator.create_image(&create_info, &alloc_info) }.unwrap();
+
+        let create_info = vk::ImageViewCreateInfo::default()
+            .view_type(vk::ImageViewType::TYPE_2D)
+            .image(image)
+            .format(format)
+            .subresource_range(
+                vk::ImageSubresourceRange::default()
+                    .base_mip_level(0)
+                    .level_count(1)
+                    .base_array_layer(0)
+                    .layer_count(1)
+                    .aspect_mask(vk::ImageAspectFlags::COLOR),
+            );
+
+        let view = unsafe { context.device.create_image_view(&create_info, None) }.unwrap();
+
+        AllocatedImage {
+            image,
+            view,
+            allocation,
+            _extent: extent,
+            _format: format,
+        }
+    }
 }
 
 impl Drop for VulkanRenderer {
@@ -288,6 +353,8 @@ impl Drop for VulkanRenderer {
         });
 
         unsafe { self.swapchain.destroy(&self.context.device) }
+        self.draw_image
+            .destroy(&self.context.device, &self.context.allocator);
         log::debug!("End: Dropping renderer");
     }
 }
@@ -311,13 +378,29 @@ impl FrameData {
         }
         self.clean_resources()
     }
-    
-    pub fn clean_resources(&mut self) {
-    }
+
+    pub fn clean_resources(&mut self) {}
 }
 
 #[derive(Copy, Clone)]
 pub struct QueueData {
     pub queue: vk::Queue,
     pub family_index: u32,
+}
+
+pub struct AllocatedImage {
+    pub image: vk::Image,
+    pub view: vk::ImageView,
+    pub allocation: vk_mem::Allocation,
+    pub _extent: vk::Extent3D,
+    pub _format: vk::Format,
+}
+
+impl AllocatedImage {
+    pub fn destroy(&mut self, device: &Device, allocator: &vk_mem::Allocator) {
+        unsafe {
+            device.destroy_image_view(self.view, None);
+            allocator.destroy_image(self.image, &mut self.allocation);
+        }
+    }
 }
