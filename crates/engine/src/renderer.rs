@@ -1,3 +1,4 @@
+use std::path::Path;
 use crate::context::VkContext;
 use crate::descriptor;
 use crate::swapchain::Swapchain;
@@ -477,6 +478,17 @@ impl VulkanRenderer {
 
         unsafe { context.device.update_descriptor_sets(write_info, &[]) }
         (pool, layout, draw_image_descriptors)
+    }
+
+    fn read_shader_from_file<P: AsRef<Path>>(path: P) -> Vec<u32> {
+        log::debug!("Loading shader file {}", path.as_ref().display());
+        let mut file = std::fs::File::open(path).unwrap();
+        ash::util::read_spv(&mut file).unwrap()
+    }
+
+    fn create_shader_module(device: &Device, shader_source: &[u32]) -> vk::ShaderModule {
+        let create_info = vk::ShaderModuleCreateInfo::default().code(shader_source);
+        unsafe { device.create_shader_module(&create_info, None) }.unwrap()
     }
 }
 
