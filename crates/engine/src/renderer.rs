@@ -85,46 +85,53 @@ impl VulkanRenderer {
 
         unsafe { gpu.begin_command_buffer(cmd, &cmd_begin_info).unwrap() }
 
-        // transition swapchain-image to writable layout before rendering
+        // transition the main draw image to Layout::GENERAL so we can draw into it.
+        // we will overwrite the contents, so we don't care about the old layout
+        Self::transition_image(
+            gpu,
+            cmd,
+            self.draw_image.image,
+            vk::ImageLayout::UNDEFINED,
+            vk::ImageLayout::GENERAL,
+        );
+
+        Self::draw_background(cmd, gpu, self.frame_number as f32, self.draw_image.image);
+
+        // transition the draw image and the swapchain image into their correct transfer layouts.
+        Self::transition_image(
+            gpu,
+            cmd,
+            self.draw_image.image,
+            vk::ImageLayout::GENERAL,
+            vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+        );
         Self::transition_image(
             gpu,
             cmd,
             self.swapchain.images[image_index],
             vk::ImageLayout::UNDEFINED,
-            vk::ImageLayout::GENERAL,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
         );
 
-        // create a clear color based on the frame-number
-        let flash = f32::abs(f32::sin(self.frame_number as f32 / 1000.0));
-        let clear_color = vk::ClearColorValue {
-            float32: [0.0, 0.0, flash, 1.0],
-        };
+        // copy the draw image to the swapchain image
+        Self::copy_image_to_image(
+            gpu,
+            cmd,
+            self.draw_image.image,
+            self.swapchain.images[image_index],
+            vk::Extent2D {
+                height: self.draw_image.extent.height,
+                width: self.draw_image.extent.width,
+            },
+            self.swapchain.properties.extent,
+        );
 
-        let clear_subrange = vk::ImageSubresourceRange::default()
-            .aspect_mask(vk::ImageAspectFlags::COLOR)
-            .base_mip_level(0)
-            .level_count(vk::REMAINING_MIP_LEVELS)
-            .base_array_layer(0)
-            .layer_count(vk::REMAINING_ARRAY_LAYERS);
-
-        // clear image
-        let ranges = &[clear_subrange];
-        unsafe {
-            gpu.cmd_clear_color_image(
-                cmd,
-                self.swapchain.images[image_index],
-                vk::ImageLayout::GENERAL,
-                &clear_color,
-                ranges,
-            )
-        }
-
-        // make swapchain image presentable
+        // set the swapchain image to Layout::PRESENT so we can present it
         Self::transition_image(
             gpu,
             cmd,
             self.swapchain.images[image_index],
-            vk::ImageLayout::GENERAL,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
             vk::ImageLayout::PRESENT_SRC_KHR,
         );
 
@@ -192,6 +199,33 @@ impl VulkanRenderer {
         self.frame_number += 1;
     }
 
+    fn draw_background(cmd: vk::CommandBuffer, gpu: &Device, frame_number: f32, draw_image: vk::Image) {
+        // create a clear color based on the frame-number
+        let flash = f32::abs(f32::sin(frame_number / 1000.0));
+        let clear_color = vk::ClearColorValue {
+            float32: [0.0, 0.0, flash, 1.0],
+        };
+
+        let clear_subrange = vk::ImageSubresourceRange::default()
+            .aspect_mask(vk::ImageAspectFlags::COLOR)
+            .base_mip_level(0)
+            .level_count(vk::REMAINING_MIP_LEVELS)
+            .base_array_layer(0)
+            .layer_count(vk::REMAINING_ARRAY_LAYERS);
+
+        // clear image
+        let ranges = &[clear_subrange];
+        unsafe {
+            gpu.cmd_clear_color_image(
+                cmd,
+                draw_image,
+                vk::ImageLayout::GENERAL,
+                &clear_color,
+                ranges,
+            )
+        }
+    }
+
     fn transition_image(
         device: &Device,
         cmd: vk::CommandBuffer,
@@ -229,6 +263,58 @@ impl VulkanRenderer {
         let dependency_info = vk::DependencyInfo::default().image_memory_barriers(&barriers);
 
         unsafe { device.cmd_pipeline_barrier2(cmd, &dependency_info) }
+    }
+
+    fn copy_image_to_image(
+        device: &Device,
+        cmd: vk::CommandBuffer,
+        src: vk::Image,
+        dst: vk::Image,
+        src_size: vk::Extent2D,
+        dst_size: vk::Extent2D,
+    ) {
+        let blit_region = vk::ImageBlit2::default()
+            .src_offsets([
+                vk::Offset3D::default(),
+                vk::Offset3D {
+                    x: src_size.width as i32,
+                    y: src_size.height as i32,
+                    z: 1,
+                },
+            ])
+            .dst_offsets([
+                vk::Offset3D::default(),
+                vk::Offset3D {
+                    x: dst_size.width as i32,
+                    y: dst_size.height as i32,
+                    z: 1,
+                },
+            ])
+            .src_subresource(
+                vk::ImageSubresourceLayers::default()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .base_array_layer(0)
+                    .layer_count(1)
+                    .mip_level(0),
+            )
+            .dst_subresource(
+                vk::ImageSubresourceLayers::default()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .base_array_layer(0)
+                    .layer_count(1)
+                    .mip_level(0),
+            );
+        let regions = &[blit_region];
+
+        let blit_info = vk::BlitImageInfo2::default()
+            .src_image(src)
+            .src_image_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+            .dst_image(dst)
+            .dst_image_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+            .filter(vk::Filter::LINEAR)
+            .regions(regions);
+
+        unsafe { device.cmd_blit_image2(cmd, &blit_info) }
     }
 
     fn create_framedata(context: &VkContext, graphics_queue: &QueueData) -> Vec<FrameData> {
@@ -338,7 +424,7 @@ impl VulkanRenderer {
             image,
             view,
             allocation,
-            _extent: extent,
+            extent,
             _format: format,
         }
     }
@@ -392,7 +478,7 @@ pub struct AllocatedImage {
     pub image: vk::Image,
     pub view: vk::ImageView,
     pub allocation: vk_mem::Allocation,
-    pub _extent: vk::Extent3D,
+    pub extent: vk::Extent3D,
     pub _format: vk::Format,
 }
 
