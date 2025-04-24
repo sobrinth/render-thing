@@ -1,8 +1,8 @@
-use std::path::Path;
 use crate::context::VkContext;
 use crate::descriptor;
 use crate::swapchain::Swapchain;
 use ash::{Device, vk};
+use std::path::Path;
 use vk_mem::Alloc;
 use winit::window::Window;
 
@@ -22,6 +22,10 @@ pub struct VulkanRenderer {
     draw_image: AllocatedImage,
     draw_image_descriptors: vk::DescriptorSet,
     draw_image_descriptor_layout: vk::DescriptorSetLayout,
+
+    compute_shader: vk::ShaderModule,
+    gradient_pipeline: vk::Pipeline,
+    gradient_pipeline_layout: vk::PipelineLayout,
 }
 
 impl VulkanRenderer {
@@ -43,6 +47,12 @@ impl VulkanRenderer {
         let (descriptor_allocator, draw_image_descriptor_layout, draw_image_descriptors) =
             Self::init_descriptors(&context, &draw_image);
 
+        let shader_code = Self::read_shader_from_file("assets/shaders/gradient.comp.spv");
+        let shader_module = Self::create_shader_module(&context.device, &shader_code);
+
+        let (gradient_pipeline, gradient_pipeline_layout) =
+            Self::init_pipelines(&context, &draw_image_descriptor_layout, &shader_module);
+
         Self {
             frame_number: 0,
             context,
@@ -53,6 +63,9 @@ impl VulkanRenderer {
             draw_image,
             draw_image_descriptors,
             draw_image_descriptor_layout,
+            compute_shader: shader_module,
+            gradient_pipeline: gradient_pipeline,
+            gradient_pipeline_layout: gradient_pipeline_layout,
         }
     }
 
@@ -490,25 +503,75 @@ impl VulkanRenderer {
         let create_info = vk::ShaderModuleCreateInfo::default().code(shader_source);
         unsafe { device.create_shader_module(&create_info, None) }.unwrap()
     }
+
+    fn init_pipelines(
+        context: &VkContext,
+        image_dsl: &vk::DescriptorSetLayout,
+        shader_module: &vk::ShaderModule,
+    ) -> (vk::Pipeline, vk::PipelineLayout) {
+        Self::init_background_pipeline(context, image_dsl, shader_module)
+    }
+
+    fn init_background_pipeline(
+        context: &VkContext,
+        image_dsl: &vk::DescriptorSetLayout,
+        shader_module: &vk::ShaderModule,
+    ) -> (vk::Pipeline, vk::PipelineLayout) {
+        let layouts = &[*image_dsl];
+        let layout_info = vk::PipelineLayoutCreateInfo::default().set_layouts(layouts);
+
+        let layout = unsafe { context.device.create_pipeline_layout(&layout_info, None) }.unwrap();
+
+        let shader_stage_info = vk::PipelineShaderStageCreateInfo::default()
+            .stage(vk::ShaderStageFlags::COMPUTE)
+            .module(*shader_module)
+            .name(c"main");
+
+        let pipeline_info = &[vk::ComputePipelineCreateInfo::default()
+            .layout(layout)
+            .stage(shader_stage_info)];
+
+        let compute_pipeline = unsafe {
+            context
+                .device
+                .create_compute_pipelines(vk::PipelineCache::null(), pipeline_info, None)
+        }
+        .unwrap()[0];
+
+        (compute_pipeline, layout)
+    }
 }
 
 impl Drop for VulkanRenderer {
     fn drop(&mut self) {
         log::debug!("Start: Dropping renderer");
         self.wait_gpu_idle();
-        self.frames.iter_mut().for_each(|frame| {
-            frame.destroy(&self.context.device);
-        });
 
-        unsafe { self.swapchain.destroy(&self.context.device) }
-        self.draw_image
-            .destroy(&self.context.device, &self.context.allocator);
+        unsafe {
+            self.context
+                .device
+                .destroy_pipeline(self.gradient_pipeline, None);
+            self.context
+                .device
+                .destroy_pipeline_layout(self.gradient_pipeline_layout, None);
+            self.context
+                .device
+                .destroy_shader_module(self.compute_shader, None)
+        }
         self.descriptor_allocator.destroy_pool(&self.context.device);
         unsafe {
             self.context
                 .device
                 .destroy_descriptor_set_layout(self.draw_image_descriptor_layout, None)
         }
+        self.draw_image
+            .destroy(&self.context.device, &self.context.allocator);
+
+        self.frames.iter_mut().for_each(|frame| {
+            frame.destroy(&self.context.device);
+        });
+
+        unsafe { self.swapchain.destroy(&self.context.device) }
         log::debug!("End: Dropping renderer");
     }
 }
