@@ -6,8 +6,8 @@ use winit::event_loop::ControlFlow::Poll;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowId};
 
-const WIDTH: u32 = 800;
-const HEIGHT: u32 = 600;
+const WIDTH: u32 = 1280;
+const HEIGHT: u32 = 720;
 
 fn main() {
     env_logger::init();
@@ -21,9 +21,8 @@ fn main() {
 
 #[derive(Default)]
 struct Application {
-    engine: Option<Engine>,
-    // window needs to be dropped last as Vulkan has a window reference
     window: Option<Window>,
+    engine: Option<Engine>,
 }
 
 impl ApplicationHandler for Application {
@@ -95,6 +94,11 @@ impl ApplicationHandler for Application {
     }
 
     fn exiting(&mut self, _: &ActiveEventLoop) {
-        self.engine.as_mut().unwrap().stop();
+        // This is guaranteed to be the last code run before the event-loop will exit, so the engine
+        // is dropped here because it needs to be gone before the event-loop exits.
+        let mut engine = self.engine.take().unwrap();
+        engine.stop();
+        // This drop is not needed but makes the intention here explicit
+        drop(engine)
     }
 }

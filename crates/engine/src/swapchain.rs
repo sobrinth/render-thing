@@ -3,17 +3,17 @@ use ash::khr::surface;
 use ash::{Device, vk};
 use itertools::Itertools;
 
-pub struct Swapchain {
-    pub properties: SwapchainProperties,
-    pub swapchain_fn: ash::khr::swapchain::Device,
-    pub swapchain: vk::SwapchainKHR,
+pub(crate) struct Swapchain {
+    pub(crate) properties: SwapchainProperties,
+    pub(crate) swapchain_fn: ash::khr::swapchain::Device,
+    pub(crate) swapchain: vk::SwapchainKHR,
 
-    pub images: Vec<vk::Image>,
+    pub(crate) images: Vec<vk::Image>,
     image_views: Vec<vk::ImageView>,
 }
 
 impl Swapchain {
-    pub fn create(vk_context: &VkContext, dimensions: [u32; 2]) -> Self {
+    pub(crate) fn create(vk_context: &VkContext, dimensions: [u32; 2]) -> Self {
         let details = SwapchainSupportDetails::new(
             vk_context.physical_device,
             &vk_context.surface_fn,
@@ -94,7 +94,7 @@ impl Swapchain {
         }
     }
 
-    pub unsafe fn destroy(&mut self, device: &Device) {
+    pub(crate) fn destroy(&mut self, device: &Device) {
         log::debug!("Start: Destroying swapchain");
         unsafe {
             self.image_views
@@ -107,19 +107,19 @@ impl Swapchain {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct SwapchainProperties {
+pub(crate) struct SwapchainProperties {
     format: vk::SurfaceFormatKHR,
     present_mode: vk::PresentModeKHR,
-    pub extent: vk::Extent2D,
+    pub(crate) extent: vk::Extent2D,
 }
-pub struct SwapchainSupportDetails {
-    pub capabilities: vk::SurfaceCapabilitiesKHR,
-    pub formats: Vec<vk::SurfaceFormatKHR>,
-    pub present_modes: Vec<vk::PresentModeKHR>,
+pub(crate) struct SwapchainSupportDetails {
+    pub(crate) capabilities: vk::SurfaceCapabilitiesKHR,
+    pub(crate) formats: Vec<vk::SurfaceFormatKHR>,
+    pub(crate) present_modes: Vec<vk::PresentModeKHR>,
 }
 
 impl SwapchainSupportDetails {
-    pub fn new(
+    pub(crate) fn new(
         device: vk::PhysicalDevice,
         surface_fn: &surface::Instance,
         surface: vk::SurfaceKHR,
