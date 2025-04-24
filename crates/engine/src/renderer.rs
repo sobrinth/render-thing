@@ -8,7 +8,7 @@ use winit::window::Window;
 
 const FRAME_OVERLAP: u32 = 2;
 
-pub struct VulkanRenderer {
+pub(crate) struct VulkanRenderer {
     frame_number: u32,
     pub context: VkContext,
 
@@ -29,7 +29,7 @@ pub struct VulkanRenderer {
 }
 
 impl VulkanRenderer {
-    pub fn initialize(window: &Window) -> Self {
+    pub(crate) fn initialize(window: &Window) -> Self {
         let (context, graphics_queue) = VkContext::initialize(window);
 
         let swapchain = Swapchain::create(
@@ -64,12 +64,12 @@ impl VulkanRenderer {
             draw_image_descriptors,
             draw_image_descriptor_layout,
             compute_shader: shader_module,
-            gradient_pipeline: gradient_pipeline,
-            gradient_pipeline_layout: gradient_pipeline_layout,
+            gradient_pipeline,
+            gradient_pipeline_layout,
         }
     }
 
-    pub fn draw(&mut self) {
+    pub(crate) fn draw(&mut self) {
         const ONE_SECOND: u64 = 1_000_000_000;
         let frame_index = self.frame_number % FRAME_OVERLAP;
         let mut frame = self.frames[frame_index as usize];
@@ -120,14 +120,7 @@ impl VulkanRenderer {
             vk::ImageLayout::GENERAL,
         );
 
-        Self::draw_background(
-            cmd,
-            gpu,
-            self.frame_number as f32,
-            self.draw_image.image,
-            &self.gradient_pipeline,
-            self,
-        );
+        self.draw_background(cmd, gpu);
 
         // transition the draw image and the swapchain image into their correct transfer layouts.
         Self::transition_image(
@@ -231,25 +224,20 @@ impl VulkanRenderer {
         self.frame_number += 1;
     }
 
-    fn draw_background(
-        cmd: vk::CommandBuffer,
-        gpu: &Device,
-        frame_number: f32,
-        draw_image: vk::Image,
-        gradient_pipeline: &vk::Pipeline,
-        engine: &VulkanRenderer,
-    ) {
+    fn draw_background(&self, cmd: vk::CommandBuffer, gpu: &Device) {
         // bind the gradient drawing compute pipeline
-        unsafe { gpu.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, *gradient_pipeline) }
+        unsafe {
+            gpu.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, self.gradient_pipeline)
+        }
 
         // bind the descriptor set containing the draw image for the compute pipeline
         unsafe {
             gpu.cmd_bind_descriptor_sets(
                 cmd,
                 vk::PipelineBindPoint::COMPUTE,
-                engine.gradient_pipeline_layout,
+                self.gradient_pipeline_layout,
                 0,
-                &[engine.draw_image_descriptors],
+                &[self.draw_image_descriptors],
                 &[],
             )
         }
@@ -258,8 +246,8 @@ impl VulkanRenderer {
         unsafe {
             gpu.cmd_dispatch(
                 cmd,
-                f64::ceil(engine.draw_image.extent.width as f64 / 16.0) as u32,
-                f64::ceil(engine.draw_image.extent.height as f64 / 16.0) as u32,
+                f64::ceil(self.draw_image.extent.width as f64 / 16.0) as u32,
+                f64::ceil(self.draw_image.extent.height as f64 / 16.0) as u32,
                 1,
             )
         }
@@ -408,7 +396,7 @@ impl VulkanRenderer {
         frames
     }
 
-    pub fn wait_gpu_idle(&self) {
+    pub(crate) fn wait_gpu_idle(&self) {
         unsafe { self.context.device.device_wait_idle() }.unwrap();
     }
 
@@ -485,6 +473,7 @@ impl VulkanRenderer {
         let mut builder = descriptor::LayoutBuilder::new();
         builder.add_binding(0, vk::DescriptorType::STORAGE_IMAGE);
         let layout = builder.build(&context.device, vk::ShaderStageFlags::COMPUTE, None);
+        builder.clear();
 
         let draw_image_descriptors = pool.allocate(&context.device, layout);
 
@@ -567,6 +556,8 @@ impl Drop for VulkanRenderer {
                 .device
                 .destroy_shader_module(self.compute_shader, None)
         }
+        self.descriptor_allocator
+            .clear_descriptors(&self.context.device);
         self.descriptor_allocator.destroy_pool(&self.context.device);
         unsafe {
             self.context
@@ -580,7 +571,7 @@ impl Drop for VulkanRenderer {
             frame.destroy(&self.context.device);
         });
 
-        unsafe { self.swapchain.destroy(&self.context.device) }
+        self.swapchain.destroy(&self.context.device);
         log::debug!("End: Dropping renderer");
     }
 }
@@ -595,7 +586,7 @@ struct FrameData {
 }
 
 impl FrameData {
-    pub fn destroy(&mut self, device: &Device) {
+    pub(crate) fn destroy(&mut self, device: &Device) {
         unsafe {
             device.destroy_command_pool(self.command_pool, None);
             device.destroy_semaphore(self.swapchain_semaphore, None);
@@ -605,25 +596,25 @@ impl FrameData {
         self.clean_resources()
     }
 
-    pub fn clean_resources(&mut self) {}
+    pub(crate) fn clean_resources(&mut self) {}
 }
 
 #[derive(Copy, Clone)]
-pub struct QueueData {
-    pub queue: vk::Queue,
-    pub family_index: u32,
+pub(crate) struct QueueData {
+    pub(crate) queue: vk::Queue,
+    pub(crate) family_index: u32,
 }
 
-pub struct AllocatedImage {
-    pub image: vk::Image,
-    pub view: vk::ImageView,
-    pub allocation: vk_mem::Allocation,
-    pub extent: vk::Extent3D,
-    pub _format: vk::Format,
+pub(crate) struct AllocatedImage {
+    pub(crate) image: vk::Image,
+    pub(crate) view: vk::ImageView,
+    pub(crate) allocation: vk_mem::Allocation,
+    pub(crate) extent: vk::Extent3D,
+    pub(crate) _format: vk::Format,
 }
 
 impl AllocatedImage {
-    pub fn destroy(&mut self, device: &Device, allocator: &vk_mem::Allocator) {
+    pub(crate) fn destroy(&mut self, device: &Device, allocator: &vk_mem::Allocator) {
         unsafe {
             device.destroy_image_view(self.view, None);
             allocator.destroy_image(self.image, &mut self.allocation);

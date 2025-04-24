@@ -1,17 +1,17 @@
 use ash::vk;
 use itertools::Itertools;
 
-pub struct LayoutBuilder<'a> {
+pub(crate) struct LayoutBuilder<'a> {
     bindings: Vec<vk::DescriptorSetLayoutBinding<'a>>,
 }
 
 impl LayoutBuilder<'_> {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             bindings: Vec::new(),
         }
     }
-    pub fn add_binding(&mut self, binding: u32, descriptor_type: vk::DescriptorType) {
+    pub(crate) fn add_binding(&mut self, binding: u32, descriptor_type: vk::DescriptorType) {
         let layout_binding = vk::DescriptorSetLayoutBinding::default()
             .binding(binding)
             .descriptor_type(descriptor_type)
@@ -19,11 +19,11 @@ impl LayoutBuilder<'_> {
         self.bindings.push(layout_binding);
     }
 
-    fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.bindings.clear();
     }
 
-    pub fn build(
+    pub(crate) fn build(
         &mut self,
         device: &ash::Device,
         stage_flags: vk::ShaderStageFlags,
@@ -43,12 +43,16 @@ impl LayoutBuilder<'_> {
     }
 }
 
-pub struct Allocator {
+pub(crate) struct Allocator {
     pool: vk::DescriptorPool,
 }
 
 impl Allocator {
-    pub fn init_pool(device: &ash::Device, max_sets: u32, pool_ratios: Vec<PoolSizeRatio>) -> Self {
+    pub(crate) fn init_pool(
+        device: &ash::Device,
+        max_sets: u32,
+        pool_ratios: Vec<PoolSizeRatio>,
+    ) -> Self {
         let pool_sizes = pool_ratios
             .iter()
             .map(|p| {
@@ -68,7 +72,7 @@ impl Allocator {
         Self { pool }
     }
 
-    pub fn allocate(
+    pub(crate) fn allocate(
         &self,
         device: &ash::Device,
         layout: vk::DescriptorSetLayout,
@@ -81,18 +85,18 @@ impl Allocator {
         unsafe { device.allocate_descriptor_sets(&alloc_info) }.unwrap()[0]
     }
 
-    fn clear_descriptors(&self, device: &ash::Device) {
+    pub(crate) fn clear_descriptors(&self, device: &ash::Device) {
         unsafe { device.reset_descriptor_pool(self.pool, vk::DescriptorPoolResetFlags::empty()) }
             .unwrap();
     }
 
-    pub fn destroy_pool(&self, device: &ash::Device) {
+    pub(crate) fn destroy_pool(&self, device: &ash::Device) {
         unsafe { device.destroy_descriptor_pool(self.pool, None) }
     }
 }
 
 #[derive(Debug, Copy, Clone)]
-pub struct PoolSizeRatio {
-    pub descriptor_type: vk::DescriptorType,
-    pub ratio: f32,
+pub(crate) struct PoolSizeRatio {
+    pub(crate) descriptor_type: vk::DescriptorType,
+    pub(crate) ratio: f32,
 }

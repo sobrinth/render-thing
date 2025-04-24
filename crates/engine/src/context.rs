@@ -13,19 +13,19 @@ use std::ffi::CStr;
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::Window;
 
-pub struct VkContext {
+pub(crate) struct VkContext {
     _vulkan_fn: Entry,
-    pub instance: Instance,
+    pub(crate) instance: Instance,
     debug_report_callback: Option<(debug_utils::Instance, vk::DebugUtilsMessengerEXT)>,
-    pub surface_fn: surface::Instance,
-    pub surface: vk::SurfaceKHR,
-    pub physical_device: vk::PhysicalDevice,
-    pub device: Device,
-    pub allocator: vk_mem::Allocator,
+    pub(crate) surface_fn: surface::Instance,
+    pub(crate) surface: vk::SurfaceKHR,
+    pub(crate) physical_device: vk::PhysicalDevice,
+    pub(crate) device: Device,
+    pub(crate) allocator: vk_mem::Allocator,
 }
 
 impl VkContext {
-    pub fn initialize(window: &Window) -> (Self, QueueData) {
+    pub(crate) fn initialize(window: &Window) -> (Self, QueueData) {
         log::debug!("Creating vulkan context");
         // TODO: db: Probably move reference to `winit` out of VkContext
         let vulkan_fn = unsafe { Entry::load().expect("Failed to create ash entrypoint") };
