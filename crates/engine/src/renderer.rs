@@ -120,7 +120,14 @@ impl VulkanRenderer {
             vk::ImageLayout::GENERAL,
         );
 
-        Self::draw_background(cmd, gpu, self.frame_number as f32, self.draw_image.image);
+        Self::draw_background(
+            cmd,
+            gpu,
+            self.frame_number as f32,
+            self.draw_image.image,
+            &self.gradient_pipeline,
+            self,
+        );
 
         // transition the draw image and the swapchain image into their correct transfer layouts.
         Self::transition_image(
@@ -229,29 +236,31 @@ impl VulkanRenderer {
         gpu: &Device,
         frame_number: f32,
         draw_image: vk::Image,
+        gradient_pipeline: &vk::Pipeline,
+        engine: &VulkanRenderer,
     ) {
-        // create a clear color based on the frame-number
-        let flash = f32::abs(f32::sin(frame_number / 120.0));
-        let clear_color = vk::ClearColorValue {
-            float32: [0.0, 0.0, flash, 1.0],
-        };
+        // bind the gradient drawing compute pipeline
+        unsafe { gpu.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, *gradient_pipeline) }
 
-        let clear_subrange = vk::ImageSubresourceRange::default()
-            .aspect_mask(vk::ImageAspectFlags::COLOR)
-            .base_mip_level(0)
-            .level_count(vk::REMAINING_MIP_LEVELS)
-            .base_array_layer(0)
-            .layer_count(vk::REMAINING_ARRAY_LAYERS);
-
-        // clear image
-        let ranges = &[clear_subrange];
+        // bind the descriptor set containing the draw image for the compute pipeline
         unsafe {
-            gpu.cmd_clear_color_image(
+            gpu.cmd_bind_descriptor_sets(
                 cmd,
-                draw_image,
-                vk::ImageLayout::GENERAL,
-                &clear_color,
-                ranges,
+                vk::PipelineBindPoint::COMPUTE,
+                engine.gradient_pipeline_layout,
+                0,
+                &[engine.draw_image_descriptors],
+                &[],
+            )
+        }
+
+        // execute the compute pipeline dispatch using a 16x16 workgroup size, so we divide by 16
+        unsafe {
+            gpu.cmd_dispatch(
+                cmd,
+                f64::ceil(engine.draw_image.extent.width as f64 / 16.0) as u32,
+                f64::ceil(engine.draw_image.extent.height as f64 / 16.0) as u32,
+                1,
             )
         }
     }
