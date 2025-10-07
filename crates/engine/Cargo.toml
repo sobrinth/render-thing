@@ -12,3 +12,5 @@ winit.workspace = true
 itertools.workspace = true
 log.workspace = true
 vk-mem.workspace = true
+imgui.workspace = true
+imgui-winit-support.workspace = true

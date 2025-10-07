@@ -84,7 +84,7 @@ impl ApplicationHandler for Application {
 
                 window.pre_present_notify();
 
-                app.draw();
+                app.draw(window);
 
                 std::thread::sleep(std::time::Duration::from_millis(1000 / 60)); // not really 60 fps
                 window.request_redraw();
