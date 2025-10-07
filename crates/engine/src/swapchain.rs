@@ -9,6 +9,7 @@ pub(crate) struct Swapchain {
     pub(crate) swapchain: vk::SwapchainKHR,
 
     pub(crate) images: Vec<vk::Image>,
+    pub(crate) semaphores: Vec<vk::Semaphore>,
     image_views: Vec<vk::ImageView>,
 }
 
@@ -85,11 +86,21 @@ impl Swapchain {
             })
             .collect_vec();
 
+        let swapchain_semaphore = swapchain_images
+            .iter()
+            .map(|_i| {
+                let create_info = vk::SemaphoreCreateInfo::default();
+
+                unsafe { vk_context.device.create_semaphore(&create_info, None) }.unwrap()
+            })
+            .collect_vec();
+
         Self {
             properties: swapchain_properties,
             swapchain_fn,
             swapchain,
             images: swapchain_images,
+            semaphores: swapchain_semaphore,
             image_views: swapchain_image_views,
         }
     }
@@ -100,6 +111,9 @@ impl Swapchain {
             self.image_views
                 .iter()
                 .for_each(|image_view| device.destroy_image_view(*image_view, None));
+            self.semaphores
+                .iter()
+                .for_each(|semaphore| device.destroy_semaphore(*semaphore, None));
             self.swapchain_fn.destroy_swapchain(self.swapchain, None);
         }
         log::debug!("End: Destroying swapchain");
