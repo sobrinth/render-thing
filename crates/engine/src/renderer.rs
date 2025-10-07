@@ -1,5 +1,5 @@
 use crate::context::VkContext;
-use crate::descriptor;
+use crate::{descriptor, ui};
 use crate::swapchain::Swapchain;
 use ash::{Device, vk};
 use std::path::Path;
@@ -11,6 +11,7 @@ const FRAME_OVERLAP: u32 = 2;
 pub(crate) struct VulkanRenderer {
     frame_number: u32,
     pub context: VkContext,
+    imgui_context: ui::ImguiContext,
 
     swapchain: Swapchain,
 
@@ -28,9 +29,11 @@ pub(crate) struct VulkanRenderer {
     gradient_pipeline_layout: vk::PipelineLayout,
 }
 
-impl VulkanRenderer {
-    pub(crate) fn initialize(window: &Window) -> Self {
+impl<'a> VulkanRenderer {
+    pub(crate) fn initialize(window: &'a Window) -> Self {
         let (context, graphics_queue) = VkContext::initialize(window);
+
+        let imgui = crate::ui::initialize(window);
 
         let swapchain = Swapchain::create(
             &context,
@@ -56,6 +59,7 @@ impl VulkanRenderer {
         Self {
             frame_number: 0,
             context,
+            imgui_context: imgui,
             swapchain,
             frames,
             graphics_queue,
@@ -69,7 +73,7 @@ impl VulkanRenderer {
         }
     }
 
-    pub(crate) fn draw(&mut self) {
+    pub(crate) fn draw(&mut self, _window: &Window) {
         const ONE_SECOND: u64 = 1_000_000_000;
         let frame_index = self.frame_number % FRAME_OVERLAP;
         let mut frame = self.frames[frame_index as usize];
@@ -121,6 +125,10 @@ impl VulkanRenderer {
         );
 
         self.draw_background(cmd, gpu);
+
+
+        // TODO: Draw imgui here?
+        // let _imgui_data = self.imgui_context.draw_ui(_window);
 
         // transition the draw image and the swapchain image into their correct transfer layouts.
         Self::transition_image(

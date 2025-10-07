@@ -7,6 +7,7 @@ mod context;
 mod debug;
 mod descriptor;
 mod swapchain;
+mod ui;
 
 pub struct Engine {
     renderer: VulkanRenderer,
@@ -18,8 +19,8 @@ impl Engine {
         Self { renderer }
     }
 
-    pub fn draw(&mut self) {
-        self.renderer.draw();
+    pub fn draw(&mut self, window: &Window) {
+        self.renderer.draw(window);
     }
 
     pub fn stop(&mut self) {
