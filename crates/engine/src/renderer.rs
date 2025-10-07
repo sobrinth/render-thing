@@ -93,7 +93,7 @@ impl<'a> VulkanRenderer {
             self.swapchain.swapchain_fn.acquire_next_image(
                 self.swapchain.swapchain,
                 ONE_SECOND,
-                frame.swapchain_semaphore,
+                frame.acquire_semaphore,
                 vk::Fence::null(),
             )
         };
@@ -180,14 +180,14 @@ impl<'a> VulkanRenderer {
         let cmd_infos = &[cmd_info];
 
         let wait_info = vk::SemaphoreSubmitInfo::default()
-            .semaphore(frame.swapchain_semaphore)
+            .semaphore(frame.acquire_semaphore)
             .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
             .device_index(0)
             .value(1);
         let wait_infos = &[wait_info];
 
         let signal_info = vk::SemaphoreSubmitInfo::default()
-            .semaphore(frame.render_semaphore)
+            .semaphore(self.swapchain.semaphores[image_index])
             .stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS)
             .device_index(0)
             .value(1);
@@ -213,7 +213,7 @@ impl<'a> VulkanRenderer {
         // this will put the image just rendered to into the visible window
         // wait on render_semaphore for that, as it's necessary that drawing commands have finished
         let swapchains = &[self.swapchain.swapchain];
-        let wait_semaphores = &[frame.render_semaphore];
+        let wait_semaphores = &[self.swapchain.semaphores[image_index]];
         let image_indices = &[image_index as u32];
 
         let present_info = vk::PresentInfoKHR::default()
@@ -221,6 +221,7 @@ impl<'a> VulkanRenderer {
             .wait_semaphores(wait_semaphores)
             .image_indices(image_indices);
 
+        // TODO db: Maybe use `VK_EXT_swapchain_maintenance1` to be able to use a fence here and "circumvent" the semaphore per image
         unsafe {
             self.swapchain
                 .swapchain_fn
@@ -384,19 +385,13 @@ impl<'a> VulkanRenderer {
                     .create_semaphore(&semaphore_info, None)
                     .unwrap()
             };
-            let render_semaphore = unsafe {
-                context
-                    .device
-                    .create_semaphore(&semaphore_info, None)
-                    .unwrap()
-            };
+
             let render_fence = unsafe { context.device.create_fence(&fence_info, None).unwrap() };
 
             let frame = FrameData {
                 command_pool: pool,
                 main_command_buffer: buffer,
-                swapchain_semaphore,
-                render_semaphore,
+                acquire_semaphore: swapchain_semaphore,
                 render_fence,
             };
             frames.push(frame);
@@ -588,8 +583,7 @@ impl Drop for VulkanRenderer {
 struct FrameData {
     command_pool: vk::CommandPool,
     main_command_buffer: vk::CommandBuffer,
-    swapchain_semaphore: vk::Semaphore,
-    render_semaphore: vk::Semaphore,
+    acquire_semaphore: vk::Semaphore,
     render_fence: vk::Fence,
 }
 
@@ -597,8 +591,7 @@ impl FrameData {
     pub(crate) fn destroy(&mut self, device: &Device) {
         unsafe {
             device.destroy_command_pool(self.command_pool, None);
-            device.destroy_semaphore(self.swapchain_semaphore, None);
-            device.destroy_semaphore(self.render_semaphore, None);
+            device.destroy_semaphore(self.acquire_semaphore, None);
             device.destroy_fence(self.render_fence, None);
         }
         self.clean_resources()
