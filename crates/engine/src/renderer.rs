@@ -128,7 +128,9 @@ impl<'a> VulkanRenderer {
 
 
         // TODO: Draw imgui here?
-        // let _imgui_data = self.imgui_context.draw_ui(_window);
+        let _imgui_data = self.imgui_context.draw_ui(_window);
+        // TODO: This needs to be a graphics and not a compute pipeline
+        let _res = ui::draw_imgui(cmd, gpu, &self.gradient_pipeline, _imgui_data);
 
         // transition the draw image and the swapchain image into their correct transfer layouts.
         Self::transition_image(
