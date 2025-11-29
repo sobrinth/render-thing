@@ -1,6 +1,8 @@
 ﻿use crate::renderer::{FrameData, QueueData};
 use crate::swapchain::{Swapchain, SwapchainProperties};
+use ash::vk::{CommandBuffer, Extent2D};
 use ash::{Device, vk};
+use egui::{ClippedPrimitive, TexturesDelta};
 use egui_ash_renderer::Renderer;
 use std::sync::{Arc, Mutex};
 use vk_mem::Allocator;
@@ -9,6 +11,7 @@ use winit::window::Window;
 pub(crate) struct EguiContext {
     renderer: Renderer,
     gui_state: egui_winit::State,
+    pixels_per_point: f32,
 }
 
 impl EguiContext {
@@ -48,6 +51,7 @@ impl EguiContext {
         EguiContext {
             renderer: egui_renderer,
             gui_state,
+            pixels_per_point: window.scale_factor() as f32,
         }
     }
 }
@@ -57,7 +61,7 @@ pub(crate) fn before_frame(
     window: &Window,
     graphics_queue: &QueueData,
     frame: &FrameData,
-) {
+) -> (Vec<ClippedPrimitive>, TexturesDelta) {
     let input = egui.gui_state.take_egui_input(window);
     let ctx = egui.gui_state.egui_ctx().clone();
 
@@ -79,6 +83,7 @@ pub(crate) fn before_frame(
 
     // TODO: This is allocated here and not yet cleaned up correctly (the freeing below must be called
     // after the rendering is done it seems
+    // Should the textures be on the frame? hmm
     if !textures_delta.set.is_empty() {
         egui.renderer
             .set_textures(
@@ -88,8 +93,24 @@ pub(crate) fn before_frame(
             )
             .unwrap();
     }
+    (primitives, textures_delta)
+}
 
-    if !textures_delta.free.is_empty() {
-        egui.renderer.free_textures(&textures_delta.free).unwrap();
+pub(crate) fn render(
+    egui: &mut EguiContext,
+    cmd: CommandBuffer,
+    extent: Extent2D,
+    primitives: Vec<ClippedPrimitive>,
+) {
+    egui.renderer
+        .cmd_draw(cmd, extent, egui.pixels_per_point, &primitives)
+        .unwrap();
+}
+
+pub(crate) fn after_frame(egui: &mut EguiContext, textures: TexturesDelta) {
+    if !textures.free.is_empty() {
+        egui.renderer
+            .free_textures(textures.free.as_slice())
+            .unwrap();
     }
 }

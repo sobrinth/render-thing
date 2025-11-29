@@ -10,7 +10,7 @@ pub(crate) struct Swapchain {
 
     pub(crate) images: Vec<vk::Image>,
     pub(crate) semaphores: Vec<vk::Semaphore>,
-    image_views: Vec<vk::ImageView>,
+    pub(crate) image_views: Vec<vk::ImageView>,
 }
 
 impl Swapchain {
