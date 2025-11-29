@@ -4,11 +4,10 @@ use crate::ui::EguiContext;
 use crate::{descriptor, ui};
 use ash::{Device, vk};
 use std::path::Path;
-use std::time::Instant;
 use vk_mem::Alloc;
 use winit::window::Window;
 
-const FRAME_OVERLAP: u32 = 2;
+pub(crate) const FRAME_OVERLAP: u32 = 2;
 
 pub(crate) struct VulkanRenderer {
     frame_number: u32,
@@ -39,7 +38,7 @@ impl<'a> VulkanRenderer {
             &context,
             [window.inner_size().width, window.inner_size().height],
         );
-        let egui = ui::EguiContext::initialize(
+        let egui = EguiContext::initialize(
             window,
             &context.device,
             &context.allocator,
@@ -110,7 +109,6 @@ impl<'a> VulkanRenderer {
         };
 
         // BEFORE FRAME
-        let new_time = Instant::now();
         let (ui_primitives, ui_textures) = ui::before_frame(
             &mut self.egui_context,
             _window,
