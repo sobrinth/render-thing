@@ -1,12 +1,12 @@
 use crate::context::VkContext;
-use crate::{descriptor, ui};
 use crate::swapchain::Swapchain;
+use crate::ui::EguiContext;
+use crate::{descriptor, ui};
 use ash::{Device, vk};
 use std::path::Path;
 use std::time::Instant;
 use vk_mem::Alloc;
 use winit::window::Window;
-use crate::ui::EguiContext;
 
 const FRAME_OVERLAP: u32 = 2;
 
@@ -111,7 +111,12 @@ impl<'a> VulkanRenderer {
 
         // BEFORE FRAME
         let new_time = Instant::now();
-        ui::before_frame(&mut self.egui_context, _window, &self.graphics_queue, &frame);
+        let (ui_primitives, ui_textures) = ui::before_frame(
+            &mut self.egui_context,
+            _window,
+            &self.graphics_queue,
+            &frame,
+        );
 
         // Reset and begin command buffer for the frame
         unsafe {
@@ -135,12 +140,6 @@ impl<'a> VulkanRenderer {
         );
 
         self.draw_background(cmd, gpu);
-
-
-        // TODO: Draw imgui here?
-        // let _imgui_data = self.imgui_context.draw_ui(_window);
-        // TODO: This needs to be a graphics and not a compute pipeline
-        // let _res = ui::draw_imgui(cmd, gpu, &self.gradient_pipeline, _imgui_data);
 
         // transition the draw image and the swapchain image into their correct transfer layouts.
         Self::transition_image(
@@ -171,12 +170,42 @@ impl<'a> VulkanRenderer {
             self.swapchain.properties.extent,
         );
 
-        // set the swapchain image to Layout::PRESENT so we can present it
+        // DO THE UI RENDER
+
         Self::transition_image(
             gpu,
             cmd,
             self.swapchain.images[image_index],
             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+        );
+
+        let color_attachment_info = vk::RenderingAttachmentInfo::default()
+            .image_view(self.swapchain.image_views[image_index])
+            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .store_op(vk::AttachmentStoreOp::STORE);
+
+        let rendering_info = vk::RenderingInfo::default()
+            .render_area(vk::Rect2D {
+                offset: vk::Offset2D { x: 0, y: 0 },
+                extent: self.swapchain.properties.extent,
+            })
+            .layer_count(1)
+            .color_attachments(std::slice::from_ref(&color_attachment_info));
+
+        unsafe { gpu.cmd_begin_rendering(cmd, &rendering_info) }
+
+        ui::render(&mut self.egui_context, cmd, self.swapchain.properties.extent, ui_primitives);
+
+        unsafe { gpu.cmd_end_rendering(cmd) }
+
+
+        // set the swapchain image to Layout::PRESENT so we can present it
+        Self::transition_image(
+            gpu,
+            cmd,
+            self.swapchain.images[image_index],
+            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             vk::ImageLayout::PRESENT_SRC_KHR,
         );
 
@@ -240,6 +269,8 @@ impl<'a> VulkanRenderer {
                 .queue_present(self.graphics_queue.queue, &present_info)
         }
         .unwrap();
+
+        ui::after_frame(&mut self.egui_context, ui_textures);
 
         // increase the number of frames drawn
         self.frame_number += 1;
