@@ -3,15 +3,17 @@ use crate::{descriptor, ui};
 use crate::swapchain::Swapchain;
 use ash::{Device, vk};
 use std::path::Path;
+use std::time::Instant;
 use vk_mem::Alloc;
 use winit::window::Window;
+use crate::ui::EguiContext;
 
 const FRAME_OVERLAP: u32 = 2;
 
 pub(crate) struct VulkanRenderer {
     frame_number: u32,
+    egui_context: EguiContext,
     pub context: VkContext,
-    imgui_context: ui::ImguiContext,
 
     swapchain: Swapchain,
 
@@ -33,11 +35,15 @@ impl<'a> VulkanRenderer {
     pub(crate) fn initialize(window: &'a Window) -> Self {
         let (context, graphics_queue) = VkContext::initialize(window);
 
-        let imgui = crate::ui::initialize(window);
-
         let swapchain = Swapchain::create(
             &context,
             [window.inner_size().width, window.inner_size().height],
+        );
+        let egui = ui::EguiContext::initialize(
+            window,
+            &context.device,
+            &context.allocator,
+            swapchain.properties,
         );
 
         let frames = Self::create_framedata(&context, &graphics_queue);
@@ -59,7 +65,7 @@ impl<'a> VulkanRenderer {
         Self {
             frame_number: 0,
             context,
-            imgui_context: imgui,
+            egui_context: egui,
             swapchain,
             frames,
             graphics_queue,
@@ -103,6 +109,10 @@ impl<'a> VulkanRenderer {
             Err(err) => panic!("Failed to acquire next image. Cause: {err}"),
         };
 
+        // BEFORE FRAME
+        let new_time = Instant::now();
+        ui::before_frame(&mut self.egui_context, _window, &self.graphics_queue, &frame);
+
         // Reset and begin command buffer for the frame
         unsafe {
             gpu.reset_command_buffer(cmd, vk::CommandBufferResetFlags::default())
@@ -128,9 +138,9 @@ impl<'a> VulkanRenderer {
 
 
         // TODO: Draw imgui here?
-        let _imgui_data = self.imgui_context.draw_ui(_window);
+        // let _imgui_data = self.imgui_context.draw_ui(_window);
         // TODO: This needs to be a graphics and not a compute pipeline
-        let _res = ui::draw_imgui(cmd, gpu, &self.gradient_pipeline, _imgui_data);
+        // let _res = ui::draw_imgui(cmd, gpu, &self.gradient_pipeline, _imgui_data);
 
         // transition the draw image and the swapchain image into their correct transfer layouts.
         Self::transition_image(
@@ -582,8 +592,8 @@ impl Drop for VulkanRenderer {
 }
 
 #[derive(Copy, Clone)]
-struct FrameData {
-    command_pool: vk::CommandPool,
+pub struct FrameData {
+    pub command_pool: vk::CommandPool,
     main_command_buffer: vk::CommandBuffer,
     acquire_semaphore: vk::Semaphore,
     render_fence: vk::Fence,
