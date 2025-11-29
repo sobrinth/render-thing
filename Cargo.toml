@@ -28,7 +28,13 @@ ash-window = "0.13"
 winit = "0.30"
 log = "0.4"
 env_logger = "0.11"
+egui = "0.33.2"
+egui-ash-renderer = { version = "0.11.0", default-features = false, features = [
+    "dynamic-rendering",
+    "vk-mem"
+]}
+egui-winit = "0.33.2"
 itertools = "0.14.0"
-vk-mem = "0.4.0"
+vk-mem = "0.5.0"
 imgui = "0.12"
 imgui-winit-support = "0.13"

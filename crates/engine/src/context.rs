@@ -7,9 +7,10 @@ use ash::Instance;
 use ash::ext::debug_utils;
 use ash::khr::surface;
 use ash::{Device, Entry, vk};
-use itertools::Itertools;
+use itertools::{all, Itertools};
 use std::error::Error;
 use std::ffi::CStr;
+use std::sync::Arc;
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::Window;
 
@@ -20,8 +21,8 @@ pub(crate) struct VkContext {
     pub(crate) surface_fn: surface::Instance,
     pub(crate) surface: vk::SurfaceKHR,
     pub(crate) physical_device: vk::PhysicalDevice,
+    pub(crate) allocator: Arc<vk_mem::Allocator>,
     pub(crate) device: Device,
-    pub(crate) allocator: vk_mem::Allocator,
 }
 
 impl VkContext {
@@ -54,6 +55,7 @@ impl VkContext {
 
         let allocator = unsafe { vk_mem::Allocator::new(alloc_info) }.unwrap();
 
+        let alloc = Arc::new(allocator);
         (
             Self {
                 _vulkan_fn: vulkan_fn,
@@ -63,7 +65,7 @@ impl VkContext {
                 surface,
                 physical_device,
                 device,
-                allocator,
+                allocator: alloc,
             },
             graphics_queue,
         )
