@@ -1,10 +1,10 @@
-﻿use crate::renderer::{FrameData, QueueData};
-use crate::swapchain::{Swapchain, SwapchainProperties};
+﻿use crate::renderer::{FrameData, QueueData, FRAME_OVERLAP};
+use crate::swapchain::SwapchainProperties;
 use ash::vk::{CommandBuffer, Extent2D};
-use ash::{Device, vk};
+use ash::Device;
 use egui::{ClippedPrimitive, TexturesDelta};
 use egui_ash_renderer::Renderer;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use vk_mem::Allocator;
 use winit::window::Window;
 
@@ -42,7 +42,7 @@ impl EguiContext {
                 depth_attachment_format: None,
             },
             egui_ash_renderer::Options {
-                in_flight_frames: 3, // TODO: Frame overlap
+                in_flight_frames: FRAME_OVERLAP as usize, // TODO: Frame overlap
                 ..Default::default()
             },
         )

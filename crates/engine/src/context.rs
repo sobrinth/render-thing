@@ -7,7 +7,7 @@ use ash::Instance;
 use ash::ext::debug_utils;
 use ash::khr::surface;
 use ash::{Device, Entry, vk};
-use itertools::{all, Itertools};
+use itertools::Itertools;
 use std::error::Error;
 use std::ffi::CStr;
 use std::sync::Arc;
