@@ -1,3 +1,4 @@
+use std::mem;
 use crate::context::VkContext;
 use crate::swapchain::Swapchain;
 use crate::ui::UiContext;
@@ -5,6 +6,7 @@ use crate::{descriptor, ui};
 use ash::{Device, vk};
 use std::path::Path;
 use std::sync::Arc;
+use itertools::Itertools;
 use vk_mem::Alloc;
 use winit::event::WindowEvent;
 use winit::window::Window;
@@ -28,9 +30,9 @@ pub(crate) struct VulkanRenderer {
     draw_image_descriptors: vk::DescriptorSet,
     draw_image_descriptor_layout: vk::DescriptorSetLayout,
 
-    compute_shader: vk::ShaderModule,
-    gradient_pipeline: vk::Pipeline,
-    gradient_pipeline_layout: vk::PipelineLayout,
+    effect_pipeline_layout: vk::PipelineLayout,
+    background_effects: Vec<ComputeEffect>,
+    active_background_effect: usize,
 }
 
 impl<'a> VulkanRenderer {
@@ -55,11 +57,30 @@ impl<'a> VulkanRenderer {
         let (descriptor_allocator, draw_image_descriptor_layout, draw_image_descriptors) =
             Self::init_descriptors(&context, &draw_image);
 
-        let shader_code = Self::read_shader_from_file("assets/shaders/gradient.comp.spv");
-        let shader_module = Self::create_shader_module(&context.device, &shader_code);
+        let gradient_shader_code =
+            Self::read_shader_from_file("assets/shaders/gradient_color.comp.spv");
+        let gradient_shader_module =
+            Self::create_shader_module(&context.device, &gradient_shader_code);
 
-        let (gradient_pipeline, gradient_pipeline_layout) =
-            Self::init_pipelines(&context, &draw_image_descriptor_layout, &shader_module);
+        let sky_shader_code = Self::read_shader_from_file("assets/shaders/sky.comp.spv");
+        let sky_shader_module = Self::create_shader_module(&context.device, &sky_shader_code);
+
+        let (effects, effect_pipeline_layout) = Self::initialize_effect_pipelines(
+            &context,
+            &draw_image_descriptor_layout,
+            &vec![
+                (gradient_shader_module, "gradient"),
+                (sky_shader_module, "sky"),
+            ],
+        );
+        unsafe {
+            context
+                .device
+                .destroy_shader_module(gradient_shader_module, None);
+            context
+                .device
+                .destroy_shader_module(sky_shader_module, None);
+        };
 
         Self {
             frame_number: 0,
@@ -73,9 +94,9 @@ impl<'a> VulkanRenderer {
             draw_image,
             draw_image_descriptors,
             draw_image_descriptor_layout,
-            compute_shader: shader_module,
-            gradient_pipeline,
-            gradient_pipeline_layout,
+            effect_pipeline_layout,
+            background_effects: effects,
+            active_background_effect: 1,
         }
     }
 
@@ -285,9 +306,15 @@ impl<'a> VulkanRenderer {
     }
 
     fn draw_background(&self, cmd: vk::CommandBuffer, gpu: &Device) {
+        let active_background = self.background_effects[self.active_background_effect];
+
         // bind the gradient drawing compute pipeline
         unsafe {
-            gpu.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, self.gradient_pipeline)
+            gpu.cmd_bind_pipeline(
+                cmd,
+                vk::PipelineBindPoint::COMPUTE,
+                active_background.pipeline,
+            )
         }
 
         // bind the descriptor set containing the draw image for the compute pipeline
@@ -295,10 +322,20 @@ impl<'a> VulkanRenderer {
             gpu.cmd_bind_descriptor_sets(
                 cmd,
                 vk::PipelineBindPoint::COMPUTE,
-                self.gradient_pipeline_layout,
+                self.effect_pipeline_layout,
                 0,
                 &[self.draw_image_descriptors],
                 &[],
+            )
+        }
+
+        unsafe {
+            gpu.cmd_push_constants(
+                cmd,
+                self.effect_pipeline_layout,
+                vk::ShaderStageFlags::COMPUTE,
+                0,
+                &mem::transmute::<ComputePushConstants, [u8; 64]>(active_background.data)
             )
         }
 
@@ -560,41 +597,70 @@ impl<'a> VulkanRenderer {
         unsafe { device.create_shader_module(&create_info, None) }.unwrap()
     }
 
-    fn init_pipelines(
+    fn initialize_effect_pipelines(
         context: &VkContext,
         image_dsl: &vk::DescriptorSetLayout,
-        shader_module: &vk::ShaderModule,
-    ) -> (vk::Pipeline, vk::PipelineLayout) {
-        Self::init_background_pipeline(context, image_dsl, shader_module)
-    }
+        shaders: &Vec<(vk::ShaderModule, &'static str)>,
+    ) -> (Vec<ComputeEffect>, vk::PipelineLayout) {
+        let push_constants = &[vk::PushConstantRange::default()
+            .offset(0)
+            .size(size_of::<ComputePushConstants>() as u32)
+            .stage_flags(vk::ShaderStageFlags::COMPUTE)];
 
-    fn init_background_pipeline(
-        context: &VkContext,
-        image_dsl: &vk::DescriptorSetLayout,
-        shader_module: &vk::ShaderModule,
-    ) -> (vk::Pipeline, vk::PipelineLayout) {
         let layouts = &[*image_dsl];
-        let layout_info = vk::PipelineLayoutCreateInfo::default().set_layouts(layouts);
+        let layout_info = vk::PipelineLayoutCreateInfo::default()
+            .set_layouts(layouts)
+            .push_constant_ranges(push_constants);
 
         let layout = unsafe { context.device.create_pipeline_layout(&layout_info, None) }.unwrap();
 
+        (
+            shaders
+                .iter()
+                .map(|(shader, name)| {
+                    let pipeline = Self::initialize_shader_pipeline(context, shader, &layout);
+                    let mut effect = ComputeEffect {
+                        layout,
+                        name,
+                        pipeline,
+                        data: ComputePushConstants {
+                            data1: [1.0, 0.0, 0.0, 1.0],
+                            data2: [0.0, 0.0, 1.0, 1.0],
+                            data3: [0.0; 4],
+                            data4: [0.0; 4],
+                        },
+                    };
+                    if *name == "sky" {
+                        effect.data.data1 = [0.1, 0.2, 0.4, 0.97];
+                    }
+                    effect
+                })
+                .collect_vec(),
+            layout,
+        )
+    }
+
+    fn initialize_shader_pipeline(
+        context: &VkContext,
+        shader_module: &vk::ShaderModule,
+        pipeline_layout: &vk::PipelineLayout,
+    ) -> vk::Pipeline {
         let shader_stage_info = vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::COMPUTE)
             .module(*shader_module)
             .name(c"main");
 
         let pipeline_info = &[vk::ComputePipelineCreateInfo::default()
-            .layout(layout)
+            .layout(*pipeline_layout)
             .stage(shader_stage_info)];
 
-        let compute_pipeline = unsafe {
+        
+        unsafe {
             context
                 .device
                 .create_compute_pipelines(vk::PipelineCache::null(), pipeline_info, None)
         }
-        .unwrap()[0];
-
-        (compute_pipeline, layout)
+        .unwrap()[0]
     }
 }
 
@@ -606,14 +672,11 @@ impl Drop for VulkanRenderer {
         unsafe {
             self.context
                 .device
-                .destroy_pipeline(self.gradient_pipeline, None);
-            self.context
-                .device
-                .destroy_pipeline_layout(self.gradient_pipeline_layout, None);
-            self.context
-                .device
-                .destroy_shader_module(self.compute_shader, None)
+                .destroy_pipeline_layout(self.effect_pipeline_layout, None);
         }
+        self.background_effects.iter_mut().for_each(|effect| {
+            effect.destroy(&self.context.device);
+        });
         self.descriptor_allocator
             .clear_descriptors(&self.context.device);
         self.descriptor_allocator.destroy_pool(&self.context.device);
@@ -679,9 +742,25 @@ impl AllocatedImage {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[repr(C)]
 struct ComputePushConstants {
-    data1: [f32; 4],
-    data2: [f32; 4],
-    data3: [f32; 4],
-    data4: [f32; 4],
+    pub data1: [f32; 4],
+    pub data2: [f32; 4],
+    pub data3: [f32; 4],
+    pub data4: [f32; 4],
+}
+
+#[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
+struct ComputeEffect {
+    name: &'static str,
+    pipeline: vk::Pipeline,
+    layout: vk::PipelineLayout,
+    data: ComputePushConstants,
+}
+
+impl ComputeEffect {
+    pub fn destroy(&mut self, device: &Device) {
+        unsafe { device.destroy_pipeline(self.pipeline, None) }
+    }
 }
