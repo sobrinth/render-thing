@@ -1,6 +1,6 @@
 use crate::context::VkContext;
 use crate::swapchain::Swapchain;
-use crate::ui::EguiContext;
+use crate::ui::UiContext;
 use crate::{descriptor, ui};
 use ash::{Device, vk};
 use std::path::Path;
@@ -11,7 +11,7 @@ pub(crate) const FRAME_OVERLAP: u32 = 2;
 
 pub(crate) struct VulkanRenderer {
     frame_number: u32,
-    egui_context: EguiContext,
+    ui_context: UiContext,
     pub context: VkContext,
 
     swapchain: Swapchain,
@@ -38,7 +38,7 @@ impl<'a> VulkanRenderer {
             &context,
             [window.inner_size().width, window.inner_size().height],
         );
-        let egui = EguiContext::initialize(
+        let egui = UiContext::initialize(
             window,
             &context.device,
             &context.allocator,
@@ -64,7 +64,7 @@ impl<'a> VulkanRenderer {
         Self {
             frame_number: 0,
             context,
-            egui_context: egui,
+            ui_context: egui,
             swapchain,
             frames,
             graphics_queue,
@@ -109,8 +109,8 @@ impl<'a> VulkanRenderer {
         };
 
         // BEFORE FRAME
-        let (ui_primitives, ui_textures) = ui::before_frame(
-            &mut self.egui_context,
+        let ui_primitives= ui::before_frame(
+            &mut self.ui_context,
             _window,
             &self.graphics_queue,
             &frame,
@@ -193,7 +193,7 @@ impl<'a> VulkanRenderer {
 
         unsafe { gpu.cmd_begin_rendering(cmd, &rendering_info) }
 
-        ui::render(&mut self.egui_context, cmd, self.swapchain.properties.extent, ui_primitives);
+        ui::render(&mut self.ui_context, cmd, self.swapchain.properties.extent, ui_primitives);
 
         unsafe { gpu.cmd_end_rendering(cmd) }
 
@@ -268,7 +268,7 @@ impl<'a> VulkanRenderer {
         }
         .unwrap();
 
-        ui::after_frame(&mut self.egui_context, ui_textures);
+        ui::after_frame(&mut self.ui_context);
 
         // increase the number of frames drawn
         self.frame_number += 1;
@@ -616,6 +616,7 @@ impl Drop for VulkanRenderer {
         });
 
         self.swapchain.destroy(&self.context.device);
+        self.ui_context.destroy();
         log::debug!("End: Dropping renderer");
     }
 }
