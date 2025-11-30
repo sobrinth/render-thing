@@ -677,3 +677,11 @@ impl AllocatedImage {
         }
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+struct ComputePushConstants {
+    data1: [f32; 4],
+    data2: [f32; 4],
+    data3: [f32; 4],
+    data4: [f32; 4],
+}
