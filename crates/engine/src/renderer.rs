@@ -4,6 +4,7 @@ use crate::ui::UiContext;
 use crate::{descriptor, ui};
 use ash::{Device, vk};
 use std::path::Path;
+use std::sync::Arc;
 use vk_mem::Alloc;
 use winit::window::Window;
 
@@ -11,6 +12,7 @@ pub(crate) const FRAME_OVERLAP: u32 = 2;
 
 pub(crate) struct VulkanRenderer {
     frame_number: u32,
+    gpu_alloc: Arc<vk_mem::Allocator>,
     ui_context: UiContext,
     pub context: VkContext,
 
@@ -32,16 +34,17 @@ pub(crate) struct VulkanRenderer {
 
 impl<'a> VulkanRenderer {
     pub(crate) fn initialize(window: &'a Window) -> Self {
-        let (context, graphics_queue) = VkContext::initialize(window);
+        let (context, graphics_queue, gpu_allocator) = VkContext::initialize(window);
+        let alloc = Arc::new(gpu_allocator);
 
         let swapchain = Swapchain::create(
             &context,
             [window.inner_size().width, window.inner_size().height],
         );
-        let egui = UiContext::initialize(
+        let ui = UiContext::initialize(
             window,
             &context.device,
-            &context.allocator,
+            &alloc,
             swapchain.properties,
         );
 
@@ -49,6 +52,7 @@ impl<'a> VulkanRenderer {
 
         let draw_image = Self::create_draw_image(
             &context,
+            &alloc,
             (window.inner_size().width, window.inner_size().height),
         );
 
@@ -63,8 +67,9 @@ impl<'a> VulkanRenderer {
 
         Self {
             frame_number: 0,
+            gpu_alloc: alloc,
             context,
-            ui_context: egui,
+            ui_context: ui,
             swapchain,
             frames,
             graphics_queue,
@@ -444,7 +449,7 @@ impl<'a> VulkanRenderer {
         unsafe { self.context.device.device_wait_idle() }.unwrap();
     }
 
-    fn create_draw_image(context: &VkContext, window_size: (u32, u32)) -> AllocatedImage {
+    fn create_draw_image(context: &VkContext, gpu_alloc: &vk_mem::Allocator, window_size: (u32, u32)) -> AllocatedImage {
         let extent = vk::Extent3D {
             width: window_size.0,
             height: window_size.1,
@@ -474,7 +479,7 @@ impl<'a> VulkanRenderer {
         };
 
         let (image, allocation) =
-            unsafe { context.allocator.create_image(&create_info, &alloc_info) }.unwrap();
+            unsafe { gpu_alloc.create_image(&create_info, &alloc_info) }.unwrap();
 
         let create_info = vk::ImageViewCreateInfo::default()
             .view_type(vk::ImageViewType::TYPE_2D)
@@ -609,14 +614,13 @@ impl Drop for VulkanRenderer {
                 .destroy_descriptor_set_layout(self.draw_image_descriptor_layout, None)
         }
         self.draw_image
-            .destroy(&self.context.device, &self.context.allocator);
+            .destroy(&self.context.device, &self.gpu_alloc);
 
         self.frames.iter_mut().for_each(|frame| {
             frame.destroy(&self.context.device);
         });
 
         self.swapchain.destroy(&self.context.device);
-        self.ui_context.destroy();
         log::debug!("End: Dropping renderer");
     }
 }
