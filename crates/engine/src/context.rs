@@ -64,7 +64,7 @@ impl VkContext {
                 device,
             },
             graphics_queue,
-            allocator
+            allocator,
         )
     }
 
