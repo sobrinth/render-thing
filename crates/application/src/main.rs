@@ -36,7 +36,7 @@ impl ApplicationHandler for Application {
         let window = event_loop
             .create_window(
                 Window::default_attributes()
-                    .with_title("Vulkan App with Ash")
+                    .with_title("Render Thing")
                     .with_inner_size(PhysicalSize::new(WIDTH, HEIGHT)),
             )
             .unwrap();

@@ -87,7 +87,7 @@ pub(crate) fn before_frame(
             });
             ui.horizontal(|ui| {
                 ui.label("Effect index:");
-                ui.add(egui::Slider::new(active_data.1, 0..=1).text(""));
+                ui.add(egui::Slider::new(active_data.1, 0..=2));
             });
             ui.add(egui::Separator::default().spacing(12.0));
             ui.heading("Push constants");
