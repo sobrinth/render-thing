@@ -56,11 +56,6 @@ impl UiContext {
             textures_to_free: None,
         }
     }
-
-    pub(crate) fn destroy(&mut self) {
-        self.renderer = None;
-        self.state = None;
-    }
 }
 
 pub(crate) fn before_frame(
