@@ -1,20 +1,21 @@
-﻿use crate::renderer::{FrameData, QueueData, FRAME_OVERLAP};
+﻿use crate::renderer::{FRAME_OVERLAP, FrameData, QueueData};
 use crate::swapchain::SwapchainProperties;
-use ash::vk::{CommandBuffer, Extent2D};
 use ash::Device;
-use egui::{ClippedPrimitive, TexturesDelta};
+use ash::vk::{CommandBuffer, Extent2D};
+use egui::{ClippedPrimitive, TextureId};
 use egui_ash_renderer::Renderer;
 use std::sync::Arc;
 use vk_mem::Allocator;
 use winit::window::Window;
 
-pub(crate) struct EguiContext {
-    renderer: Renderer,
-    gui_state: egui_winit::State,
-    pixels_per_point: f32,
+pub(crate) struct UiContext {
+    renderer: Option<Renderer>,
+    state: Option<egui_winit::State>,
+    scale_factor: f32,
+    textures_to_free: Option<Vec<TextureId>>,
 }
 
-impl EguiContext {
+impl UiContext {
     pub(crate) fn initialize(
         window: &Window,
         device: &Device,
@@ -48,22 +49,37 @@ impl EguiContext {
         )
         .expect("Failed to create egui renderer");
 
-        EguiContext {
-            renderer: egui_renderer,
-            gui_state,
-            pixels_per_point: window.scale_factor() as f32,
+        UiContext {
+            renderer: Some(egui_renderer),
+            state: Some(gui_state),
+            scale_factor: window.scale_factor() as f32,
+            textures_to_free: None,
         }
+    }
+
+    pub(crate) fn destroy(&mut self) {
+        self.renderer = None;
+        self.state = None;
     }
 }
 
 pub(crate) fn before_frame(
-    egui: &mut EguiContext,
+    ui: &mut UiContext,
     window: &Window,
     graphics_queue: &QueueData,
     frame: &FrameData,
-) -> (Vec<ClippedPrimitive>, TexturesDelta) {
-    let input = egui.gui_state.take_egui_input(window);
-    let ctx = egui.gui_state.egui_ctx().clone();
+) -> Vec<ClippedPrimitive> {
+    let gui_state = ui
+        .state
+        .as_mut()
+        .expect("UI pre-draw call with gui_state: 'None");
+    let renderer = ui
+        .renderer
+        .as_mut()
+        .expect("UI pre-draw call with renderer: 'None'");
+
+    let input = gui_state.take_egui_input(window);
+    let ctx = gui_state.egui_ctx().clone();
 
     ctx.begin_pass(input);
     egui::Window::new("DEBUG").show(&ctx, |ui| ui.heading("Debug"));
@@ -76,16 +92,19 @@ pub(crate) fn before_frame(
         ..
     } = ctx.end_pass();
 
-    egui.gui_state
-        .handle_platform_output(window, platform_output);
+    gui_state.handle_platform_output(window, platform_output);
 
     let primitives = ctx.tessellate(shapes, pixels_per_point);
+
+    if !textures_delta.free.is_empty() {
+        ui.textures_to_free = Some(textures_delta.free.clone());
+    }
 
     // TODO: This is allocated here and not yet cleaned up correctly (the freeing below must be called
     // after the rendering is done it seems
     // Should the textures be on the frame? hmm
     if !textures_delta.set.is_empty() {
-        egui.renderer
+        renderer
             .set_textures(
                 graphics_queue.queue,
                 frame.command_pool,
@@ -93,24 +112,31 @@ pub(crate) fn before_frame(
             )
             .unwrap();
     }
-    (primitives, textures_delta)
+    primitives
 }
 
 pub(crate) fn render(
-    egui: &mut EguiContext,
+    egui: &mut UiContext,
     cmd: CommandBuffer,
     extent: Extent2D,
     primitives: Vec<ClippedPrimitive>,
 ) {
     egui.renderer
-        .cmd_draw(cmd, extent, egui.pixels_per_point, &primitives)
+        .as_mut()
+        .expect("UI draw call with renderer: 'None'")
+        .cmd_draw(cmd, extent, egui.scale_factor, &primitives)
         .unwrap();
 }
 
-pub(crate) fn after_frame(egui: &mut EguiContext, textures: TexturesDelta) {
-    if !textures.free.is_empty() {
-        egui.renderer
-            .free_textures(textures.free.as_slice())
+pub(crate) fn after_frame(ui: &mut UiContext) {
+    // ? soundness with multiple frames in flight
+    // ? move to after frame
+    if let Some(textures) = ui.textures_to_free.take() {
+        log::trace!("Freeing {} textures from previous frame", textures.len());
+        ui.renderer
+            .as_mut()
+            .unwrap()
+            .free_textures(textures.as_slice())
             .unwrap();
     }
 }
