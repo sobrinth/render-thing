@@ -77,7 +77,14 @@ pub(crate) fn before_frame(
     let ctx = gui_state.egui_ctx().clone();
 
     ctx.begin_pass(input);
-    egui::Window::new("DEBUG").show(&ctx, |ui| ui.heading("Debug"));
+    egui::Window::new("Shader control").show(&ctx, |ui| {
+        let mut effect_idx = 0;
+        ui.heading("Selected effect: ");
+        ui.horizontal(|ui| {
+            ui.label("Effect index:");
+            ui.add(egui::Slider::new(&mut effect_idx, 0..=10).text(""));
+        })
+    });
 
     let egui::FullOutput {
         platform_output,
