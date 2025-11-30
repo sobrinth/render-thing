@@ -10,7 +10,7 @@ use winit::window::Window;
 
 pub(crate) struct UiContext {
     renderer: Option<Renderer>,
-    state: Option<egui_winit::State>,
+    pub state: Option<egui_winit::State>,
     scale_factor: f32,
     textures_to_free: Option<Vec<TextureId>>,
 }

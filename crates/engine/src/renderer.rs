@@ -6,6 +6,7 @@ use ash::{Device, vk};
 use std::path::Path;
 use std::sync::Arc;
 use vk_mem::Alloc;
+use winit::event::WindowEvent;
 use winit::window::Window;
 
 pub(crate) const FRAME_OVERLAP: u32 = 2;
@@ -81,6 +82,10 @@ impl<'a> VulkanRenderer {
             gradient_pipeline,
             gradient_pipeline_layout,
         }
+    }
+
+    pub(crate) fn on_window_event(&mut self, window: &Window, event: &WindowEvent) {
+        let _ = self.ui_context.state.as_mut().unwrap().on_window_event(window, event);
     }
 
     pub(crate) fn draw(&mut self, _window: &Window) {

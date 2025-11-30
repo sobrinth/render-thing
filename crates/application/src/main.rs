@@ -51,6 +51,10 @@ impl ApplicationHandler for Application {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
+        let engine = self.engine.as_mut().unwrap();
+
+        engine.on_window_event(self.window.as_ref().unwrap(), &event);
+
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
