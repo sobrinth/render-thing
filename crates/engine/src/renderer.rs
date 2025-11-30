@@ -96,7 +96,7 @@ impl<'a> VulkanRenderer {
             draw_image_descriptor_layout,
             effect_pipeline_layout,
             background_effects: effects,
-            active_background_effect: 1,
+            active_background_effect: 0,
         }
     }
 
@@ -141,7 +141,7 @@ impl<'a> VulkanRenderer {
 
         // BEFORE FRAME
         let ui_primitives =
-            ui::before_frame(&mut self.ui_context, _window, &self.graphics_queue, &frame);
+            ui::before_frame(&mut self.ui_context, _window, &self.graphics_queue, &frame, (&mut self.background_effects[self.active_background_effect], &mut self.active_background_effect));
 
         // Reset and begin command buffer for the frame
         unsafe {
@@ -743,7 +743,7 @@ impl AllocatedImage {
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
-struct ComputePushConstants {
+pub(crate) struct ComputePushConstants {
     pub data1: [f32; 4],
     pub data2: [f32; 4],
     pub data3: [f32; 4],
@@ -752,11 +752,11 @@ struct ComputePushConstants {
 
 #[derive(Debug, Clone, Copy)]
 #[allow(dead_code)]
-struct ComputeEffect {
-    name: &'static str,
+pub(crate) struct ComputeEffect {
+    pub name: &'static str,
     pipeline: vk::Pipeline,
     layout: vk::PipelineLayout,
-    data: ComputePushConstants,
+    pub data: ComputePushConstants,
 }
 
 impl ComputeEffect {
