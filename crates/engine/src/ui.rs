@@ -1,4 +1,4 @@
-use crate::renderer::{FRAME_OVERLAP, FrameData, QueueData};
+use crate::renderer::{ComputeEffect, FRAME_OVERLAP, FrameData, QueueData};
 use crate::swapchain::SwapchainProperties;
 use ash::Device;
 use ash::vk::{CommandBuffer, Extent2D};
@@ -30,7 +30,7 @@ impl UiContext {
             gui_context,
             viewport_id,
             &window,
-            Some(window.scale_factor() as f32),
+            Some(window.scale_factor() as f32 * 1.5),
             Some(winit::window::Theme::Dark),
             None,
         );
@@ -63,6 +63,7 @@ pub(crate) fn before_frame(
     window: &Window,
     graphics_queue: &QueueData,
     frame: &FrameData,
+    active_data: (&mut ComputeEffect, &mut usize),
 ) -> Vec<ClippedPrimitive> {
     let gui_state = ui
         .state
@@ -77,14 +78,48 @@ pub(crate) fn before_frame(
     let ctx = gui_state.egui_ctx().clone();
 
     ctx.begin_pass(input);
-    egui::Window::new("Shader control").show(&ctx, |ui| {
-        let mut effect_idx = 0;
-        ui.heading("Selected effect: ");
-        ui.horizontal(|ui| {
-            ui.label("Effect index:");
-            ui.add(egui::Slider::new(&mut effect_idx, 0..=10).text(""));
-        })
-    });
+    egui::Window::new("Shader control")
+        .resizable(false)
+        .show(&ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Selected background: ");
+                ui.label(active_data.0.name);
+            });
+            ui.horizontal(|ui| {
+                ui.label("Effect index:");
+                ui.add(egui::Slider::new(active_data.1, 0..=1).text(""));
+            });
+            ui.add(egui::Separator::default().spacing(12.0));
+            ui.heading("Push constants");
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                ui.label("Data1: ");
+                active_data.0.data.data1.iter_mut().for_each(|v| {
+                    ui.add(egui::DragValue::new(v).range(0.0..=1.0).speed(0.005));
+                })
+            });
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                ui.label("Data2: ");
+                active_data.0.data.data2.iter_mut().for_each(|v| {
+                    ui.add(egui::DragValue::new(v).range(0.0..=1.0).speed(0.005));
+                })
+            });
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                ui.label("Data3: ");
+                active_data.0.data.data3.iter_mut().for_each(|v| {
+                    ui.add(egui::DragValue::new(v).range(0.0..=1.0).speed(0.005));
+                })
+            });
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                ui.label("Data4: ");
+                active_data.0.data.data4.iter_mut().for_each(|v| {
+                    ui.add(egui::DragValue::new(v).range(0.0..=1.0).speed(0.005));
+                })
+            })
+        });
 
     let egui::FullOutput {
         platform_output,
