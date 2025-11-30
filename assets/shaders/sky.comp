@@ -13,8 +13,6 @@ layout (push_constant) uniform constants
     vec4 data4;
 } PushConstants;
 
-// HEllo
-
 // Return random noise in the range [0.0, 1.0], as a function of x.
 float Noise2d(in vec2 x)
 {
@@ -80,7 +78,6 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord)
 
 void main()
 {
-    vec4 value = vec4(0.0, 0.0, 0.0, 1.0);
     ivec2 texelCoord = ivec2(gl_GlobalInvocationID.xy);
     ivec2 size = imageSize(image);
     if (texelCoord.x < size.x && texelCoord.y < size.y)

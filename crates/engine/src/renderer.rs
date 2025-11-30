@@ -58,9 +58,13 @@ impl<'a> VulkanRenderer {
             Self::init_descriptors(&context, &draw_image);
 
         let gradient_shader_code =
+            Self::read_shader_from_file("assets/shaders/gradient.comp.spv");
+        let gradient_shader_module = Self::create_shader_module(&context.device, &gradient_shader_code);
+
+        let gradient_color_shader_code =
             Self::read_shader_from_file("assets/shaders/gradient_color.comp.spv");
-        let gradient_shader_module =
-            Self::create_shader_module(&context.device, &gradient_shader_code);
+        let gradient_color_shader_module =
+            Self::create_shader_module(&context.device, &gradient_color_shader_code);
 
         let sky_shader_code = Self::read_shader_from_file("assets/shaders/sky.comp.spv");
         let sky_shader_module = Self::create_shader_module(&context.device, &sky_shader_code);
@@ -69,7 +73,8 @@ impl<'a> VulkanRenderer {
             &context,
             &draw_image_descriptor_layout,
             &vec![
-                (gradient_shader_module, "gradient"),
+                (gradient_shader_module, "color_grid"),
+                (gradient_color_shader_module, "gradient"),
                 (sky_shader_module, "sky"),
             ],
         );
@@ -80,6 +85,9 @@ impl<'a> VulkanRenderer {
             context
                 .device
                 .destroy_shader_module(sky_shader_module, None);
+            context
+                .device
+                .destroy_shader_module(gradient_color_shader_module, None);
         };
 
         Self {
