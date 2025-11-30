@@ -122,7 +122,7 @@ impl Swapchain {
 
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct SwapchainProperties {
-    pub (crate) format: vk::SurfaceFormatKHR,
+    pub(crate) format: vk::SurfaceFormatKHR,
     present_mode: vk::PresentModeKHR,
     pub(crate) extent: vk::Extent2D,
 }

@@ -1,4 +1,4 @@
-﻿use crate::renderer::{FRAME_OVERLAP, FrameData, QueueData};
+use crate::renderer::{FRAME_OVERLAP, FrameData, QueueData};
 use crate::swapchain::SwapchainProperties;
 use ash::Device;
 use ash::vk::{CommandBuffer, Extent2D};

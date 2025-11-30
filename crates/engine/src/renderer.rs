@@ -42,12 +42,7 @@ impl<'a> VulkanRenderer {
             &context,
             [window.inner_size().width, window.inner_size().height],
         );
-        let ui = UiContext::initialize(
-            window,
-            &context.device,
-            &alloc,
-            swapchain.properties,
-        );
+        let ui = UiContext::initialize(window, &context.device, &alloc, swapchain.properties);
 
         let frames = Self::create_framedata(&context, &graphics_queue);
 
@@ -85,7 +80,12 @@ impl<'a> VulkanRenderer {
     }
 
     pub(crate) fn on_window_event(&mut self, window: &Window, event: &WindowEvent) {
-        let _ = self.ui_context.state.as_mut().unwrap().on_window_event(window, event);
+        let _ = self
+            .ui_context
+            .state
+            .as_mut()
+            .unwrap()
+            .on_window_event(window, event);
     }
 
     pub(crate) fn draw(&mut self, _window: &Window) {
@@ -119,12 +119,8 @@ impl<'a> VulkanRenderer {
         };
 
         // BEFORE FRAME
-        let ui_primitives= ui::before_frame(
-            &mut self.ui_context,
-            _window,
-            &self.graphics_queue,
-            &frame,
-        );
+        let ui_primitives =
+            ui::before_frame(&mut self.ui_context, _window, &self.graphics_queue, &frame);
 
         // Reset and begin command buffer for the frame
         unsafe {
@@ -203,10 +199,14 @@ impl<'a> VulkanRenderer {
 
         unsafe { gpu.cmd_begin_rendering(cmd, &rendering_info) }
 
-        ui::render(&mut self.ui_context, cmd, self.swapchain.properties.extent, ui_primitives);
+        ui::render(
+            &mut self.ui_context,
+            cmd,
+            self.swapchain.properties.extent,
+            ui_primitives,
+        );
 
         unsafe { gpu.cmd_end_rendering(cmd) }
-
 
         // set the swapchain image to Layout::PRESENT so we can present it
         Self::transition_image(
@@ -454,7 +454,11 @@ impl<'a> VulkanRenderer {
         unsafe { self.context.device.device_wait_idle() }.unwrap();
     }
 
-    fn create_draw_image(context: &VkContext, gpu_alloc: &vk_mem::Allocator, window_size: (u32, u32)) -> AllocatedImage {
+    fn create_draw_image(
+        context: &VkContext,
+        gpu_alloc: &vk_mem::Allocator,
+        window_size: (u32, u32),
+    ) -> AllocatedImage {
         let extent = vk::Extent3D {
             width: window_size.0,
             height: window_size.1,
