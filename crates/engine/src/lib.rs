@@ -7,6 +7,7 @@ mod renderer;
 mod context;
 mod debug;
 mod descriptor;
+mod pipeline;
 mod swapchain;
 mod ui;
 
