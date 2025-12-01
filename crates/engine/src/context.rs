@@ -10,6 +10,7 @@ use ash::{Device, Entry, vk};
 use itertools::Itertools;
 use std::error::Error;
 use std::ffi::CStr;
+use std::sync::Arc;
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::Window;
 
@@ -24,7 +25,7 @@ pub(crate) struct VkContext {
 }
 
 impl VkContext {
-    pub(crate) fn initialize(window: &Window) -> (Self, QueueData, vk_mem::Allocator) {
+    pub(crate) fn initialize(window: &Window) -> (Self, QueueData, Arc<vk_mem::Allocator>) {
         log::debug!("Creating vulkan context");
         // TODO: db: Probably move reference to `winit` out of VkContext
         let vulkan_fn = unsafe { Entry::load().expect("Failed to create ash entrypoint") };
@@ -64,7 +65,7 @@ impl VkContext {
                 device,
             },
             graphics_queue,
-            allocator,
+            Arc::new(allocator),
         )
     }
 
