@@ -13,9 +13,9 @@ pub struct Vertex {
 
 #[derive(Debug)]
 pub struct GPUMeshBuffers {
-    index_buffer: AllocatedBuffer,
-    vertex_buffer: AllocatedBuffer,
-    vertex_buffer_address: vk::DeviceAddress,
+    pub index_buffer: AllocatedBuffer,
+    pub vertex_buffer: AllocatedBuffer,
+    pub vertex_buffer_address: vk::DeviceAddress,
 }
 
 #[repr(C)]
