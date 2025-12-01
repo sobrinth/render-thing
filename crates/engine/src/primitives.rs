@@ -4,14 +4,15 @@ use ash::vk;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct Vertex {
-    position: [f32; 3],
-    uv_x: f32,
-    normal: [f32; 3],
-    uv_y: f32,
-    color: [f32; 4],
+    pub position: [f32; 3],
+    pub uv_x: f32,
+    pub normal: [f32; 3],
+    pub uv_y: f32,
+    pub color: [f32; 4],
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct GPUMeshBuffers {
     pub index_buffer: AllocatedBuffer,
     pub vertex_buffer: AllocatedBuffer,

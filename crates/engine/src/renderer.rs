@@ -1,6 +1,6 @@
 use crate::context::VkContext;
 use crate::pipeline::PipelineBuilder;
-use crate::primitives::{GPUMeshBuffers, Vertex};
+use crate::primitives::{GPUDrawPushConstants, GPUMeshBuffers, Vertex};
 use crate::swapchain::Swapchain;
 use crate::ui::UiContext;
 use crate::{descriptor, ui};
@@ -40,6 +40,11 @@ pub(crate) struct VulkanRenderer {
 
     triangle_pipeline: vk::Pipeline,
     triangle_pipeline_layout: vk::PipelineLayout,
+
+    mesh_pipeline: vk::Pipeline,
+    mesh_pipeline_layout: vk::PipelineLayout,
+
+    rectangle: GPUMeshBuffers,
 }
 
 impl<'a> VulkanRenderer {
@@ -98,6 +103,12 @@ impl<'a> VulkanRenderer {
         let (triangle_pipeline, triangle_pipeline_layout) =
             Self::initialize_triangle_pipeline(&context, &draw_image);
 
+        let (mesh_pipeline, mesh_pipeline_layout) =
+            Self::initialize_mesh_pipeline(&context, &draw_image);
+
+        let rectangle =
+            Self::init_default_data(&gpu_alloc, &context, &immediate_submit, &graphics_queue);
+
         Self {
             frame_number: 0,
             gpu_alloc,
@@ -116,6 +127,9 @@ impl<'a> VulkanRenderer {
             active_background_effect: 0,
             triangle_pipeline,
             triangle_pipeline_layout,
+            mesh_pipeline,
+            mesh_pipeline_layout,
+            rectangle,
         }
     }
 
@@ -340,13 +354,14 @@ impl<'a> VulkanRenderer {
     }
 
     #[allow(dead_code)]
-    fn immediate_submit<F>(&self, func: F)
-    where
+    fn immediate_submit<F>(
+        gpu: &Device,
+        imm_data: &ImmediateSubmitData,
+        graphics_queue: &QueueData,
+        func: F,
+    ) where
         F: FnOnce(vk::CommandBuffer),
     {
-        let gpu = &self.context.device;
-        let imm_data = &self.immediate_submit;
-
         unsafe {
             gpu.reset_fences(&[imm_data.fence]).unwrap();
             gpu.reset_command_buffer(
@@ -375,7 +390,7 @@ impl<'a> VulkanRenderer {
         let submit = &[vk::SubmitInfo2::default().command_buffer_infos(cmd_info)];
 
         unsafe {
-            gpu.queue_submit2(self.graphics_queue.queue, submit, imm_data.fence)
+            gpu.queue_submit2(graphics_queue.queue, submit, imm_data.fence)
                 .unwrap()
         }
 
@@ -875,12 +890,74 @@ impl<'a> VulkanRenderer {
         (pipeline, pipeline_layout)
     }
 
-    fn upload_mesh(&self, indices: &[u32], vertices: &[Vertex]) -> GPUMeshBuffers {
+    fn initialize_mesh_pipeline(
+        context: &VkContext,
+        draw_image: &AllocatedImage,
+    ) -> (vk::Pipeline, vk::PipelineLayout) {
+        let frag_module =
+            Self::create_shader_module(&context.device, "assets/shaders/colored_triangle.frag.spv");
+        let vert_module = Self::create_shader_module(
+            &context.device,
+            "assets/shaders/colored_triangle_mesh.vert.spv",
+        );
+
+        let buffer_range = &[vk::PushConstantRange::default()
+            .offset(0)
+            .size(size_of::<GPUDrawPushConstants>() as u32)
+            .stage_flags(vk::ShaderStageFlags::VERTEX)];
+
+        let layout_info =
+            vk::PipelineLayoutCreateInfo::default().push_constant_ranges(buffer_range);
+
+        let pipeline_layout =
+            unsafe { context.device.create_pipeline_layout(&layout_info, None) }.unwrap();
+
+        let mut builder = PipelineBuilder::init();
+
+        // use layout
+        builder.pipeline_layout = pipeline_layout;
+        // set shader modules
+        builder.set_shaders(vert_module, frag_module);
+        // Draw triangles
+        builder.set_input_topology(vk::PrimitiveTopology::TRIANGLE_LIST);
+        // Fill triangles
+        builder.set_polygon_mode(vk::PolygonMode::FILL);
+        // no backface culling
+        builder.set_cull_mode(vk::CullModeFlags::NONE, vk::FrontFace::CLOCKWISE);
+        // no multisampling
+        builder.set_multisampling_none();
+        // no blending
+        builder.disable_blending();
+        // no depth testing
+        builder.disable_depth_test();
+
+        // connect the image format from draw image
+        builder.set_color_attachment_format(draw_image.format);
+        builder.set_depth_format(vk::Format::UNDEFINED);
+
+        let pipeline = builder.build(&context.device);
+
+        // clean up modules
+        unsafe {
+            context.device.destroy_shader_module(vert_module, None);
+            context.device.destroy_shader_module(frag_module, None);
+        };
+        (pipeline, pipeline_layout)
+    }
+
+    fn upload_mesh(
+        gpu_alloc: &Arc<vk_mem::Allocator>,
+        context: &VkContext,
+        imm_data: &ImmediateSubmitData,
+        graphics_queue: &QueueData,
+        indices: &[u32],
+        vertices: &[Vertex],
+    ) -> GPUMeshBuffers {
         let vertex_buffer_size = size_of_val(vertices);
         let index_buffer_size = size_of_val(indices);
 
         let vertex_buffer = AllocatedBuffer::create(
-            &self.gpu_alloc,
+            gpu_alloc,
             vertex_buffer_size as u64,
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::TRANSFER_DST
@@ -888,7 +965,7 @@ impl<'a> VulkanRenderer {
             vk_mem::MemoryUsage::GpuOnly,
         );
         let index_buffer = AllocatedBuffer::create(
-            &self.gpu_alloc,
+            gpu_alloc,
             index_buffer_size as u64,
             vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
             vk_mem::MemoryUsage::GpuOnly,
@@ -897,7 +974,7 @@ impl<'a> VulkanRenderer {
         let device_address_info =
             vk::BufferDeviceAddressInfo::default().buffer(vertex_buffer.buffer);
         let device_address = unsafe {
-            self.context
+            context
                 .device
                 .get_buffer_device_address(&device_address_info)
         };
@@ -909,14 +986,14 @@ impl<'a> VulkanRenderer {
         };
 
         let mut staging = AllocatedBuffer::create(
-            &self.gpu_alloc,
+            gpu_alloc,
             (vertex_buffer_size + index_buffer_size) as u64,
             vk::BufferUsageFlags::TRANSFER_SRC,
             vk_mem::MemoryUsage::CpuOnly,
         );
 
         unsafe {
-            let dst_data = self.gpu_alloc.map_memory(&mut staging.allocation).unwrap();
+            let dst_data = gpu_alloc.map_memory(&mut staging.allocation).unwrap();
             std::ptr::copy_nonoverlapping(
                 vertices.as_ptr() as *const u8,
                 dst_data,
@@ -927,16 +1004,16 @@ impl<'a> VulkanRenderer {
                 dst_data.add(vertex_buffer_size),
                 index_buffer_size,
             );
-            self.gpu_alloc.unmap_memory(&mut staging.allocation);
+            gpu_alloc.unmap_memory(&mut staging.allocation);
         };
 
-        self.immediate_submit(|cmd| {
+        Self::immediate_submit(&context.device, imm_data, graphics_queue, |cmd| {
             let vertex_copy = &[vk::BufferCopy::default()
                 .dst_offset(0)
                 .src_offset(0)
                 .size(vertex_buffer_size as u64)];
             unsafe {
-                self.context.device.cmd_copy_buffer(
+                context.device.cmd_copy_buffer(
                     cmd,
                     staging.buffer,
                     meshes.vertex_buffer.buffer,
@@ -950,7 +1027,7 @@ impl<'a> VulkanRenderer {
                 .size(index_buffer_size as u64)];
 
             unsafe {
-                self.context.device.cmd_copy_buffer(
+                context.device.cmd_copy_buffer(
                     cmd,
                     staging.buffer,
                     meshes.index_buffer.buffer,
@@ -958,9 +1035,35 @@ impl<'a> VulkanRenderer {
                 )
             }
         });
-        staging.destroy(&self.gpu_alloc);
+        staging.destroy(gpu_alloc);
 
         meshes
+    }
+
+    fn init_default_data(
+        gpu_alloc: &Arc<vk_mem::Allocator>,
+        context: &VkContext,
+        imm_data: &ImmediateSubmitData,
+        graphics_queue: &QueueData,
+    ) -> GPUMeshBuffers {
+        let vertices = vec![Vertex {
+            position: [1.0, 1.0, 1.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+            normal: [1.0, 1.0, 1.0],
+            uv_x: 1.0,
+            uv_y: 1.0,
+        }];
+
+        let indices = vec![0u32, 1u32, 2u32, 2u32, 1u32, 3u32];
+
+        Self::upload_mesh(
+            gpu_alloc,
+            context,
+            imm_data,
+            graphics_queue,
+            indices.as_slice(),
+            vertices.as_slice(),
+        )
     }
 }
 
@@ -970,6 +1073,17 @@ impl Drop for VulkanRenderer {
         self.wait_gpu_idle();
 
         unsafe {
+            self.rectangle.index_buffer.destroy(&self.gpu_alloc);
+            self.rectangle.vertex_buffer.destroy(&self.gpu_alloc);
+
+            self.context
+                .device
+                .destroy_pipeline(self.mesh_pipeline, None);
+
+            self.context
+                .device
+                .destroy_pipeline_layout(self.mesh_pipeline_layout, None);
+
             self.context
                 .device
                 .destroy_pipeline(self.triangle_pipeline, None);
@@ -1093,6 +1207,7 @@ impl ComputeEffect {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct AllocatedBuffer {
     buffer: vk::Buffer,
     allocation: vk_mem::Allocation,
