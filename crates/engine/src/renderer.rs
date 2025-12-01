@@ -39,14 +39,13 @@ pub(crate) struct VulkanRenderer {
 
 impl<'a> VulkanRenderer {
     pub(crate) fn initialize(window: &'a Window) -> Self {
-        let (context, graphics_queue, gpu_allocator) = VkContext::initialize(window);
-        let alloc = Arc::new(gpu_allocator);
+        let (context, graphics_queue, gpu_alloc) = VkContext::initialize(window);
 
         let swapchain = Swapchain::create(
             &context,
             [window.inner_size().width, window.inner_size().height],
         );
-        let ui = UiContext::initialize(window, &context.device, &alloc, swapchain.properties);
+        let ui = UiContext::initialize(window, &context.device, &gpu_alloc, swapchain.properties);
 
         let immediate_submit = Self::create_immediate_submit_data(&context, &graphics_queue);
 
@@ -54,24 +53,21 @@ impl<'a> VulkanRenderer {
 
         let draw_image = Self::create_draw_image(
             &context,
-            &alloc,
+            &gpu_alloc,
             (window.inner_size().width, window.inner_size().height),
         );
 
         let (descriptor_allocator, draw_image_descriptor_layout, draw_image_descriptors) =
             Self::init_descriptors(&context, &draw_image);
 
-        let gradient_shader_code = Self::read_shader_from_file("assets/shaders/gradient.comp.spv");
         let gradient_shader_module =
-            Self::create_shader_module(&context.device, &gradient_shader_code);
+            Self::create_shader_module(&context.device, "assets/shaders/gradient.comp.spv");
 
-        let gradient_color_shader_code =
-            Self::read_shader_from_file("assets/shaders/gradient_color.comp.spv");
         let gradient_color_shader_module =
-            Self::create_shader_module(&context.device, &gradient_color_shader_code);
+            Self::create_shader_module(&context.device, "assets/shaders/gradient_color.comp.spv");
 
-        let sky_shader_code = Self::read_shader_from_file("assets/shaders/sky.comp.spv");
-        let sky_shader_module = Self::create_shader_module(&context.device, &sky_shader_code);
+        let sky_shader_module =
+            Self::create_shader_module(&context.device, "assets/shaders/sky.comp.spv");
 
         let (effects, effect_pipeline_layout) = Self::initialize_effect_pipelines(
             &context,
@@ -96,7 +92,7 @@ impl<'a> VulkanRenderer {
 
         Self {
             frame_number: 0,
-            gpu_alloc: alloc,
+            gpu_alloc,
             context,
             ui_context: ui,
             swapchain,
@@ -688,8 +684,9 @@ impl<'a> VulkanRenderer {
         ash::util::read_spv(&mut file).unwrap()
     }
 
-    fn create_shader_module(device: &Device, shader_source: &[u32]) -> vk::ShaderModule {
-        let create_info = vk::ShaderModuleCreateInfo::default().code(shader_source);
+    fn create_shader_module<P: AsRef<Path>>(device: &Device, path: P) -> vk::ShaderModule {
+        let source = Self::read_shader_from_file(path);
+        let create_info = vk::ShaderModuleCreateInfo::default().code(&source);
         unsafe { device.create_shader_module(&create_info, None) }.unwrap()
     }
 
