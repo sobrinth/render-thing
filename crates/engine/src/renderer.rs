@@ -265,29 +265,26 @@ impl<'a> VulkanRenderer {
         // Prepare queue submission
         // we want to wait on the present_semaphore, as that is signaled when the swapchain is ready,
         // we will signal render_semaphore, to signal rendering has finished
-        let cmd_info = vk::CommandBufferSubmitInfo::default()
+        let cmd_info = &[vk::CommandBufferSubmitInfo::default()
             .command_buffer(cmd)
-            .device_mask(0);
-        let cmd_infos = &[cmd_info];
+            .device_mask(0)];
 
-        let wait_info = vk::SemaphoreSubmitInfo::default()
+        let wait_info = &[vk::SemaphoreSubmitInfo::default()
             .semaphore(frame.acquire_semaphore)
             .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
             .device_index(0)
-            .value(1);
-        let wait_infos = &[wait_info];
+            .value(1)];
 
-        let signal_info = vk::SemaphoreSubmitInfo::default()
+        let signal_info = &[vk::SemaphoreSubmitInfo::default()
             .semaphore(self.swapchain.semaphores[image_index])
             .stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS)
             .device_index(0)
-            .value(1);
-        let signal_infos = &[signal_info];
+            .value(1)];
 
         let submit_info = vk::SubmitInfo2::default()
-            .wait_semaphore_infos(wait_infos)
-            .signal_semaphore_infos(signal_infos)
-            .command_buffer_infos(cmd_infos);
+            .wait_semaphore_infos(wait_info)
+            .signal_semaphore_infos(signal_info)
+            .command_buffer_infos(cmd_info);
 
         // submit a command buffer to the queue and execute it.
         // render_fence will now block until the graphic commands finish execution
@@ -464,7 +461,7 @@ impl<'a> VulkanRenderer {
         src_size: vk::Extent2D,
         dst_size: vk::Extent2D,
     ) {
-        let blit_region = vk::ImageBlit2::default()
+        let blit_region = &[vk::ImageBlit2::default()
             .src_offsets([
                 vk::Offset3D::default(),
                 vk::Offset3D {
@@ -494,8 +491,7 @@ impl<'a> VulkanRenderer {
                     .base_array_layer(0)
                     .layer_count(1)
                     .mip_level(0),
-            );
-        let regions = &[blit_region];
+            )];
 
         let blit_info = vk::BlitImageInfo2::default()
             .src_image(src)
@@ -503,7 +499,7 @@ impl<'a> VulkanRenderer {
             .dst_image(dst)
             .dst_image_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
             .filter(vk::Filter::LINEAR)
-            .regions(regions);
+            .regions(blit_region);
 
         unsafe { device.cmd_blit_image2(cmd, &blit_info) }
     }
