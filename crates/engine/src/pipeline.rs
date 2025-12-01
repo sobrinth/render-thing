@@ -22,6 +22,7 @@ typedef struct VkGraphicsPipelineCreateInfo {
 } VkGraphicsPipelineCreateInfo;
  */
 use ash::vk;
+use ash::vk::Bool32;
 
 pub(crate) struct PipelineBuilder<'a> {
     color_blend_attachment: vk::PipelineColorBlendAttachmentState,
@@ -32,8 +33,12 @@ pub(crate) struct PipelineBuilder<'a> {
     multisampling: vk::PipelineMultisampleStateCreateInfo<'a>,
     depth_stencil: vk::PipelineDepthStencilStateCreateInfo<'a>,
     pipline_layout: vk::PipelineLayout,
+    color_attachment_format: vk::Format,
 }
 
+const VK_FALSE: Bool32 = 0u32;
+
+#[allow(dead_code)]
 impl<'a> PipelineBuilder<'a> {
     pub(crate) fn init() -> Self {
         let color_blend_attachment = vk::PipelineColorBlendAttachmentState::default();
@@ -53,6 +58,7 @@ impl<'a> PipelineBuilder<'a> {
             multisampling,
             depth_stencil,
             pipline_layout,
+            color_attachment_format: vk::Format::UNDEFINED,
         }
     }
 
@@ -95,5 +101,79 @@ impl<'a> PipelineBuilder<'a> {
                 .create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
                 .unwrap()[0]
         }
+    }
+
+    pub(crate) fn set_shaders(
+        &mut self,
+        vertex_shader: vk::ShaderModule,
+        fragment_shader: vk::ShaderModule,
+    ) {
+        self.shader_stages.clear();
+        let vertex_info = vk::PipelineShaderStageCreateInfo::default()
+            .stage(vk::ShaderStageFlags::VERTEX)
+            .module(vertex_shader);
+
+        let fragment_info = vk::PipelineShaderStageCreateInfo::default()
+            .stage(vk::ShaderStageFlags::FRAGMENT)
+            .module(fragment_shader);
+        self.shader_stages.push(vertex_info);
+        self.shader_stages.push(fragment_info);
+    }
+
+    pub(crate) fn set_input_topology(&mut self, topology: vk::PrimitiveTopology) {
+        self.input_assembly.topology = topology;
+        self.input_assembly.primitive_restart_enable = VK_FALSE;
+    }
+
+    pub(crate) fn set_polygon_mode(&mut self, mode: vk::PolygonMode) {
+        self.rasterizer.polygon_mode = mode;
+        self.rasterizer.line_width = 1.0;
+    }
+
+    pub(crate) fn set_cull_mode(&mut self, mode: vk::CullModeFlags, front_face: vk::FrontFace) {
+        self.rasterizer.cull_mode = mode;
+        self.rasterizer.front_face = front_face;
+    }
+
+    pub(crate) fn set_multisampling_none(&mut self) {
+        self.multisampling.sample_shading_enable = VK_FALSE;
+        // default to no MSAA (1 sample per pixel)
+        self.multisampling.rasterization_samples = vk::SampleCountFlags::TYPE_1;
+        self.multisampling.min_sample_shading = 1.0;
+        self.multisampling.p_sample_mask = std::ptr::null();
+        // no alpha to coverage either
+        self.multisampling.alpha_to_coverage_enable = VK_FALSE;
+        self.multisampling.alpha_to_one_enable = VK_FALSE;
+    }
+
+    pub(crate) fn disable_blending(&mut self) {
+        // default write mask
+        self.color_blend_attachment.color_write_mask = vk::ColorComponentFlags::RGBA;
+        // no blending
+        self.color_blend_attachment.blend_enable = VK_FALSE;
+    }
+
+    pub(crate) fn set_color_attachment_format(&mut self, format: vk::Format) {
+        self.color_attachment_format = format;
+
+        // connect to render info
+        self.render_info.p_color_attachment_formats = &self.color_attachment_format;
+        self.render_info.color_attachment_count = 1;
+    }
+
+    pub(crate) fn set_depth_format(&mut self, format: vk::Format) {
+        self.render_info.depth_attachment_format = format;
+    }
+
+    pub(crate) fn disable_depth_test(&mut self) {
+        self.depth_stencil.depth_test_enable = VK_FALSE;
+        self.depth_stencil.depth_write_enable = VK_FALSE;
+        self.depth_stencil.depth_compare_op = vk::CompareOp::NEVER;
+        self.depth_stencil.depth_bounds_test_enable = VK_FALSE;
+        self.depth_stencil.stencil_test_enable = VK_FALSE;
+        self.depth_stencil.front = vk::StencilOpState::default();
+        self.depth_stencil.back = vk::StencilOpState::default();
+        self.depth_stencil.min_depth_bounds = 0.0;
+        self.depth_stencil.max_depth_bounds = 1.0;
     }
 }
