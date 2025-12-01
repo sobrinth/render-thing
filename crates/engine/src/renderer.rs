@@ -1,12 +1,12 @@
-use std::mem;
 use crate::context::VkContext;
 use crate::swapchain::Swapchain;
 use crate::ui::UiContext;
 use crate::{descriptor, ui};
 use ash::{Device, vk};
+use itertools::Itertools;
+use std::mem;
 use std::path::Path;
 use std::sync::Arc;
-use itertools::Itertools;
 use vk_mem::Alloc;
 use winit::event::WindowEvent;
 use winit::window::Window;
@@ -25,6 +25,8 @@ pub(crate) struct VulkanRenderer {
     graphics_queue: QueueData,
 
     descriptor_allocator: descriptor::Allocator,
+
+    immediate_submit: ImmediateSubmitData,
 
     draw_image: AllocatedImage,
     draw_image_descriptors: vk::DescriptorSet,
@@ -46,6 +48,8 @@ impl<'a> VulkanRenderer {
         );
         let ui = UiContext::initialize(window, &context.device, &alloc, swapchain.properties);
 
+        let immediate_submit = Self::create_immediate_submit_data(&context, &graphics_queue);
+
         let frames = Self::create_framedata(&context, &graphics_queue);
 
         let draw_image = Self::create_draw_image(
@@ -57,9 +61,9 @@ impl<'a> VulkanRenderer {
         let (descriptor_allocator, draw_image_descriptor_layout, draw_image_descriptors) =
             Self::init_descriptors(&context, &draw_image);
 
-        let gradient_shader_code =
-            Self::read_shader_from_file("assets/shaders/gradient.comp.spv");
-        let gradient_shader_module = Self::create_shader_module(&context.device, &gradient_shader_code);
+        let gradient_shader_code = Self::read_shader_from_file("assets/shaders/gradient.comp.spv");
+        let gradient_shader_module =
+            Self::create_shader_module(&context.device, &gradient_shader_code);
 
         let gradient_color_shader_code =
             Self::read_shader_from_file("assets/shaders/gradient_color.comp.spv");
@@ -97,6 +101,7 @@ impl<'a> VulkanRenderer {
             ui_context: ui,
             swapchain,
             frames,
+            immediate_submit,
             graphics_queue,
             descriptor_allocator,
             draw_image,
@@ -148,8 +153,16 @@ impl<'a> VulkanRenderer {
         };
 
         // BEFORE FRAME
-        let ui_primitives =
-            ui::before_frame(&mut self.ui_context, _window, &self.graphics_queue, &frame, (&mut self.background_effects[self.active_background_effect], &mut self.active_background_effect));
+        let ui_primitives = ui::before_frame(
+            &mut self.ui_context,
+            _window,
+            &self.graphics_queue,
+            &frame,
+            (
+                &mut self.background_effects[self.active_background_effect],
+                &mut self.active_background_effect,
+            ),
+        );
 
         // Reset and begin command buffer for the frame
         unsafe {
@@ -313,6 +326,52 @@ impl<'a> VulkanRenderer {
         self.frame_number += 1;
     }
 
+    #[allow(dead_code)]
+    fn immediate_submit<F>(&self, func: F)
+    where
+        F: FnOnce(vk::CommandBuffer),
+    {
+        let gpu = &self.context.device;
+        let imm_data = &self.immediate_submit;
+
+        unsafe {
+            gpu.reset_fences(&[imm_data.fence]).unwrap();
+            gpu.reset_command_buffer(
+                imm_data.command_buffer,
+                vk::CommandBufferResetFlags::default(),
+            )
+            .unwrap();
+        }
+
+        let cmd_begin_info = vk::CommandBufferBeginInfo::default()
+            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+
+        unsafe {
+            gpu.begin_command_buffer(imm_data.command_buffer, &cmd_begin_info)
+                .unwrap()
+        }
+
+        func(imm_data.command_buffer);
+
+        unsafe { gpu.end_command_buffer(imm_data.command_buffer).unwrap() }
+
+        let cmd_info = &[vk::CommandBufferSubmitInfo::default()
+            .command_buffer(imm_data.command_buffer)
+            .device_mask(0)];
+
+        let submit = &[vk::SubmitInfo2::default().command_buffer_infos(cmd_info)];
+
+        unsafe {
+            gpu.queue_submit2(self.graphics_queue.queue, submit, imm_data.fence)
+                .unwrap()
+        }
+
+        unsafe {
+            gpu.wait_for_fences(&[imm_data.fence], true, 1_000_000_000)
+                .unwrap()
+        }
+    }
+
     fn draw_background(&self, cmd: vk::CommandBuffer, gpu: &Device) {
         let active_background = self.background_effects[self.active_background_effect];
 
@@ -343,7 +402,7 @@ impl<'a> VulkanRenderer {
                 self.effect_pipeline_layout,
                 vk::ShaderStageFlags::COMPUTE,
                 0,
-                &mem::transmute::<ComputePushConstants, [u8; 64]>(active_background.data)
+                &mem::transmute::<ComputePushConstants, [u8; 64]>(active_background.data),
             )
         }
 
@@ -447,6 +506,39 @@ impl<'a> VulkanRenderer {
             .regions(regions);
 
         unsafe { device.cmd_blit_image2(cmd, &blit_info) }
+    }
+
+    fn create_immediate_submit_data(
+        context: &VkContext,
+        graphics_queue: &QueueData,
+    ) -> ImmediateSubmitData {
+        let commandpool_info = vk::CommandPoolCreateInfo::default()
+            .queue_family_index(graphics_queue.family_index)
+            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+
+        let command_pool =
+            unsafe { context.device.create_command_pool(&commandpool_info, None) }.unwrap();
+
+        let commandbuffer_info = vk::CommandBufferAllocateInfo::default()
+            .command_pool(command_pool)
+            .command_buffer_count(1)
+            .level(vk::CommandBufferLevel::PRIMARY);
+
+        let command_buffer = unsafe {
+            context
+                .device
+                .allocate_command_buffers(&commandbuffer_info)
+                .unwrap()[0]
+        };
+
+        let fence_info = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
+        let fence = unsafe { context.device.create_fence(&fence_info, None).unwrap() };
+
+        ImmediateSubmitData {
+            command_buffer,
+            command_pool,
+            fence,
+        }
     }
 
     fn create_framedata(context: &VkContext, graphics_queue: &QueueData) -> Vec<FrameData> {
@@ -662,7 +754,6 @@ impl<'a> VulkanRenderer {
             .layout(*pipeline_layout)
             .stage(shader_stage_info)];
 
-        
         unsafe {
             context
                 .device
@@ -699,6 +790,8 @@ impl Drop for VulkanRenderer {
         self.frames.iter_mut().for_each(|frame| {
             frame.destroy(&self.context.device);
         });
+
+        self.immediate_submit.destroy(&self.context.device);
 
         self.swapchain.destroy(&self.context.device);
         log::debug!("End: Dropping renderer");
@@ -745,6 +838,23 @@ impl AllocatedImage {
         unsafe {
             device.destroy_image_view(self.view, None);
             allocator.destroy_image(self.image, &mut self.allocation);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
+struct ImmediateSubmitData {
+    command_pool: vk::CommandPool,
+    command_buffer: vk::CommandBuffer,
+    fence: vk::Fence,
+}
+
+impl ImmediateSubmitData {
+    pub(crate) fn destroy(&mut self, device: &Device) {
+        unsafe {
+            device.destroy_command_pool(self.command_pool, None);
+            device.destroy_fence(self.fence, None);
         }
     }
 }
