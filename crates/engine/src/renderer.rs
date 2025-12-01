@@ -1002,3 +1002,41 @@ impl ComputeEffect {
         unsafe { device.destroy_pipeline(self.pipeline, None) }
     }
 }
+
+#[derive(Debug, Clone)]
+struct AllocatedBuffer {
+    buffer: vk::Buffer,
+    allocation: vk_mem::Allocation,
+    info: vk_mem::AllocationInfo,
+}
+
+impl AllocatedBuffer {
+    pub fn create(
+        allocator: &vk_mem::Allocator,
+        size: u64,
+        usage: vk::BufferUsageFlags,
+        memory_usage: vk_mem::MemoryUsage,
+    ) -> Self {
+        let buffer_info = vk::BufferCreateInfo::default().size(size).usage(usage);
+
+        let alloc_create_info = vk_mem::AllocationCreateInfo {
+            usage: memory_usage,
+            flags: vk_mem::AllocationCreateFlags::MAPPED,
+            ..Default::default()
+        };
+
+        let (buffer, allocation) =
+            unsafe { allocator.create_buffer(&buffer_info, &alloc_create_info) }.unwrap();
+        let info = allocator.get_allocation_info(&allocation);
+
+        AllocatedBuffer {
+            buffer,
+            allocation,
+            info,
+        }
+    }
+
+    pub fn destroy(&mut self, allocator: &vk_mem::Allocator) {
+        unsafe { allocator.destroy_buffer(self.buffer, &mut self.allocation) }
+    }
+}
