@@ -17,6 +17,8 @@ fn main() {
     println!("cargo::rerun-if-changed=../../assets/shaders/gradient.comp");
     println!("cargo::rerun-if-changed=../../assets/shaders/gradient_color.comp");
     println!("cargo::rerun-if-changed=../../assets/shaders/sky.comp");
+    println!("cargo::rerun-if-changed=../../assets/shaders/colored_triangle.vert");
+    println!("cargo::rerun-if-changed=../../assets/shaders/colored_triangle.frag");
 }
 
 fn should_skip_shader_compilation() -> bool {
