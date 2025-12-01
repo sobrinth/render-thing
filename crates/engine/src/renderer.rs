@@ -1,5 +1,6 @@
 use crate::context::VkContext;
 use crate::pipeline::PipelineBuilder;
+use crate::primitives::{GPUMeshBuffers, Vertex};
 use crate::swapchain::Swapchain;
 use crate::ui::UiContext;
 use crate::{descriptor, ui};
@@ -872,6 +873,94 @@ impl<'a> VulkanRenderer {
             context.device.destroy_shader_module(frag_module, None);
         };
         (pipeline, pipeline_layout)
+    }
+
+    fn upload_mesh(&self, indices: &[u32], vertices: &[Vertex]) -> GPUMeshBuffers {
+        let vertex_buffer_size = size_of_val(vertices);
+        let index_buffer_size = size_of_val(indices);
+
+        let vertex_buffer = AllocatedBuffer::create(
+            &self.gpu_alloc,
+            vertex_buffer_size as u64,
+            vk::BufferUsageFlags::STORAGE_BUFFER
+                | vk::BufferUsageFlags::TRANSFER_DST
+                | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
+            vk_mem::MemoryUsage::GpuOnly,
+        );
+        let index_buffer = AllocatedBuffer::create(
+            &self.gpu_alloc,
+            index_buffer_size as u64,
+            vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+            vk_mem::MemoryUsage::GpuOnly,
+        );
+
+        let device_address_info =
+            vk::BufferDeviceAddressInfo::default().buffer(vertex_buffer.buffer);
+        let device_address = unsafe {
+            self.context
+                .device
+                .get_buffer_device_address(&device_address_info)
+        };
+
+        let meshes = GPUMeshBuffers {
+            vertex_buffer,
+            index_buffer,
+            vertex_buffer_address: device_address,
+        };
+
+        let mut staging = AllocatedBuffer::create(
+            &self.gpu_alloc,
+            (vertex_buffer_size + index_buffer_size) as u64,
+            vk::BufferUsageFlags::TRANSFER_SRC,
+            vk_mem::MemoryUsage::CpuOnly,
+        );
+
+        unsafe {
+            let dst_data = self.gpu_alloc.map_memory(&mut staging.allocation).unwrap();
+            std::ptr::copy_nonoverlapping(
+                vertices.as_ptr() as *const u8,
+                dst_data,
+                vertex_buffer_size,
+            );
+            std::ptr::copy_nonoverlapping(
+                indices.as_ptr() as *const u8,
+                dst_data.add(vertex_buffer_size),
+                index_buffer_size,
+            );
+            self.gpu_alloc.unmap_memory(&mut staging.allocation);
+        };
+
+        self.immediate_submit(|cmd| {
+            let vertex_copy = &[vk::BufferCopy::default()
+                .dst_offset(0)
+                .src_offset(0)
+                .size(vertex_buffer_size as u64)];
+            unsafe {
+                self.context.device.cmd_copy_buffer(
+                    cmd,
+                    staging.buffer,
+                    meshes.vertex_buffer.buffer,
+                    vertex_copy,
+                )
+            }
+
+            let index_copy = &[vk::BufferCopy::default()
+                .dst_offset(0)
+                .src_offset(vertex_buffer_size as u64)
+                .size(index_buffer_size as u64)];
+
+            unsafe {
+                self.context.device.cmd_copy_buffer(
+                    cmd,
+                    staging.buffer,
+                    meshes.index_buffer.buffer,
+                    index_copy,
+                )
+            }
+        });
+        staging.destroy(&self.gpu_alloc);
+
+        meshes
     }
 }
 
