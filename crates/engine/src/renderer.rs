@@ -1004,7 +1004,7 @@ impl ComputeEffect {
 }
 
 #[derive(Debug, Clone)]
-struct AllocatedBuffer {
+pub struct AllocatedBuffer {
     buffer: vk::Buffer,
     allocation: vk_mem::Allocation,
     info: vk_mem::AllocationInfo,

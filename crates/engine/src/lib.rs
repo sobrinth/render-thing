@@ -10,6 +10,7 @@ mod descriptor;
 mod pipeline;
 mod swapchain;
 mod ui;
+mod primitives;
 
 pub struct Engine {
     renderer: VulkanRenderer,
