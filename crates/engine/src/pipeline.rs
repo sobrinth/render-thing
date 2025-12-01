@@ -32,7 +32,7 @@ pub(crate) struct PipelineBuilder<'a> {
     rasterizer: vk::PipelineRasterizationStateCreateInfo<'a>,
     multisampling: vk::PipelineMultisampleStateCreateInfo<'a>,
     depth_stencil: vk::PipelineDepthStencilStateCreateInfo<'a>,
-    pipline_layout: vk::PipelineLayout,
+    pub pipeline_layout: vk::PipelineLayout,
     color_attachment_format: vk::Format,
 }
 
@@ -47,7 +47,7 @@ impl<'a> PipelineBuilder<'a> {
         let rasterizer = vk::PipelineRasterizationStateCreateInfo::default();
         let multisampling = vk::PipelineMultisampleStateCreateInfo::default();
         let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default();
-        let pipline_layout = vk::PipelineLayout::null();
+        let pipeline_layout = vk::PipelineLayout::null();
 
         Self {
             color_blend_attachment,
@@ -57,12 +57,12 @@ impl<'a> PipelineBuilder<'a> {
             rasterizer,
             multisampling,
             depth_stencil,
-            pipline_layout,
+            pipeline_layout,
             color_attachment_format: vk::Format::UNDEFINED,
         }
     }
 
-    pub(crate) fn build(&mut self, device: ash::Device) -> vk::Pipeline {
+    pub(crate) fn build(&mut self, device: &ash::Device) -> vk::Pipeline {
         // Only a single viewport and scissor is supported
         let viewport_state = vk::PipelineViewportStateCreateInfo::default()
             .scissor_count(1)
@@ -93,7 +93,7 @@ impl<'a> PipelineBuilder<'a> {
             .multisample_state(&self.multisampling)
             .color_blend_state(&color_blending)
             .depth_stencil_state(&self.depth_stencil)
-            .layout(self.pipline_layout)
+            .layout(self.pipeline_layout)
             .dynamic_state(&dynamic_info);
 
         unsafe {
