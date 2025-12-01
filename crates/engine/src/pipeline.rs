@@ -111,11 +111,13 @@ impl<'a> PipelineBuilder<'a> {
         self.shader_stages.clear();
         let vertex_info = vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::VERTEX)
-            .module(vertex_shader);
+            .module(vertex_shader)
+            .name(c"main");
 
         let fragment_info = vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::FRAGMENT)
-            .module(fragment_shader);
+            .module(fragment_shader)
+            .name(c"main");
         self.shader_stages.push(vertex_info);
         self.shader_stages.push(fragment_info);
     }

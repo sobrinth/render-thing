@@ -36,6 +36,9 @@ pub(crate) struct VulkanRenderer {
     effect_pipeline_layout: vk::PipelineLayout,
     background_effects: Vec<ComputeEffect>,
     active_background_effect: usize,
+
+    triangle_pipeline: vk::Pipeline,
+    triangle_pipeline_layout: vk::PipelineLayout,
 }
 
 impl<'a> VulkanRenderer {
@@ -91,6 +94,9 @@ impl<'a> VulkanRenderer {
                 .destroy_shader_module(gradient_color_shader_module, None);
         };
 
+        let (triangle_pipeline, triangle_pipeline_layout) =
+            Self::initialize_triangle_pipeline(&context, &draw_image);
+
         Self {
             frame_number: 0,
             gpu_alloc,
@@ -107,6 +113,8 @@ impl<'a> VulkanRenderer {
             effect_pipeline_layout,
             background_effects: effects,
             active_background_effect: 0,
+            triangle_pipeline,
+            triangle_pipeline_layout,
         }
     }
 
@@ -756,7 +764,10 @@ impl<'a> VulkanRenderer {
         .unwrap()[0]
     }
 
-    fn initialize_triangle_pipeline(context: &VkContext, draw_image: &AllocatedImage) -> (vk::Pipeline, vk::PipelineLayout) {
+    fn initialize_triangle_pipeline(
+        context: &VkContext,
+        draw_image: &AllocatedImage,
+    ) -> (vk::Pipeline, vk::PipelineLayout) {
         let frag_module =
             Self::create_shader_module(&context.device, "assets/shaders/colored_triangle.frag.spv");
         let vert_module =
@@ -807,6 +818,14 @@ impl Drop for VulkanRenderer {
         self.wait_gpu_idle();
 
         unsafe {
+            self.context
+                .device
+                .destroy_pipeline(self.triangle_pipeline, None);
+
+            self.context
+                .device
+                .destroy_pipeline_layout(self.triangle_pipeline_layout, None);
+
             self.context
                 .device
                 .destroy_pipeline_layout(self.effect_pipeline_layout, None);
