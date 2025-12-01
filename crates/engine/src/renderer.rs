@@ -192,12 +192,22 @@ impl<'a> VulkanRenderer {
 
         self.draw_background(cmd, gpu);
 
-        // transition the draw image and the swapchain image into their correct transfer layouts.
         Self::transition_image(
             gpu,
             cmd,
             self.draw_image.image,
             vk::ImageLayout::GENERAL,
+            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+        );
+
+        self.draw_geometry(cmd, gpu);
+
+        // transition the draw image and the swapchain image into their correct transfer layouts.
+        Self::transition_image(
+            gpu,
+            cmd,
+            self.draw_image.image,
+            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
         );
         Self::transition_image(
@@ -416,6 +426,59 @@ impl<'a> VulkanRenderer {
                 f64::ceil(self.draw_image.extent.height as f64 / 16.0) as u32,
                 1,
             )
+        }
+    }
+
+    fn draw_geometry(&self, cmd: vk::CommandBuffer, gpu: &Device) {
+        // begin a render pass with the draw image
+        let color_attachment = vk::RenderingAttachmentInfo::default()
+            .image_view(self.draw_image.view)
+            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::LOAD) // maybe clear?
+            .store_op(vk::AttachmentStoreOp::STORE);
+
+        let render_info = vk::RenderingInfo::default()
+            .render_area(vk::Rect2D {
+                offset: vk::Offset2D { x: 0, y: 0 },
+                extent: vk::Extent2D {
+                    height: self.draw_image.extent.height,
+                    width: self.draw_image.extent.width,
+                },
+            })
+            .layer_count(1)
+            .color_attachments(core::slice::from_ref(&color_attachment));
+
+        unsafe {
+            gpu.cmd_begin_rendering(cmd, &render_info);
+            gpu.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.triangle_pipeline);
+        }
+
+        // dynamic viewport and scissor
+        let viewport = vk::Viewport {
+            x: 0f32,
+            y: 0f32,
+            width: self.draw_image.extent.width as f32,
+            height: self.draw_image.extent.height as f32,
+            min_depth: 0.0,
+            max_depth: 1.0,
+        };
+
+        unsafe { gpu.cmd_set_viewport(cmd, 0, &[viewport]) }
+
+        let scissor = vk::Rect2D {
+            offset: vk::Offset2D { x: 0, y: 0 },
+            extent: vk::Extent2D {
+                height: self.draw_image.extent.height,
+                width: self.draw_image.extent.width,
+            },
+        };
+
+        unsafe { gpu.cmd_set_scissor(cmd, 0, &[scissor]) }
+
+        // DRAW GEOMETRY
+        unsafe {
+            gpu.cmd_draw(cmd, 3, 1, 0, 0);
+            gpu.cmd_end_rendering(cmd);
         }
     }
 
