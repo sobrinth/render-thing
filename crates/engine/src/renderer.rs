@@ -1,4 +1,5 @@
 use crate::context::VkContext;
+use crate::pipeline::PipelineBuilder;
 use crate::swapchain::Swapchain;
 use crate::ui::UiContext;
 use crate::{descriptor, ui};
@@ -639,7 +640,7 @@ impl<'a> VulkanRenderer {
             view,
             allocation,
             extent,
-            _format: format,
+            format,
         }
     }
 
@@ -754,6 +755,50 @@ impl<'a> VulkanRenderer {
         }
         .unwrap()[0]
     }
+
+    fn initialize_triangle_pipeline(context: &VkContext, draw_image: &AllocatedImage) -> (vk::Pipeline, vk::PipelineLayout) {
+        let frag_module =
+            Self::create_shader_module(&context.device, "assets/shaders/colored_triangle.frag.spv");
+        let vert_module =
+            Self::create_shader_module(&context.device, "assets/shaders/colored_triangle.vert.spv");
+
+        let layout_info = vk::PipelineLayoutCreateInfo::default();
+
+        let pipeline_layout =
+            unsafe { context.device.create_pipeline_layout(&layout_info, None) }.unwrap();
+
+        let mut builder = PipelineBuilder::init();
+
+        // use layout
+        builder.pipeline_layout = pipeline_layout;
+        // set shader modules
+        builder.set_shaders(vert_module, frag_module);
+        // Draw triangles
+        builder.set_input_topology(vk::PrimitiveTopology::TRIANGLE_LIST);
+        // Fill triangles
+        builder.set_polygon_mode(vk::PolygonMode::FILL);
+        // no backface culling
+        builder.set_cull_mode(vk::CullModeFlags::NONE, vk::FrontFace::CLOCKWISE);
+        // no multisampling
+        builder.set_multisampling_none();
+        // no blending
+        builder.disable_blending();
+        // no depth testing
+        builder.disable_depth_test();
+
+        // connect the image format from draw image
+        builder.set_color_attachment_format(draw_image.format);
+        builder.set_depth_format(vk::Format::UNDEFINED);
+
+        let pipeline = builder.build(&context.device);
+
+        // clean up modules
+        unsafe {
+            context.device.destroy_shader_module(vert_module, None);
+            context.device.destroy_shader_module(frag_module, None);
+        };
+        (pipeline, pipeline_layout)
+    }
 }
 
 impl Drop for VulkanRenderer {
@@ -823,7 +868,7 @@ pub(crate) struct AllocatedImage {
     pub(crate) view: vk::ImageView,
     pub(crate) allocation: vk_mem::Allocation,
     pub(crate) extent: vk::Extent3D,
-    pub(crate) _format: vk::Format,
+    pub(crate) format: vk::Format,
 }
 
 impl AllocatedImage {
