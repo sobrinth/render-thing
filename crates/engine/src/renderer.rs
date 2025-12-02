@@ -12,6 +12,7 @@ use std::sync::Arc;
 use vk_mem::Alloc;
 use winit::event::WindowEvent;
 use winit::window::Window;
+use crate::meshes::load_gltf_meshes;
 
 pub(crate) const FRAME_OVERLAP: u32 = 2;
 
@@ -106,10 +107,10 @@ impl<'a> VulkanRenderer {
         let (mesh_pipeline, mesh_pipeline_layout) =
             Self::initialize_mesh_pipeline(&context, &draw_image);
 
+
         let rectangle =
             Self::init_default_data(&gpu_alloc, &context, &immediate_submit, &graphics_queue);
-
-        Self {
+        let renderer = Self {
             frame_number: 0,
             gpu_alloc,
             context,
@@ -130,7 +131,9 @@ impl<'a> VulkanRenderer {
             mesh_pipeline,
             mesh_pipeline_layout,
             rectangle,
-        }
+        };
+        let _test_it = load_gltf_meshes(&renderer, "assets/models/basicmesh.glb");
+        renderer
     }
 
     pub(crate) fn on_window_event(&mut self, window: &Window, event: &WindowEvent) {
@@ -977,8 +980,19 @@ impl<'a> VulkanRenderer {
         (pipeline, pipeline_layout)
     }
 
+    pub(crate) fn upload_mesh(&self, indices: &[u32], vertices: &[Vertex]) -> GPUMeshBuffers {
+        Self::upload_mesh_internal(
+            &self.gpu_alloc,
+            &self.context,
+            &self.immediate_submit,
+            &self.graphics_queue,
+            indices,
+            vertices,
+        )
+    }
+
     #[allow(deprecated)]
-    fn upload_mesh(
+    fn upload_mesh_internal(
         gpu_alloc: &Arc<vk_mem::Allocator>,
         context: &VkContext,
         imm_data: &ImmediateSubmitData,
@@ -1104,7 +1118,7 @@ impl<'a> VulkanRenderer {
 
         let indices = vec![0u32, 1u32, 2u32, 2u32, 1u32, 3u32];
 
-        Self::upload_mesh(
+        Self::upload_mesh_internal(
             gpu_alloc,
             context,
             imm_data,

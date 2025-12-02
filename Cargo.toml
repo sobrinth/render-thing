@@ -32,7 +32,8 @@ egui = "0.33.2"
 egui-ash-renderer = { version = "0.11.0", default-features = false, features = [
     "dynamic-rendering",
     "vk-mem"
-]}
+] }
 egui-winit = "0.33.2"
 itertools = "0.14.0"
 vk-mem = "0.5.0"
+gltf = { version = "1.4.1", features = ["utils"] }

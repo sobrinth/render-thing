@@ -11,6 +11,7 @@ mod pipeline;
 mod primitives;
 mod swapchain;
 mod ui;
+mod meshes;
 
 pub struct Engine {
     renderer: VulkanRenderer,
