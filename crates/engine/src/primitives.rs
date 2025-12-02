@@ -1,4 +1,4 @@
-﻿use crate::renderer::AllocatedBuffer;
+use crate::renderer::AllocatedBuffer;
 use ash::vk;
 
 #[repr(C)]
@@ -9,6 +9,17 @@ pub struct Vertex {
     pub normal: [f32; 3],
     pub uv_y: f32,
     pub color: [f32; 4],
+}
+impl Default for Vertex {
+    fn default() -> Self {
+        Self {
+            position: [0.0, 0.0, 0.0],
+            uv_x: 0.0,
+            normal: [0.0, 0.0, 0.0],
+            uv_y: 0.0,
+            color: [0.0, 0.0, 0.0, 0.0],
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -21,6 +32,6 @@ pub struct GPUMeshBuffers {
 
 #[repr(C)]
 pub struct GPUDrawPushConstants {
-    world_matrix: [[f32; 4]; 4],
-    vertex_buffer: vk::DeviceAddress,
+    pub world_matrix: [[f32; 4]; 4],
+    pub vertex_buffer: vk::DeviceAddress,
 }
