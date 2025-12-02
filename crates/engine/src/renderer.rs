@@ -494,6 +494,38 @@ impl<'a> VulkanRenderer {
         // DRAW GEOMETRY
         unsafe {
             gpu.cmd_draw(cmd, 3, 1, 0, 0);
+            gpu.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.mesh_pipeline);
+        }
+
+        let push_constants = GPUDrawPushConstants {
+            world_matrix: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+            vertex_buffer: self.rectangle.vertex_buffer_address,
+        };
+
+        unsafe {
+            gpu.cmd_push_constants(
+                cmd,
+                self.mesh_pipeline_layout,
+                vk::ShaderStageFlags::VERTEX,
+                0,
+                &mem::transmute::<GPUDrawPushConstants, [u8; size_of::<GPUDrawPushConstants>()]>(
+                    push_constants,
+                ),
+            );
+            gpu.cmd_bind_index_buffer(
+                cmd,
+                self.rectangle.index_buffer.buffer,
+                0,
+                vk::IndexType::UINT32,
+            );
+
+            gpu.cmd_draw_indexed(cmd, 6, 1, 0, 0, 0);
+
             gpu.cmd_end_rendering(cmd);
         }
     }
@@ -945,6 +977,7 @@ impl<'a> VulkanRenderer {
         (pipeline, pipeline_layout)
     }
 
+    #[allow(deprecated)]
     fn upload_mesh(
         gpu_alloc: &Arc<vk_mem::Allocator>,
         context: &VkContext,
@@ -1046,13 +1079,28 @@ impl<'a> VulkanRenderer {
         imm_data: &ImmediateSubmitData,
         graphics_queue: &QueueData,
     ) -> GPUMeshBuffers {
-        let vertices = vec![Vertex {
-            position: [1.0, 1.0, 1.0],
-            color: [1.0, 1.0, 1.0, 1.0],
-            normal: [1.0, 1.0, 1.0],
-            uv_x: 1.0,
-            uv_y: 1.0,
-        }];
+        let vertices = vec![
+            Vertex {
+                position: [0.5, -0.5, 0.0],
+                color: [0.0, 0.0, 0.0, 1.0],
+                ..Default::default()
+            },
+            Vertex {
+                position: [0.5, 0.5, 0.0],
+                color: [0.5, 0.5, 0.5, 1.0],
+                ..Default::default()
+            },
+            Vertex {
+                position: [-0.5, -0.5, 0.0],
+                color: [1.0, 0.0, 0.0, 1.0],
+                ..Default::default()
+            },
+            Vertex {
+                position: [-0.5, 0.5, 0.0],
+                color: [0.0, 1.0, 0.0, 1.0],
+                ..Default::default()
+            },
+        ];
 
         let indices = vec![0u32, 1u32, 2u32, 2u32, 1u32, 3u32];
 

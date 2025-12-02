@@ -8,9 +8,9 @@ mod context;
 mod debug;
 mod descriptor;
 mod pipeline;
+mod primitives;
 mod swapchain;
 mod ui;
-mod primitives;
 
 pub struct Engine {
     renderer: VulkanRenderer,
