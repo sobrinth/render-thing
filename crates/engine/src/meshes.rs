@@ -1,19 +1,30 @@
-﻿use crate::primitives::{GPUMeshBuffers, Vertex};
+use crate::primitives::{GPUMeshBuffers, Vertex};
 use crate::renderer::VulkanRenderer;
 use gltf::accessor::Iter;
 use std::path::Path;
+use std::sync::Arc;
+use vk_mem::Allocator;
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct GeoSurface {
     start_index: u32,
     count: u32,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct MeshAsset {
     name: String,
     surfaces: Vec<GeoSurface>,
-    mesh_buffers: GPUMeshBuffers, // TODO: Destruction of the buffers :)
+    mesh_buffers: GPUMeshBuffers,
+}
+
+impl MeshAsset {
+    pub fn destroy(&mut self, gpu_alloc: &Arc<Allocator>) {
+        self.mesh_buffers.index_buffer.destroy(gpu_alloc);
+        self.mesh_buffers.vertex_buffer.destroy(gpu_alloc);
+    }
 }
 
 pub fn load_gltf_meshes<P: AsRef<Path>>(
@@ -86,8 +97,16 @@ pub fn load_gltf_meshes<P: AsRef<Path>>(
             }
 
             positions.iter().enumerate().for_each(|(i, v)| {
-                let normal = if normals.is_empty() { [1.0, 0.0, 0.0] } else { normals[i] };
-                let color = if colors.is_empty() { [1.0, 1.0, 1.0, 1.0] } else { colors[i] };
+                let normal = if normals.is_empty() {
+                    [1.0, 0.0, 0.0]
+                } else {
+                    normals[i]
+                };
+                let color = if colors.is_empty() {
+                    [1.0, 1.0, 1.0, 1.0]
+                } else {
+                    colors[i]
+                };
                 let vtx = Vertex {
                     position: *v,
                     normal,

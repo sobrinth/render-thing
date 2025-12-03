@@ -1,4 +1,5 @@
 use crate::context::VkContext;
+use crate::meshes::load_gltf_meshes;
 use crate::pipeline::PipelineBuilder;
 use crate::primitives::{GPUDrawPushConstants, GPUMeshBuffers, Vertex};
 use crate::swapchain::Swapchain;
@@ -12,7 +13,6 @@ use std::sync::Arc;
 use vk_mem::Alloc;
 use winit::event::WindowEvent;
 use winit::window::Window;
-use crate::meshes::load_gltf_meshes;
 
 pub(crate) const FRAME_OVERLAP: u32 = 2;
 
@@ -107,7 +107,6 @@ impl<'a> VulkanRenderer {
         let (mesh_pipeline, mesh_pipeline_layout) =
             Self::initialize_mesh_pipeline(&context, &draw_image);
 
-
         let rectangle =
             Self::init_default_data(&gpu_alloc, &context, &immediate_submit, &graphics_queue);
         let renderer = Self {
@@ -133,6 +132,9 @@ impl<'a> VulkanRenderer {
             rectangle,
         };
         let _test_it = load_gltf_meshes(&renderer, "assets/models/basicmesh.glb");
+        for mesh in _test_it.unwrap().iter_mut() {
+            mesh.destroy(&renderer.gpu_alloc);
+        }
         renderer
     }
 

@@ -7,11 +7,11 @@ mod renderer;
 mod context;
 mod debug;
 mod descriptor;
+mod meshes;
 mod pipeline;
 mod primitives;
 mod swapchain;
 mod ui;
-mod meshes;
 
 pub struct Engine {
     renderer: VulkanRenderer,
