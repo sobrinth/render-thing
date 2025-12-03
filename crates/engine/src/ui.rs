@@ -43,7 +43,7 @@ impl UiContext {
                 depth_attachment_format: None,
             },
             egui_ash_renderer::Options {
-                in_flight_frames: FRAME_OVERLAP as usize, // TODO: Frame overlap
+                in_flight_frames: FRAME_OVERLAP as usize,
                 ..Default::default()
             },
         )
@@ -137,9 +137,6 @@ pub(crate) fn before_frame(
         ui.textures_to_free = Some(textures_delta.free.clone());
     }
 
-    // TODO: This is allocated here and not yet cleaned up correctly (the freeing below must be called
-    // after the rendering is done it seems
-    // Should the textures be on the frame? hmm
     if !textures_delta.set.is_empty() {
         renderer
             .set_textures(
