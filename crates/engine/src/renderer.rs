@@ -969,7 +969,8 @@ impl<'a> VulkanRenderer {
         // no multisampling
         builder.set_multisampling_none();
         // no blending
-        builder.disable_blending();
+        // builder.disable_blending();
+        builder.enable_blending_additive();
         // no depth testing
         // builder.disable_depth_test();
         builder.enable_depth_test(true, vk::CompareOp::GREATER_OR_EQUAL);
@@ -1046,7 +1047,10 @@ impl<'a> VulkanRenderer {
             (vertex_buffer_size + index_buffer_size) as u64,
             vk::BufferUsageFlags::TRANSFER_SRC,
             vk_mem::MemoryUsage::AutoPreferHost,
-            Some(vk_mem::AllocationCreateFlags::MAPPED | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE),
+            Some(
+                vk_mem::AllocationCreateFlags::MAPPED
+                    | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
+            ),
         );
 
         unsafe {
