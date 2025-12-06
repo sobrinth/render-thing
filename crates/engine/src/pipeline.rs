@@ -37,6 +37,7 @@ pub(crate) struct PipelineBuilder<'a> {
 }
 
 const VK_FALSE: Bool32 = 0u32;
+const VK_TRUE: Bool32 = 1u32;
 
 #[allow(dead_code)]
 impl<'a> PipelineBuilder<'a> {
@@ -171,6 +172,18 @@ impl<'a> PipelineBuilder<'a> {
         self.depth_stencil.depth_test_enable = VK_FALSE;
         self.depth_stencil.depth_write_enable = VK_FALSE;
         self.depth_stencil.depth_compare_op = vk::CompareOp::NEVER;
+        self.depth_stencil.depth_bounds_test_enable = VK_FALSE;
+        self.depth_stencil.stencil_test_enable = VK_FALSE;
+        self.depth_stencil.front = vk::StencilOpState::default();
+        self.depth_stencil.back = vk::StencilOpState::default();
+        self.depth_stencil.min_depth_bounds = 0.0;
+        self.depth_stencil.max_depth_bounds = 1.0;
+    }
+
+    pub(crate) fn enable_depth_test(&mut self, write_enable: bool, compare_op: vk::CompareOp) {
+        self.depth_stencil.depth_test_enable = VK_TRUE;
+        self.depth_stencil = self.depth_stencil.depth_write_enable(write_enable);
+        self.depth_stencil.depth_compare_op = compare_op;
         self.depth_stencil.depth_bounds_test_enable = VK_FALSE;
         self.depth_stencil.stencil_test_enable = VK_FALSE;
         self.depth_stencil.front = vk::StencilOpState::default();

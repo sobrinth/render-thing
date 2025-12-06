@@ -120,10 +120,10 @@ impl<'a> VulkanRenderer {
         };
 
         let (triangle_pipeline, triangle_pipeline_layout) =
-            Self::initialize_triangle_pipeline(&context, &draw_image);
+            Self::initialize_triangle_pipeline(&context, &draw_image, &depth_image);
 
         let (mesh_pipeline, mesh_pipeline_layout) =
-            Self::initialize_mesh_pipeline(&context, &draw_image);
+            Self::initialize_mesh_pipeline(&context, &draw_image, &depth_image);
 
         let rectangle =
             Self::init_default_data(&gpu_alloc, &context, &immediate_submit, &graphics_queue);
@@ -236,6 +236,14 @@ impl<'a> VulkanRenderer {
             self.draw_image.image,
             vk::ImageLayout::GENERAL,
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+        );
+
+        Self::transition_image(
+            gpu,
+            cmd,
+            self.depth_image.image,
+            vk::ImageLayout::UNDEFINED,
+            vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
         );
 
         self.draw_geometry(cmd, gpu);
@@ -476,6 +484,18 @@ impl<'a> VulkanRenderer {
             .load_op(vk::AttachmentLoadOp::LOAD) // maybe clear?
             .store_op(vk::AttachmentStoreOp::STORE);
 
+        let depth_attachment = vk::RenderingAttachmentInfo::default()
+            .image_view(self.depth_image.view)
+            .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::STORE)
+            .clear_value(vk::ClearValue {
+                depth_stencil: vk::ClearDepthStencilValue {
+                    depth: 0f32,
+                    stencil: 0,
+                },
+            });
+
         let render_info = vk::RenderingInfo::default()
             .render_area(vk::Rect2D {
                 offset: vk::Offset2D { x: 0, y: 0 },
@@ -485,7 +505,8 @@ impl<'a> VulkanRenderer {
                 },
             })
             .layer_count(1)
-            .color_attachments(core::slice::from_ref(&color_attachment));
+            .color_attachments(core::slice::from_ref(&color_attachment))
+            .depth_attachment(&depth_attachment);
 
         unsafe {
             gpu.cmd_begin_rendering(cmd, &render_info);
@@ -563,10 +584,12 @@ impl<'a> VulkanRenderer {
                 10_000f32,
             );
 
+            let model = glm::rotate_y(&Mat4::identity(), 180f32.to_radians());
+
             proj[(1, 1)] *= -1.0; // Flip y axis
 
             let push_constants = GPUDrawPushConstants {
-                world_matrix: (proj * view).data.0,
+                world_matrix: (proj * view * model).data.0,
                 vertex_buffer: mesh.mesh_buffers.vertex_buffer_address,
             };
 
@@ -610,7 +633,7 @@ impl<'a> VulkanRenderer {
         current_layout: vk::ImageLayout,
         new_layout: vk::ImageLayout,
     ) {
-        let aspect_mask = if current_layout == vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL {
+        let aspect_mask = if new_layout == vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL {
             vk::ImageAspectFlags::DEPTH
         } else {
             vk::ImageAspectFlags::COLOR
@@ -948,6 +971,7 @@ impl<'a> VulkanRenderer {
     fn initialize_triangle_pipeline(
         context: &VkContext,
         draw_image: &AllocatedImage,
+        depth_image: &AllocatedImage,
     ) -> (vk::Pipeline, vk::PipelineLayout) {
         let frag_module =
             Self::create_shader_module(&context.device, "assets/shaders/colored_triangle.frag.spv");
@@ -976,11 +1000,12 @@ impl<'a> VulkanRenderer {
         // no blending
         builder.disable_blending();
         // no depth testing
-        builder.disable_depth_test();
+        // builder.disable_depth_test();
+        builder.enable_depth_test(true, vk::CompareOp::GREATER_OR_EQUAL);
 
         // connect the image format from draw image
         builder.set_color_attachment_format(draw_image.format);
-        builder.set_depth_format(vk::Format::UNDEFINED);
+        builder.set_depth_format(depth_image.format);
 
         let pipeline = builder.build(&context.device);
 
@@ -995,6 +1020,7 @@ impl<'a> VulkanRenderer {
     fn initialize_mesh_pipeline(
         context: &VkContext,
         draw_image: &AllocatedImage,
+        depth_image: &AllocatedImage,
     ) -> (vk::Pipeline, vk::PipelineLayout) {
         let frag_module =
             Self::create_shader_module(&context.device, "assets/shaders/colored_triangle.frag.spv");
@@ -1031,11 +1057,12 @@ impl<'a> VulkanRenderer {
         // no blending
         builder.disable_blending();
         // no depth testing
-        builder.disable_depth_test();
+        // builder.disable_depth_test();
+        builder.enable_depth_test(true, vk::CompareOp::GREATER_OR_EQUAL);
 
         // connect the image format from draw image
         builder.set_color_attachment_format(draw_image.format);
-        builder.set_depth_format(vk::Format::UNDEFINED);
+        builder.set_depth_format(depth_image.format);
 
         let pipeline = builder.build(&context.device);
 
