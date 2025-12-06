@@ -45,6 +45,7 @@ pub(crate) struct VulkanRenderer {
     mesh_pipeline_layout: vk::PipelineLayout,
 
     meshes: Option<Vec<MeshAsset>>,
+    active_mesh: usize,
 }
 
 impl<'a> VulkanRenderer {
@@ -138,6 +139,7 @@ impl<'a> VulkanRenderer {
             mesh_pipeline,
             mesh_pipeline_layout,
             meshes: None,
+            active_mesh: 2,
         };
         renderer.meshes = load_gltf_meshes(&renderer, "assets/models/basicmesh.glb");
 
@@ -192,6 +194,8 @@ impl<'a> VulkanRenderer {
             (
                 &mut self.background_effects[self.active_background_effect],
                 &mut self.active_background_effect,
+                &mut self.active_mesh,
+                &mut self.meshes,
             ),
         );
 
@@ -353,7 +357,9 @@ impl<'a> VulkanRenderer {
 
         let present_info = vk::PresentInfoKHR::default()
             .swapchains(core::slice::from_ref(&self.swapchain.swapchain))
-            .wait_semaphores(core::slice::from_ref(&self.swapchain.semaphores[image_index]))
+            .wait_semaphores(core::slice::from_ref(
+                &self.swapchain.semaphores[image_index],
+            ))
             .image_indices(image_indices);
 
         // TODO db: Maybe use `VK_EXT_swapchain_maintenance1` to be able to use a fence here and "circumvent" the semaphore per image
@@ -523,7 +529,7 @@ impl<'a> VulkanRenderer {
 
         // Draw monkey head from meshes
         if let Some(meshes) = &self.meshes {
-            let mesh = &meshes[2];
+            let mesh = &meshes[self.active_mesh];
 
             let view = glm::translate(&Mat4::identity(), &glm::vec3(0.0, 0.0, -5.0));
 
@@ -542,6 +548,7 @@ impl<'a> VulkanRenderer {
             );
 
             let model = glm::scale(&Mat4::identity(), &glm::vec3(2.0, 2.0, 2.0));
+            let model = glm::rotate_y(&model, 10f32.to_radians());
 
             proj[(1, 1)] *= -1.0; // Flip y axis due to GL <-> Vulkan difference in y-axis
 
