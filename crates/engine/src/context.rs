@@ -26,7 +26,7 @@ pub(crate) struct VkContext {
 
 impl VkContext {
     pub(crate) fn initialize(window: &Window) -> (Self, QueueData, Arc<vk_mem::Allocator>) {
-        log::debug!("Creating vulkan context");
+        log::trace!("Creating vulkan context");
         // TODO: db: Probably move reference to `winit` out of VkContext
         let vulkan_fn = unsafe { Entry::load().expect("Failed to create ash entrypoint") };
         let instance = Self::create_instance(&vulkan_fn, window).unwrap();
@@ -285,7 +285,7 @@ impl VkContext {
 
 impl Drop for VkContext {
     fn drop(&mut self) {
-        log::debug!("Start: Dropping context");
+        log::trace!("Start: Dropping context");
         unsafe {
             self.device.destroy_device(None);
             self.surface_fn.destroy_surface(self.surface, None);
@@ -294,7 +294,7 @@ impl Drop for VkContext {
             }
             self.instance.destroy_instance(None);
         }
-        log::debug!("End: Dropping context");
+        log::trace!("End: Dropping context");
     }
 }
 
