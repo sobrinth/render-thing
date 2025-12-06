@@ -22,6 +22,7 @@ pub(crate) struct VulkanRenderer {
     gpu_alloc: Arc<vk_mem::Allocator>,
     ui_context: UiContext,
     pub context: VkContext,
+    resize_requested: bool,
 
     swapchain: Swapchain,
 
@@ -123,6 +124,7 @@ impl<'a> VulkanRenderer {
             frame_number: 0,
             gpu_alloc,
             context,
+            resize_requested: false,
             ui_context: ui,
             swapchain,
             frames,
@@ -156,6 +158,10 @@ impl<'a> VulkanRenderer {
     }
 
     pub(crate) fn draw(&mut self, _window: &Window) {
+        if self.resize_requested {
+            return;
+        }
+
         const ONE_SECOND: u64 = 1_000_000_000;
         let frame_index = self.frame_number % FRAME_OVERLAP;
         let mut frame = self.frames[frame_index as usize];
@@ -182,6 +188,10 @@ impl<'a> VulkanRenderer {
 
         let image_index = match res {
             Ok((image_index, _)) => image_index as usize,
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                self.resize_requested = true;
+                return;
+            }
             Err(err) => panic!("Failed to acquire next image. Cause: {err}"),
         };
 
@@ -363,12 +373,19 @@ impl<'a> VulkanRenderer {
             .image_indices(image_indices);
 
         // TODO db: Maybe use `VK_EXT_swapchain_maintenance1` to be able to use a fence here and "circumvent" the semaphore per image
-        unsafe {
+        let res = unsafe {
             self.swapchain
                 .swapchain_fn
                 .queue_present(self.graphics_queue.queue, &present_info)
+        };
+
+        match res {
+            Ok(_) => {},
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                self.resize_requested = true;
+            }
+            Err(e) => panic!("Failed to present swapchain image: {:?}", e),
         }
-        .unwrap();
 
         ui::after_frame(&mut self.ui_context);
 
