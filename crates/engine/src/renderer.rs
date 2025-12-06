@@ -49,8 +49,8 @@ pub(crate) struct VulkanRenderer {
     active_mesh: usize,
 }
 
-impl<'a> VulkanRenderer {
-    pub(crate) fn initialize(window: &'a Window) -> Self {
+impl VulkanRenderer {
+    pub(crate) fn initialize(window: &Window) -> Self {
         let (context, graphics_queue, gpu_alloc) = VkContext::initialize(window);
 
         let swapchain = Swapchain::create(
@@ -1116,6 +1116,12 @@ impl<'a> VulkanRenderer {
         staging.destroy(gpu_alloc);
 
         meshes
+    }
+
+    fn resize_swapchain(&mut self) {
+        self.wait_gpu_idle();
+
+        self.swapchain.destroy(&self.context.device);
     }
 }
 
