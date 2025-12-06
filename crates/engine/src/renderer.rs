@@ -41,13 +41,9 @@ pub(crate) struct VulkanRenderer {
     background_effects: Vec<ComputeEffect>,
     active_background_effect: usize,
 
-    triangle_pipeline: vk::Pipeline,
-    triangle_pipeline_layout: vk::PipelineLayout,
-
     mesh_pipeline: vk::Pipeline,
     mesh_pipeline_layout: vk::PipelineLayout,
 
-    rectangle: GPUMeshBuffers,
     meshes: Option<Vec<MeshAsset>>,
 }
 
@@ -119,14 +115,9 @@ impl<'a> VulkanRenderer {
                 .destroy_shader_module(gradient_color_shader_module, None);
         };
 
-        let (triangle_pipeline, triangle_pipeline_layout) =
-            Self::initialize_triangle_pipeline(&context, &draw_image, &depth_image);
-
         let (mesh_pipeline, mesh_pipeline_layout) =
             Self::initialize_mesh_pipeline(&context, &draw_image, &depth_image);
 
-        let rectangle =
-            Self::init_default_data(&gpu_alloc, &context, &immediate_submit, &graphics_queue);
         let mut renderer = Self {
             frame_number: 0,
             gpu_alloc,
@@ -144,11 +135,8 @@ impl<'a> VulkanRenderer {
             effect_pipeline_layout,
             background_effects: effects,
             active_background_effect: 0,
-            triangle_pipeline,
-            triangle_pipeline_layout,
             mesh_pipeline,
             mesh_pipeline_layout,
-            rectangle,
             meshes: None,
         };
         renderer.meshes = load_gltf_meshes(&renderer, "assets/models/basicmesh.glb");
@@ -361,13 +349,11 @@ impl<'a> VulkanRenderer {
         // Prepare presentation
         // this will put the image just rendered to into the visible window
         // wait on render_semaphore for that, as it's necessary that drawing commands have finished
-        let swapchains = &[self.swapchain.swapchain];
-        let wait_semaphores = &[self.swapchain.semaphores[image_index]];
         let image_indices = &[image_index as u32];
 
         let present_info = vk::PresentInfoKHR::default()
-            .swapchains(swapchains)
-            .wait_semaphores(wait_semaphores)
+            .swapchains(core::slice::from_ref(&self.swapchain.swapchain))
+            .wait_semaphores(core::slice::from_ref(&self.swapchain.semaphores[image_index]))
             .image_indices(image_indices);
 
         // TODO db: Maybe use `VK_EXT_swapchain_maintenance1` to be able to use a fence here and "circumvent" the semaphore per image
@@ -510,7 +496,7 @@ impl<'a> VulkanRenderer {
 
         unsafe {
             gpu.cmd_begin_rendering(cmd, &render_info);
-            gpu.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.triangle_pipeline);
+            gpu.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.mesh_pipeline);
         }
 
         // dynamic viewport and scissor
@@ -535,42 +521,6 @@ impl<'a> VulkanRenderer {
 
         unsafe { gpu.cmd_set_scissor(cmd, 0, &[scissor]) }
 
-        // DRAW GEOMETRY
-        unsafe {
-            gpu.cmd_draw(cmd, 3, 1, 0, 0);
-            gpu.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.mesh_pipeline);
-        }
-
-        // Draw rectangle
-        let push_constants = GPUDrawPushConstants {
-            world_matrix: [
-                [1.0, 0.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ],
-            vertex_buffer: self.rectangle.vertex_buffer_address,
-        };
-
-        unsafe {
-            gpu.cmd_push_constants(
-                cmd,
-                self.mesh_pipeline_layout,
-                vk::ShaderStageFlags::VERTEX,
-                0,
-                &mem::transmute::<GPUDrawPushConstants, [u8; size_of::<GPUDrawPushConstants>()]>(
-                    push_constants,
-                ),
-            );
-            gpu.cmd_bind_index_buffer(
-                cmd,
-                self.rectangle.index_buffer.buffer,
-                0,
-                vk::IndexType::UINT32,
-            );
-
-            gpu.cmd_draw_indexed(cmd, 6, 1, 0, 0, 0);
-        }
         // Draw monkey head from meshes
         if let Some(meshes) = &self.meshes {
             let mesh = &meshes[2];
@@ -920,9 +870,8 @@ impl<'a> VulkanRenderer {
             .size(size_of::<ComputePushConstants>() as u32)
             .stage_flags(vk::ShaderStageFlags::COMPUTE)];
 
-        let layouts = &[*image_dsl];
         let layout_info = vk::PipelineLayoutCreateInfo::default()
-            .set_layouts(layouts)
+            .set_layouts(core::slice::from_ref(image_dsl))
             .push_constant_ranges(push_constants);
 
         let layout = unsafe { context.device.create_pipeline_layout(&layout_info, None) }.unwrap();
@@ -973,55 +922,6 @@ impl<'a> VulkanRenderer {
                 .create_compute_pipelines(vk::PipelineCache::null(), pipeline_info, None)
         }
         .unwrap()[0]
-    }
-
-    fn initialize_triangle_pipeline(
-        context: &VkContext,
-        draw_image: &AllocatedImage,
-        depth_image: &AllocatedImage,
-    ) -> (vk::Pipeline, vk::PipelineLayout) {
-        let frag_module =
-            Self::create_shader_module(&context.device, "assets/shaders/colored_triangle.frag.spv");
-        let vert_module =
-            Self::create_shader_module(&context.device, "assets/shaders/colored_triangle.vert.spv");
-
-        let layout_info = vk::PipelineLayoutCreateInfo::default();
-
-        let pipeline_layout =
-            unsafe { context.device.create_pipeline_layout(&layout_info, None) }.unwrap();
-
-        let mut builder = PipelineBuilder::init();
-
-        // use layout
-        builder.pipeline_layout = pipeline_layout;
-        // set shader modules
-        builder.set_shaders(vert_module, frag_module);
-        // Draw triangles
-        builder.set_input_topology(vk::PrimitiveTopology::TRIANGLE_LIST);
-        // Fill triangles
-        builder.set_polygon_mode(vk::PolygonMode::FILL);
-        // no backface culling
-        builder.set_cull_mode(vk::CullModeFlags::NONE, vk::FrontFace::CLOCKWISE);
-        // no multisampling
-        builder.set_multisampling_none();
-        // no blending
-        builder.disable_blending();
-        // no depth testing
-        // builder.disable_depth_test();
-        builder.enable_depth_test(true, vk::CompareOp::GREATER_OR_EQUAL);
-
-        // connect the image format from draw image
-        builder.set_color_attachment_format(draw_image.format);
-        builder.set_depth_format(depth_image.format);
-
-        let pipeline = builder.build(&context.device);
-
-        // clean up modules
-        unsafe {
-            context.device.destroy_shader_module(vert_module, None);
-            context.device.destroy_shader_module(frag_module, None);
-        };
-        (pipeline, pipeline_layout)
     }
 
     fn initialize_mesh_pipeline(
@@ -1187,47 +1087,6 @@ impl<'a> VulkanRenderer {
 
         meshes
     }
-
-    fn init_default_data(
-        gpu_alloc: &Arc<vk_mem::Allocator>,
-        context: &VkContext,
-        imm_data: &ImmediateSubmitData,
-        graphics_queue: &QueueData,
-    ) -> GPUMeshBuffers {
-        let vertices = vec![
-            Vertex {
-                position: [0.5, -0.5, 0.0],
-                color: [0.0, 0.0, 0.0, 1.0],
-                ..Default::default()
-            },
-            Vertex {
-                position: [0.5, 0.5, 0.0],
-                color: [0.5, 0.5, 0.5, 1.0],
-                ..Default::default()
-            },
-            Vertex {
-                position: [-0.5, -0.5, 0.0],
-                color: [1.0, 0.0, 0.0, 1.0],
-                ..Default::default()
-            },
-            Vertex {
-                position: [-0.5, 0.5, 0.0],
-                color: [0.0, 1.0, 0.0, 1.0],
-                ..Default::default()
-            },
-        ];
-
-        let indices = vec![0u32, 1u32, 2u32, 2u32, 1u32, 3u32];
-
-        Self::upload_mesh_internal(
-            gpu_alloc,
-            context,
-            imm_data,
-            graphics_queue,
-            indices.as_slice(),
-            vertices.as_slice(),
-        )
-    }
 }
 
 impl Drop for VulkanRenderer {
@@ -1240,9 +1099,6 @@ impl Drop for VulkanRenderer {
                 meshes.iter_mut().for_each(|m| m.destroy(&self.gpu_alloc));
             }
 
-            self.rectangle.index_buffer.destroy(&self.gpu_alloc);
-            self.rectangle.vertex_buffer.destroy(&self.gpu_alloc);
-
             self.context
                 .device
                 .destroy_pipeline(self.mesh_pipeline, None);
@@ -1250,14 +1106,6 @@ impl Drop for VulkanRenderer {
             self.context
                 .device
                 .destroy_pipeline_layout(self.mesh_pipeline_layout, None);
-
-            self.context
-                .device
-                .destroy_pipeline(self.triangle_pipeline, None);
-
-            self.context
-                .device
-                .destroy_pipeline_layout(self.triangle_pipeline_layout, None);
 
             self.context
                 .device

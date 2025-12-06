@@ -77,10 +77,9 @@ impl Allocator {
         device: &ash::Device,
         layout: vk::DescriptorSetLayout,
     ) -> vk::DescriptorSet {
-        let layouts = &[layout];
         let alloc_info = vk::DescriptorSetAllocateInfo::default()
             .descriptor_pool(self.pool)
-            .set_layouts(layouts);
+            .set_layouts(core::slice::from_ref(&layout));
 
         unsafe { device.allocate_descriptor_sets(&alloc_info) }.unwrap()[0]
     }
