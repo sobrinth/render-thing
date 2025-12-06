@@ -28,6 +28,10 @@ impl Engine {
         self.renderer.draw(window);
     }
 
+    pub fn resize(&mut self, size: (u32, u32)) {
+        self.renderer.window_size = size;
+    }
+
     pub fn on_window_event(&mut self, window: &Window, event: &WindowEvent) {
         self.renderer.on_window_event(window, event);
     }

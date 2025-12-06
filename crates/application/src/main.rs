@@ -59,8 +59,9 @@ impl ApplicationHandler for Application {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
             }
-            WindowEvent::Resized { .. } => {
-                // self.vulkan.as_mut().unwrap().dirty_swapchain = true;
+            WindowEvent::Resized(size) => {
+                let app = self.engine.as_mut().unwrap();
+                app.resize(size.into());
             }
             WindowEvent::MouseInput { .. } => {
                 // self.vulkan.as_mut().unwrap().is_left_clicked =
