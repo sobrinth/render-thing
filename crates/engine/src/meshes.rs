@@ -46,8 +46,6 @@ pub fn load_gltf_meshes<P: AsRef<Path>>(
         for primitive in mesh.primitives() {
             vertices.clear();
             indices.clear();
-            // TODO: Figure out why no indices are found haha
-            indices.push(1u32);
 
             let surface = GeoSurface {
                 start_index: 0u32,
@@ -55,11 +53,11 @@ pub fn load_gltf_meshes<P: AsRef<Path>>(
             };
             let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
 
-            if let Some(gltf::mesh::util::ReadIndices::U32(Iter::Standard(iter))) =
+            if let Some(gltf::mesh::util::ReadIndices::U16(Iter::Standard(iter))) =
                 reader.read_indices()
             {
                 for v in iter {
-                    indices.push(v);
+                    indices.push(v as u32);
                 }
             }
 
