@@ -1,3 +1,4 @@
+use crate::meshes::MeshAsset;
 use crate::renderer::{ComputeEffect, FRAME_OVERLAP, FrameData, QueueData};
 use crate::swapchain::SwapchainProperties;
 use ash::Device;
@@ -63,7 +64,12 @@ pub(crate) fn before_frame(
     window: &Window,
     graphics_queue: &QueueData,
     frame: &FrameData,
-    active_data: (&mut ComputeEffect, &mut usize),
+    mut active_data: (
+        &mut ComputeEffect,
+        &mut usize,
+        &mut usize,
+        &mut Option<Vec<MeshAsset>>,
+    ),
 ) -> Vec<ClippedPrimitive> {
     let gui_state = ui
         .state
@@ -89,6 +95,16 @@ pub(crate) fn before_frame(
                 ui.label("Effect index:");
                 ui.add(egui::Slider::new(active_data.1, 0..=2));
             });
+            if let Some(meshes) = &mut active_data.3 {
+                ui.horizontal(|ui| {
+                    ui.label("Selected mesh: ");
+                    ui.label(meshes[*active_data.2].name.as_str());
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Mesh index:");
+                    ui.add(egui::Slider::new(active_data.2, 0..=meshes.len() - 1))
+                });
+            };
             ui.add(egui::Separator::default().spacing(12.0));
             ui.heading("Push constants");
             ui.add_space(10.0);
