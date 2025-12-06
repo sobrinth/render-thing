@@ -1,5 +1,5 @@
 use crate::context::VkContext;
-use crate::meshes::load_gltf_meshes;
+use crate::meshes::{MeshAsset, load_gltf_meshes};
 use crate::pipeline::PipelineBuilder;
 use crate::primitives::{GPUDrawPushConstants, GPUMeshBuffers, Vertex};
 use crate::swapchain::Swapchain;
@@ -46,6 +46,7 @@ pub(crate) struct VulkanRenderer {
     mesh_pipeline_layout: vk::PipelineLayout,
 
     rectangle: GPUMeshBuffers,
+    meshes: Option<Vec<MeshAsset>>,
 }
 
 impl<'a> VulkanRenderer {
@@ -109,7 +110,7 @@ impl<'a> VulkanRenderer {
 
         let rectangle =
             Self::init_default_data(&gpu_alloc, &context, &immediate_submit, &graphics_queue);
-        let renderer = Self {
+        let mut renderer = Self {
             frame_number: 0,
             gpu_alloc,
             context,
@@ -130,11 +131,10 @@ impl<'a> VulkanRenderer {
             mesh_pipeline,
             mesh_pipeline_layout,
             rectangle,
+            meshes: None,
         };
-        let _test_it = load_gltf_meshes(&renderer, "assets/models/basicmesh.glb");
-        for mesh in _test_it.unwrap().iter_mut() {
-            mesh.destroy(&renderer.gpu_alloc);
-        }
+        renderer.meshes = load_gltf_meshes(&renderer, "assets/models/basicmesh.glb");
+
         renderer
     }
 
@@ -1137,6 +1137,10 @@ impl Drop for VulkanRenderer {
         self.wait_gpu_idle();
 
         unsafe {
+            if let Some(meshes) = &mut self.meshes {
+                meshes.iter_mut().for_each(|m| m.destroy(&self.gpu_alloc));
+            }
+
             self.rectangle.index_buffer.destroy(&self.gpu_alloc);
             self.rectangle.vertex_buffer.destroy(&self.gpu_alloc);
 
