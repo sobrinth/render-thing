@@ -66,7 +66,7 @@ impl VulkanRenderer {
         let draw_image = Self::create_image(
             &context,
             &gpu_alloc,
-            (window.inner_size().width, window.inner_size().height),
+            (2560, 1440),
             vk::Format::R16G16B16A16_SFLOAT,
             vk::ImageUsageFlags::TRANSFER_SRC
                 | vk::ImageUsageFlags::TRANSFER_DST
@@ -78,7 +78,7 @@ impl VulkanRenderer {
         let depth_image = Self::create_image(
             &context,
             &gpu_alloc,
-            (window.inner_size().width, window.inner_size().height),
+            (2560, 1440),
             vk::Format::D32_SFLOAT,
             vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
             vk::ImageAspectFlags::DEPTH,
@@ -796,14 +796,14 @@ impl VulkanRenderer {
     fn create_image(
         context: &VkContext,
         gpu_alloc: &vk_mem::Allocator,
-        window_size: (u32, u32),
+        image_resolution: (u32, u32),
         format: vk::Format,
         usage: vk::ImageUsageFlags,
         aspect_flags: vk::ImageAspectFlags,
     ) -> AllocatedImage {
         let extent = vk::Extent3D {
-            width: window_size.0,
-            height: window_size.1,
+            width: image_resolution.0,
+            height: image_resolution.1,
             depth: 1,
         };
 
