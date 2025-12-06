@@ -1133,7 +1133,7 @@ impl<'a> VulkanRenderer {
 
 impl Drop for VulkanRenderer {
     fn drop(&mut self) {
-        log::debug!("Start: Dropping renderer");
+        log::trace!("Start: Dropping renderer");
         self.wait_gpu_idle();
 
         unsafe {
@@ -1185,7 +1185,7 @@ impl Drop for VulkanRenderer {
         self.immediate_submit.destroy(&self.context.device);
 
         self.swapchain.destroy(&self.context.device);
-        log::debug!("End: Dropping renderer");
+        log::trace!("End: Dropping renderer");
     }
 }
 

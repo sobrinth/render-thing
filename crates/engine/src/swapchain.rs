@@ -106,7 +106,7 @@ impl Swapchain {
     }
 
     pub(crate) fn destroy(&mut self, device: &Device) {
-        log::debug!("Start: Destroying swapchain");
+        log::trace!("Start: Destroying swapchain");
         unsafe {
             self.image_views
                 .iter()
@@ -116,7 +116,7 @@ impl Swapchain {
                 .for_each(|semaphore| device.destroy_semaphore(*semaphore, None));
             self.swapchain_fn.destroy_swapchain(self.swapchain, None);
         }
-        log::debug!("End: Destroying swapchain");
+        log::trace!("End: Destroying swapchain");
     }
 }
 
