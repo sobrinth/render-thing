@@ -19,6 +19,7 @@ pub(crate) const FRAME_OVERLAP: u32 = 2;
 
 pub(crate) struct VulkanRenderer {
     frame_number: u32,
+    pub window_size: (u32, u32),
     gpu_alloc: Arc<vk_mem::Allocator>,
     ui_context: UiContext,
     pub context: VkContext,
@@ -53,10 +54,8 @@ impl VulkanRenderer {
     pub(crate) fn initialize(window: &Window) -> Self {
         let (context, graphics_queue, gpu_alloc) = VkContext::initialize(window);
 
-        let swapchain = Swapchain::create(
-            &context,
-            [window.inner_size().width, window.inner_size().height],
-        );
+        let window_size = (window.inner_size().width, window.inner_size().height);
+        let swapchain = Swapchain::create(&context, [window_size.0, window_size.1]);
         let ui = UiContext::initialize(window, &context.device, &gpu_alloc, swapchain.properties);
 
         let immediate_submit = Self::create_immediate_submit_data(&context, &graphics_queue);
@@ -122,6 +121,7 @@ impl VulkanRenderer {
 
         let mut renderer = Self {
             frame_number: 0,
+            window_size,
             gpu_alloc,
             context,
             resize_requested: false,
@@ -159,7 +159,10 @@ impl VulkanRenderer {
 
     pub(crate) fn draw(&mut self, _window: &Window) {
         if self.resize_requested {
-            return;
+            let minimized = Self::resize_swapchain(self);
+            if minimized {
+                return;
+            }
         }
 
         const ONE_SECOND: u64 = 1_000_000_000;
@@ -380,7 +383,7 @@ impl VulkanRenderer {
         };
 
         match res {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
                 self.resize_requested = true;
             }
@@ -1118,10 +1121,18 @@ impl VulkanRenderer {
         meshes
     }
 
-    fn resize_swapchain(&mut self) {
+    fn resize_swapchain(&mut self) -> bool {
         self.wait_gpu_idle();
+        if self.window_size.0 == 0 || self.window_size.1 == 0 {
+            return true;
+        }
 
         self.swapchain.destroy(&self.context.device);
+
+        self.swapchain = Swapchain::create(&self.context, [self.window_size.0, self.window_size.1]);
+
+        self.resize_requested = false;
+        false
     }
 }
 
