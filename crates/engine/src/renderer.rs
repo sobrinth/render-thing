@@ -575,18 +575,25 @@ impl<'a> VulkanRenderer {
         if let Some(meshes) = &self.meshes {
             let mesh = &meshes[2];
 
-            let view = glm::translate(&Mat4::identity(), &glm::vec3(0.0, 0.0, -4.0));
+            let view = glm::translate(&Mat4::identity(), &glm::vec3(0.0, 0.0, -5.0));
 
-            let mut proj = glm::perspective(
+            /*
+               Use perspective_zo to get a projection matrix that is correct for vulkan
+               C++ code often sets GLM_FORCE_DEPTH_ZERO_TO_ONE to make the normal glm::perspective work
+               https://computergraphics.stackexchange.com/questions/12448/vulkan-perspective-matrix-vs-opengl-perspective-matrix
+
+               This code uses 0 as the far plane and 1 as the near plane, so the values are switched (depth clear is set to 0.0f32)
+            */
+            let mut proj = glm::perspective_rh_zo(
                 self.draw_image.extent.width as f32 / self.draw_image.extent.height as f32,
                 70f32.to_radians(),
-                0.1f32, // switch around as soon as the depth is switched. Then 0 will be far and 1 the near plane
-                10_000f32,
+                10000f32,
+                0.1f32,
             );
 
-            let model = glm::rotate_y(&Mat4::identity(), 180f32.to_radians());
+            let model = glm::scale(&Mat4::identity(), &glm::vec3(2.0, 2.0, 2.0));
 
-            proj[(1, 1)] *= -1.0; // Flip y axis
+            proj[(1, 1)] *= -1.0; // Flip y axis due to GL <-> Vulkan difference in y-axis
 
             let push_constants = GPUDrawPushConstants {
                 world_matrix: (proj * view * model).data.0,
