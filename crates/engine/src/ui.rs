@@ -69,6 +69,7 @@ pub(crate) fn before_frame(
         &mut usize,
         &mut usize,
         &mut Option<Vec<MeshAsset>>,
+        &mut f32,
     ),
 ) -> Vec<ClippedPrimitive> {
     let gui_state = ui
@@ -87,6 +88,11 @@ pub(crate) fn before_frame(
     egui::Window::new("Shader control")
         .resizable(false)
         .show(&ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Render scale :");
+                ui.add(egui::Slider::new(active_data.4, 0.3..=1.0));
+            });
+            ui.add(egui::Separator::default().spacing(12.0));
             ui.horizontal(|ui| {
                 ui.label("Selected background: ");
                 ui.label(active_data.0.name);
