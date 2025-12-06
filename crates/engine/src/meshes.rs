@@ -8,16 +8,16 @@ use vk_mem::Allocator;
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct GeoSurface {
-    start_index: u32,
-    count: u32,
+    pub start_index: u32,
+    pub count: u32,
 }
 
 #[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct MeshAsset {
-    name: String,
-    surfaces: Vec<GeoSurface>,
-    mesh_buffers: GPUMeshBuffers,
+    pub name: String,
+    pub surfaces: Vec<GeoSurface>,
+    pub mesh_buffers: GPUMeshBuffers,
 }
 
 impl MeshAsset {
