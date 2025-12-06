@@ -999,7 +999,6 @@ impl<'a> VulkanRenderer {
         )
     }
 
-    #[allow(deprecated)]
     fn upload_mesh_internal(
         gpu_alloc: &Arc<vk_mem::Allocator>,
         context: &VkContext,
@@ -1017,13 +1016,15 @@ impl<'a> VulkanRenderer {
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::TRANSFER_DST
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
-            vk_mem::MemoryUsage::GpuOnly,
+            vk_mem::MemoryUsage::AutoPreferDevice,
+            None,
         );
         let index_buffer = AllocatedBuffer::create(
             gpu_alloc,
             index_buffer_size as u64,
             vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
-            vk_mem::MemoryUsage::GpuOnly,
+            vk_mem::MemoryUsage::AutoPreferDevice,
+            None,
         );
 
         let device_address_info =
@@ -1044,7 +1045,8 @@ impl<'a> VulkanRenderer {
             gpu_alloc,
             (vertex_buffer_size + index_buffer_size) as u64,
             vk::BufferUsageFlags::TRANSFER_SRC,
-            vk_mem::MemoryUsage::CpuOnly,
+            vk_mem::MemoryUsage::AutoPreferHost,
+            Some(vk_mem::AllocationCreateFlags::MAPPED | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE),
         );
 
         unsafe {
@@ -1244,13 +1246,21 @@ impl AllocatedBuffer {
         size: u64,
         usage: vk::BufferUsageFlags,
         memory_usage: vk_mem::MemoryUsage,
+        flags: Option<vk_mem::AllocationCreateFlags>,
     ) -> Self {
         let buffer_info = vk::BufferCreateInfo::default().size(size).usage(usage);
 
-        let alloc_create_info = vk_mem::AllocationCreateInfo {
-            usage: memory_usage,
-            flags: vk_mem::AllocationCreateFlags::MAPPED,
-            ..Default::default()
+        let alloc_create_info = if let Some(flags) = flags {
+            vk_mem::AllocationCreateInfo {
+                usage: memory_usage,
+                flags,
+                ..Default::default()
+            }
+        } else {
+            vk_mem::AllocationCreateInfo {
+                usage: memory_usage,
+                ..Default::default()
+            }
         };
 
         let (buffer, allocation) =

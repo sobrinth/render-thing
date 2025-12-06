@@ -2,6 +2,8 @@
 **/*.rs.bk
 **/*.spv
 
+assets/models/downloaded
+
 
 # jetbrains specific stuff
 .idea/**/workspace.xml
