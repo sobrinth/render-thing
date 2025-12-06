@@ -20,6 +20,7 @@ pub(crate) const FRAME_OVERLAP: u32 = 2;
 pub(crate) struct VulkanRenderer {
     frame_number: u32,
     pub window_size: (u32, u32),
+    render_scale: f32,
     gpu_alloc: Arc<vk_mem::Allocator>,
     ui_context: UiContext,
     pub context: VkContext,
@@ -122,6 +123,7 @@ impl VulkanRenderer {
         let mut renderer = Self {
             frame_number: 0,
             window_size,
+            render_scale: 1f32,
             gpu_alloc,
             context,
             resize_requested: false,
@@ -164,6 +166,22 @@ impl VulkanRenderer {
                 return;
             }
         }
+
+        let draw_extent = (
+            f32::min(
+                self.swapchain.properties.extent.height as f32,
+                self.draw_image.extent.height as f32,
+            ) * self.render_scale,
+            f32::min(
+                self.swapchain.properties.extent.width as f32,
+                self.draw_image.extent.width as f32,
+            ) * self.render_scale,
+        );
+
+        let draw_extent = vk::Extent2D {
+            height: draw_extent.0 as u32,
+            width: draw_extent.1 as u32,
+        };
 
         const ONE_SECOND: u64 = 1_000_000_000;
         let frame_index = self.frame_number % FRAME_OVERLAP;
@@ -209,6 +227,7 @@ impl VulkanRenderer {
                 &mut self.active_background_effect,
                 &mut self.active_mesh,
                 &mut self.meshes,
+                &mut self.render_scale,
             ),
         );
 
@@ -233,7 +252,7 @@ impl VulkanRenderer {
             vk::ImageLayout::GENERAL,
         );
 
-        self.draw_background(cmd, gpu);
+        self.draw_background(cmd, gpu, draw_extent);
 
         Self::transition_image(
             gpu,
@@ -251,7 +270,7 @@ impl VulkanRenderer {
             vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
         );
 
-        self.draw_geometry(cmd, gpu);
+        self.draw_geometry(cmd, gpu, draw_extent);
 
         // transition the draw image and the swapchain image into their correct transfer layouts.
         Self::transition_image(
@@ -275,10 +294,7 @@ impl VulkanRenderer {
             cmd,
             self.draw_image.image,
             self.swapchain.images[image_index],
-            vk::Extent2D {
-                height: self.draw_image.extent.height,
-                width: self.draw_image.extent.width,
-            },
+            draw_extent,
             self.swapchain.properties.extent,
         );
 
@@ -443,7 +459,7 @@ impl VulkanRenderer {
         }
     }
 
-    fn draw_background(&self, cmd: vk::CommandBuffer, gpu: &Device) {
+    fn draw_background(&self, cmd: vk::CommandBuffer, gpu: &Device, extent: vk::Extent2D) {
         let active_background = self.background_effects[self.active_background_effect];
 
         // bind the gradient drawing compute pipeline
@@ -481,14 +497,14 @@ impl VulkanRenderer {
         unsafe {
             gpu.cmd_dispatch(
                 cmd,
-                f64::ceil(self.draw_image.extent.width as f64 / 16.0) as u32,
-                f64::ceil(self.draw_image.extent.height as f64 / 16.0) as u32,
+                f64::ceil(extent.width as f64 / 16.0) as u32,
+                f64::ceil(extent.height as f64 / 16.0) as u32,
                 1,
             )
         }
     }
 
-    fn draw_geometry(&self, cmd: vk::CommandBuffer, gpu: &Device) {
+    fn draw_geometry(&self, cmd: vk::CommandBuffer, gpu: &Device, extent: vk::Extent2D) {
         // begin a render pass with the draw image
         let color_attachment = vk::RenderingAttachmentInfo::default()
             .image_view(self.draw_image.view)
@@ -511,10 +527,7 @@ impl VulkanRenderer {
         let render_info = vk::RenderingInfo::default()
             .render_area(vk::Rect2D {
                 offset: vk::Offset2D { x: 0, y: 0 },
-                extent: vk::Extent2D {
-                    height: self.draw_image.extent.height,
-                    width: self.draw_image.extent.width,
-                },
+                extent,
             })
             .layer_count(1)
             .color_attachments(core::slice::from_ref(&color_attachment))
@@ -529,8 +542,8 @@ impl VulkanRenderer {
         let viewport = vk::Viewport {
             x: 0f32,
             y: 0f32,
-            width: self.draw_image.extent.width as f32,
-            height: self.draw_image.extent.height as f32,
+            width: extent.width as f32,
+            height: extent.height as f32,
             min_depth: 0.0,
             max_depth: 1.0,
         };
@@ -539,10 +552,7 @@ impl VulkanRenderer {
 
         let scissor = vk::Rect2D {
             offset: vk::Offset2D { x: 0, y: 0 },
-            extent: vk::Extent2D {
-                height: self.draw_image.extent.height,
-                width: self.draw_image.extent.width,
-            },
+            extent,
         };
 
         unsafe { gpu.cmd_set_scissor(cmd, 0, &[scissor]) }
@@ -561,7 +571,7 @@ impl VulkanRenderer {
                This code uses 0 as the far plane and 1 as the near plane, so the values are switched (depth clear is set to 0.0f32)
             */
             let mut proj = glm::perspective_rh_zo(
-                self.draw_image.extent.width as f32 / self.draw_image.extent.height as f32,
+                extent.width as f32 / extent.height as f32,
                 70f32.to_radians(),
                 10000f32,
                 0.1f32,
