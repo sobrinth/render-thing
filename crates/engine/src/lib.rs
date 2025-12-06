@@ -1,6 +1,7 @@
 use crate::renderer::VulkanRenderer;
 use winit::event::WindowEvent;
 use winit::window::Window;
+extern crate nalgebra_glm as glm;
 
 mod renderer;
 

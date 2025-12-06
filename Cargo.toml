@@ -37,3 +37,4 @@ egui-winit = "0.33.2"
 itertools = "0.14.0"
 vk-mem = "0.5.0"
 gltf = { version = "1.4.1", features = ["utils"] }
+nalgebra-glm = "0.20.0"

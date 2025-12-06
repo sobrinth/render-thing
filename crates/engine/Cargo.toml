@@ -16,3 +16,4 @@ itertools.workspace = true
 log.workspace = true
 vk-mem.workspace = true
 gltf.workspace = true
+nalgebra-glm.workspace = true
