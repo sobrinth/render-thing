@@ -70,6 +70,7 @@ pub(crate) fn before_frame(
         &mut usize,
         &mut Option<Vec<MeshAsset>>,
         &mut f32,
+        (u32, u32),
     ),
 ) -> Vec<ClippedPrimitive> {
     let gui_state = ui
@@ -91,6 +92,10 @@ pub(crate) fn before_frame(
             ui.horizontal(|ui| {
                 ui.label("Render scale :");
                 ui.add(egui::Slider::new(active_data.4, 0.1..=1.0));
+            });
+            ui.horizontal(|ui| {
+                ui.label("Effective resolution: ");
+                ui.label(format!("{:.0}x{:.0}", active_data.5.0, active_data.5.1));
             });
             ui.add(egui::Separator::default().spacing(12.0));
             ui.horizontal(|ui| {
