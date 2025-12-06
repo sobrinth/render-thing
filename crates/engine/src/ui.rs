@@ -90,7 +90,7 @@ pub(crate) fn before_frame(
         .show(&ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label("Render scale :");
-                ui.add(egui::Slider::new(active_data.4, 0.3..=1.0));
+                ui.add(egui::Slider::new(active_data.4, 0.1..=1.0));
             });
             ui.add(egui::Separator::default().spacing(12.0));
             ui.horizontal(|ui| {
