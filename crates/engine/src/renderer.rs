@@ -35,6 +35,7 @@ pub(crate) struct VulkanRenderer {
     draw_image: AllocatedImage,
     draw_image_descriptors: vk::DescriptorSet,
     draw_image_descriptor_layout: vk::DescriptorSetLayout,
+    depth_image: AllocatedImage,
 
     effect_pipeline_layout: vk::PipelineLayout,
     background_effects: Vec<ComputeEffect>,
@@ -64,10 +65,25 @@ impl<'a> VulkanRenderer {
 
         let frames = Self::create_framedata(&context, &graphics_queue);
 
-        let draw_image = Self::create_draw_image(
+        let draw_image = Self::create_image(
             &context,
             &gpu_alloc,
             (window.inner_size().width, window.inner_size().height),
+            vk::Format::R16G16B16A16_SFLOAT,
+            vk::ImageUsageFlags::TRANSFER_SRC
+                | vk::ImageUsageFlags::TRANSFER_DST
+                | vk::ImageUsageFlags::STORAGE
+                | vk::ImageUsageFlags::COLOR_ATTACHMENT,
+            vk::ImageAspectFlags::COLOR,
+        );
+
+        let depth_image = Self::create_image(
+            &context,
+            &gpu_alloc,
+            (window.inner_size().width, window.inner_size().height),
+            vk::Format::D32_SFLOAT,
+            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+            vk::ImageAspectFlags::DEPTH,
         );
 
         let (descriptor_allocator, draw_image_descriptor_layout, draw_image_descriptors) =
@@ -124,6 +140,7 @@ impl<'a> VulkanRenderer {
             draw_image,
             draw_image_descriptors,
             draw_image_descriptor_layout,
+            depth_image,
             effect_pipeline_layout,
             background_effects: effects,
             active_background_effect: 0,
@@ -759,22 +776,19 @@ impl<'a> VulkanRenderer {
         unsafe { self.context.device.device_wait_idle() }.unwrap();
     }
 
-    fn create_draw_image(
+    fn create_image(
         context: &VkContext,
         gpu_alloc: &vk_mem::Allocator,
         window_size: (u32, u32),
+        format: vk::Format,
+        usage: vk::ImageUsageFlags,
+        aspect_flags: vk::ImageAspectFlags,
     ) -> AllocatedImage {
         let extent = vk::Extent3D {
             width: window_size.0,
             height: window_size.1,
             depth: 1,
         };
-
-        let format = vk::Format::R16G16B16A16_SFLOAT;
-        let usage = vk::ImageUsageFlags::TRANSFER_SRC
-            | vk::ImageUsageFlags::TRANSFER_DST
-            | vk::ImageUsageFlags::STORAGE
-            | vk::ImageUsageFlags::COLOR_ATTACHMENT;
 
         let create_info = vk::ImageCreateInfo::default()
             .image_type(vk::ImageType::TYPE_2D)
@@ -805,7 +819,7 @@ impl<'a> VulkanRenderer {
                     .level_count(1)
                     .base_array_layer(0)
                     .layer_count(1)
-                    .aspect_mask(vk::ImageAspectFlags::COLOR),
+                    .aspect_mask(aspect_flags),
             );
 
         let view = unsafe { context.device.create_image_view(&create_info, None) }.unwrap();
@@ -1227,6 +1241,8 @@ impl Drop for VulkanRenderer {
                 .destroy_descriptor_set_layout(self.draw_image_descriptor_layout, None)
         }
         self.draw_image
+            .destroy(&self.context.device, &self.gpu_alloc);
+        self.depth_image
             .destroy(&self.context.device, &self.gpu_alloc);
 
         self.frames.iter_mut().for_each(|frame| {
