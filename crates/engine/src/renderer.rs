@@ -502,6 +502,7 @@ impl<'a> VulkanRenderer {
             gpu.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.mesh_pipeline);
         }
 
+        // Draw rectangle
         let push_constants = GPUDrawPushConstants {
             world_matrix: [
                 [1.0, 0.0, 0.0, 0.0],
@@ -530,7 +531,50 @@ impl<'a> VulkanRenderer {
             );
 
             gpu.cmd_draw_indexed(cmd, 6, 1, 0, 0, 0);
+        }
+        // Draw monkey head from meshes
+        if let Some(meshes) = &self.meshes {
+            let mesh = &meshes[2];
 
+            let push_constants = GPUDrawPushConstants {
+                world_matrix: [
+                    [1.0, 0.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0, 0.0],
+                    [0.0, 0.0, 1.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ],
+                vertex_buffer: mesh.mesh_buffers.vertex_buffer_address,
+            };
+
+            unsafe {
+                gpu.cmd_push_constants(
+                        cmd,
+                        self.mesh_pipeline_layout,
+                        vk::ShaderStageFlags::VERTEX,
+                        0,
+                        &mem::transmute::<GPUDrawPushConstants, [u8; size_of::<GPUDrawPushConstants>()]>(
+                            push_constants,
+                        ),
+                    );
+                gpu.cmd_bind_index_buffer(
+                    cmd,
+                    mesh.mesh_buffers.index_buffer.buffer,
+                    0,
+                    vk::IndexType::UINT32,
+                );
+
+                gpu.cmd_draw_indexed(
+                    cmd,
+                    mesh.surfaces[0].count,
+                    1,
+                    mesh.surfaces[0].start_index,
+                    0,
+                    0,
+                );
+            }
+        }
+
+        unsafe {
             gpu.cmd_end_rendering(cmd);
         }
     }
