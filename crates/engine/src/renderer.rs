@@ -6,6 +6,7 @@ use crate::swapchain::Swapchain;
 use crate::ui::UiContext;
 use crate::{descriptor, ui};
 use ash::{Device, vk};
+use glm::Mat4;
 use itertools::Itertools;
 use std::mem;
 use std::path::Path;
@@ -536,13 +537,19 @@ impl<'a> VulkanRenderer {
         if let Some(meshes) = &self.meshes {
             let mesh = &meshes[2];
 
+            let view = glm::translate(&Mat4::identity(), &glm::vec3(0.0, 0.0, -4.0));
+
+            let mut proj = glm::perspective(
+                self.draw_image.extent.width as f32 / self.draw_image.extent.height as f32,
+                70f32.to_radians(),
+                0.1f32, // switch around as soon as the depth is switched. Then 0 will be far and 1 the near plane
+                10_000f32,
+            );
+
+            proj[(1, 1)] *= -1.0; // Flip y axis
+
             let push_constants = GPUDrawPushConstants {
-                world_matrix: [
-                    [1.0, 0.0, 0.0, 0.0],
-                    [0.0, 1.0, 0.0, 0.0],
-                    [0.0, 0.0, 1.0, 0.0],
-                    [0.0, 0.0, 0.0, 1.0],
-                ],
+                world_matrix: (proj * view).data.0,
                 vertex_buffer: mesh.mesh_buffers.vertex_buffer_address,
             };
 
