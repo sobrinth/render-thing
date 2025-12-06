@@ -21,6 +21,7 @@ pub(crate) struct VulkanRenderer {
     frame_number: u32,
     pub window_size: (u32, u32),
     render_scale: f32,
+    render_size: (u32, u32),
     gpu_alloc: Arc<vk_mem::Allocator>,
     ui_context: UiContext,
     pub context: VkContext,
@@ -124,6 +125,7 @@ impl VulkanRenderer {
             frame_number: 0,
             window_size,
             render_scale: 1f32,
+            render_size: (0, 0),
             gpu_alloc,
             context,
             resize_requested: false,
@@ -177,10 +179,11 @@ impl VulkanRenderer {
                 self.draw_image.extent.width as f32,
             ) * self.render_scale,
         );
+        self.render_size = (draw_extent.0 as u32, draw_extent.1 as u32);
 
         let draw_extent = vk::Extent2D {
-            height: draw_extent.0 as u32,
-            width: draw_extent.1 as u32,
+            height: self.render_size.0,
+            width: self.render_size.1,
         };
 
         const ONE_SECOND: u64 = 1_000_000_000;
@@ -228,6 +231,7 @@ impl VulkanRenderer {
                 &mut self.active_mesh,
                 &mut self.meshes,
                 &mut self.render_scale,
+                self.render_size,
             ),
         );
 
