@@ -69,13 +69,11 @@ impl<'a> PipelineBuilder<'a> {
             .scissor_count(1)
             .viewport_count(1);
 
-        let blend_attachment = &[self.color_blend_attachment];
-
         // Dummy color and alpha blending. Functionally 'no-blend' but writing to the color attachment.
         let color_blending = vk::PipelineColorBlendStateCreateInfo::default()
             .logic_op_enable(false)
             .logic_op(vk::LogicOp::COPY)
-            .attachments(blend_attachment);
+            .attachments(core::slice::from_ref(&self.color_blend_attachment));
 
         // default as it's unnecessary
         let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::default();
