@@ -1,8 +1,8 @@
 use crate::context::VkContext;
-use crate::descriptor::{GrowableAllocator, PoolSizeRatio};
+use crate::descriptor::{DescriptorWriter, GrowableAllocator, LayoutBuilder, PoolSizeRatio};
 use crate::meshes::{MeshAsset, load_gltf_meshes};
 use crate::pipeline::PipelineBuilder;
-use crate::primitives::{GPUDrawPushConstants, GPUMeshBuffers, Vertex};
+use crate::primitives::{GPUDrawPushConstants, GPUMeshBuffers, GPUSceneData, Vertex};
 use crate::swapchain::Swapchain;
 use crate::ui::UiContext;
 use crate::{descriptor, ui};
@@ -49,6 +49,9 @@ pub(crate) struct VulkanRenderer {
     mesh_pipeline: vk::Pipeline,
     mesh_pipeline_layout: vk::PipelineLayout,
 
+    scene_data: GPUSceneData,
+    scene_data_layout: vk::DescriptorSetLayout,
+
     meshes: Option<Vec<MeshAsset>>,
     active_mesh: usize,
 }
@@ -63,7 +66,7 @@ impl VulkanRenderer {
 
         let immediate_submit = Self::create_immediate_submit_data(&context, &graphics_queue);
 
-        let frames = Self::create_framedata(&context, &graphics_queue);
+        let frames = Self::create_framedata(&context, &gpu_alloc, &graphics_queue);
 
         let draw_image = Self::create_image(
             &context,
@@ -88,6 +91,8 @@ impl VulkanRenderer {
 
         let (descriptor_allocator, draw_image_descriptor_layout, draw_image_descriptors) =
             Self::init_descriptors(&context, &draw_image);
+
+        let scene_data_layout = Self::init_scene_data(&context);
 
         let gradient_shader_module =
             Self::create_shader_module(&context.device, "assets/shaders/gradient.comp.spv");
@@ -147,6 +152,8 @@ impl VulkanRenderer {
             mesh_pipeline_layout,
             meshes: None,
             active_mesh: 2,
+            scene_data_layout,
+            scene_data: GPUSceneData::default(),
         };
         renderer.meshes = load_gltf_meshes(&renderer, "assets/models/basicmesh.glb");
 
@@ -191,13 +198,16 @@ impl VulkanRenderer {
         let frame_index: usize = (self.frame_number % FRAME_OVERLAP) as usize;
 
         let cmd = self.frames[frame_index].main_command_buffer;
-        let gpu = &self.context.device;
 
         unsafe {
             // wait for the GPU to have finished the last rendering of this frame.
-            gpu.wait_for_fences(&[self.frames[frame_index].render_fence], true, ONE_SECOND)
+            self.context
+                .device
+                .wait_for_fences(&[self.frames[frame_index].render_fence], true, ONE_SECOND)
                 .unwrap();
-            gpu.reset_fences(&[self.frames[frame_index].render_fence])
+            self.context
+                .device
+                .reset_fences(&[self.frames[frame_index].render_fence])
                 .unwrap();
         }
         self.frames[frame_index].clean_resources(&self.context.device);
@@ -238,29 +248,36 @@ impl VulkanRenderer {
 
         // Reset and begin command buffer for the frame
         unsafe {
-            gpu.reset_command_buffer(cmd, vk::CommandBufferResetFlags::default())
+            self.context
+                .device
+                .reset_command_buffer(cmd, vk::CommandBufferResetFlags::default())
                 .unwrap()
         }
 
         let cmd_begin_info = vk::CommandBufferBeginInfo::default()
             .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
 
-        unsafe { gpu.begin_command_buffer(cmd, &cmd_begin_info).unwrap() }
+        unsafe {
+            self.context
+                .device
+                .begin_command_buffer(cmd, &cmd_begin_info)
+                .unwrap()
+        }
 
         // transition the main draw image to Layout::GENERAL so we can draw into it.
         // we will overwrite the contents, so we don't care about the old layout
         Self::transition_image(
-            gpu,
+            &self.context.device,
             cmd,
             self.draw_image.image,
             vk::ImageLayout::UNDEFINED,
             vk::ImageLayout::GENERAL,
         );
 
-        self.draw_background(cmd, gpu, draw_extent);
+        self.draw_background(cmd, &self.context.device, draw_extent);
 
         Self::transition_image(
-            gpu,
+            &self.context.device,
             cmd,
             self.draw_image.image,
             vk::ImageLayout::GENERAL,
@@ -268,25 +285,25 @@ impl VulkanRenderer {
         );
 
         Self::transition_image(
-            gpu,
+            &self.context.device,
             cmd,
             self.depth_image.image,
             vk::ImageLayout::UNDEFINED,
             vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
         );
 
-        self.draw_geometry(cmd, gpu, draw_extent);
+        self.draw_geometry(frame_index, cmd, draw_extent);
 
         // transition the draw image and the swapchain image into their correct transfer layouts.
         Self::transition_image(
-            gpu,
+            &self.context.device,
             cmd,
             self.draw_image.image,
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
         );
         Self::transition_image(
-            gpu,
+            &self.context.device,
             cmd,
             self.swapchain.images[image_index],
             vk::ImageLayout::UNDEFINED,
@@ -295,7 +312,7 @@ impl VulkanRenderer {
 
         // copy the draw image to the swapchain image
         Self::copy_image_to_image(
-            gpu,
+            &self.context.device,
             cmd,
             self.draw_image.image,
             self.swapchain.images[image_index],
@@ -306,7 +323,7 @@ impl VulkanRenderer {
         // DO THE UI RENDER
 
         Self::transition_image(
-            gpu,
+            &self.context.device,
             cmd,
             self.swapchain.images[image_index],
             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
@@ -326,7 +343,11 @@ impl VulkanRenderer {
             .layer_count(1)
             .color_attachments(std::slice::from_ref(&color_attachment_info));
 
-        unsafe { gpu.cmd_begin_rendering(cmd, &rendering_info) }
+        unsafe {
+            self.context
+                .device
+                .cmd_begin_rendering(cmd, &rendering_info)
+        }
 
         ui::render(
             &mut self.ui_context,
@@ -335,11 +356,11 @@ impl VulkanRenderer {
             ui_primitives,
         );
 
-        unsafe { gpu.cmd_end_rendering(cmd) }
+        unsafe { self.context.device.cmd_end_rendering(cmd) }
 
         // set the swapchain image to Layout::PRESENT so we can present it
         Self::transition_image(
-            gpu,
+            &self.context.device,
             cmd,
             self.swapchain.images[image_index],
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
@@ -347,7 +368,7 @@ impl VulkanRenderer {
         );
 
         // finalize command buffer
-        unsafe { gpu.end_command_buffer(cmd).unwrap() }
+        unsafe { self.context.device.end_command_buffer(cmd).unwrap() }
 
         // Prepare queue submission
         // we want to wait on the present_semaphore, as that is signaled when the swapchain is ready,
@@ -376,12 +397,14 @@ impl VulkanRenderer {
         // submit a command buffer to the queue and execute it.
         // render_fence will now block until the graphic commands finish execution
         unsafe {
-            gpu.queue_submit2(
-                self.graphics_queue.queue,
-                &[submit_info],
-                self.frames[frame_index].render_fence,
-            )
-            .unwrap()
+            self.context
+                .device
+                .queue_submit2(
+                    self.graphics_queue.queue,
+                    &[submit_info],
+                    self.frames[frame_index].render_fence,
+                )
+                .unwrap()
         }
 
         // Prepare presentation
@@ -509,7 +532,7 @@ impl VulkanRenderer {
         }
     }
 
-    fn draw_geometry(&self, cmd: vk::CommandBuffer, gpu: &Device, extent: vk::Extent2D) {
+    fn draw_geometry(&mut self, frame_index: usize, cmd: vk::CommandBuffer, extent: vk::Extent2D) {
         // begin a render pass with the draw image
         let color_attachment = vk::RenderingAttachmentInfo::default()
             .image_view(self.draw_image.view)
@@ -539,8 +562,12 @@ impl VulkanRenderer {
             .depth_attachment(&depth_attachment);
 
         unsafe {
-            gpu.cmd_begin_rendering(cmd, &render_info);
-            gpu.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.mesh_pipeline);
+            self.context.device.cmd_begin_rendering(cmd, &render_info);
+            self.context.device.cmd_bind_pipeline(
+                cmd,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.mesh_pipeline,
+            );
         }
 
         // dynamic viewport and scissor
@@ -553,14 +580,14 @@ impl VulkanRenderer {
             max_depth: 1.0,
         };
 
-        unsafe { gpu.cmd_set_viewport(cmd, 0, &[viewport]) }
+        unsafe { self.context.device.cmd_set_viewport(cmd, 0, &[viewport]) }
 
         let scissor = vk::Rect2D {
             offset: vk::Offset2D { x: 0, y: 0 },
             extent,
         };
 
-        unsafe { gpu.cmd_set_scissor(cmd, 0, &[scissor]) }
+        unsafe { self.context.device.cmd_set_scissor(cmd, 0, &[scissor]) }
 
         // Draw monkey head from meshes
         if let Some(meshes) = &self.meshes {
@@ -593,23 +620,23 @@ impl VulkanRenderer {
             };
 
             unsafe {
-                gpu.cmd_push_constants(
-                        cmd,
-                        self.mesh_pipeline_layout,
-                        vk::ShaderStageFlags::VERTEX,
-                        0,
-                        &mem::transmute::<GPUDrawPushConstants, [u8; size_of::<GPUDrawPushConstants>()]>(
-                            push_constants,
-                        ),
-                    );
-                gpu.cmd_bind_index_buffer(
+                self.context.device.cmd_push_constants(
+                    cmd,
+                    self.mesh_pipeline_layout,
+                    vk::ShaderStageFlags::VERTEX,
+                    0,
+                    &mem::transmute::<GPUDrawPushConstants, [u8; size_of::<GPUDrawPushConstants>()]>(
+                        push_constants,
+                    ),
+                );
+                self.context.device.cmd_bind_index_buffer(
                     cmd,
                     mesh.mesh_buffers.index_buffer.buffer,
                     0,
                     vk::IndexType::UINT32,
                 );
 
-                gpu.cmd_draw_indexed(
+                self.context.device.cmd_draw_indexed(
                     cmd,
                     mesh.surfaces[0].count,
                     1,
@@ -620,8 +647,33 @@ impl VulkanRenderer {
             }
         }
 
+        // dynamic temporal data
+        let scene_mem_ptr = self.frames[frame_index].scene_buffer.info.mapped_data;
+
         unsafe {
-            gpu.cmd_end_rendering(cmd);
+            std::ptr::copy_nonoverlapping(
+                (&self.scene_data as *const GPUSceneData) as *const u8,
+                scene_mem_ptr as *mut u8,
+                size_of::<GPUSceneData>(),
+            )
+        }
+
+        let desc_set = self.frames[frame_index]
+            .descriptors
+            .allocate(&self.context.device, self.scene_data_layout);
+
+        let mut writer = DescriptorWriter::new();
+        writer.write_buffer(
+            0,
+            self.frames[frame_index].scene_buffer.buffer,
+            size_of::<GPUSceneData>() as u64,
+            0,
+            vk::DescriptorType::UNIFORM_BUFFER,
+        );
+        writer.update_set(&self.context.device, desc_set);
+
+        unsafe {
+            self.context.device.cmd_end_rendering(cmd);
         }
     }
 
@@ -748,7 +800,11 @@ impl VulkanRenderer {
         }
     }
 
-    fn create_framedata(context: &VkContext, graphics_queue: &QueueData) -> Vec<FrameData> {
+    fn create_framedata(
+        context: &VkContext,
+        gpu_alloc: &vk_mem::Allocator,
+        graphics_queue: &QueueData,
+    ) -> Vec<FrameData> {
         let commandpool_info = vk::CommandPoolCreateInfo::default()
             .queue_family_index(graphics_queue.family_index)
             .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
@@ -805,12 +861,24 @@ impl VulkanRenderer {
 
             let desc_allocator = GrowableAllocator::init(&context.device, 1000, &pool_ratios);
 
+            let scene_buffer = AllocatedBuffer::create(
+                gpu_alloc,
+                size_of::<GPUSceneData>() as u64,
+                vk::BufferUsageFlags::UNIFORM_BUFFER,
+                vk_mem::MemoryUsage::Auto,
+                Some(
+                    vk_mem::AllocationCreateFlags::MAPPED
+                        | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
+                ),
+            );
+
             let frame = FrameData {
                 command_pool: pool,
                 main_command_buffer: buffer,
                 acquire_semaphore: swapchain_semaphore,
                 render_fence,
                 descriptors: desc_allocator,
+                scene_buffer,
             };
             frames.push(frame);
         }
@@ -893,20 +961,20 @@ impl VulkanRenderer {
         vk::DescriptorSetLayout,
         vk::DescriptorSet,
     ) {
-        let pool_sizes = vec![descriptor::PoolSizeRatio {
+        let pool_sizes = vec![PoolSizeRatio {
             descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
             ratio: 1f32,
         }];
         let pool = descriptor::Allocator::init_pool(&context.device, 10, pool_sizes);
 
-        let mut builder = descriptor::LayoutBuilder::new();
+        let mut builder = LayoutBuilder::new();
         builder.add_binding(0, vk::DescriptorType::STORAGE_IMAGE);
         let layout = builder.build(&context.device, vk::ShaderStageFlags::COMPUTE, None);
         builder.clear();
 
         let draw_image_descriptors = pool.allocate(&context.device, layout);
 
-        let mut writer = descriptor::DescriptorWriter::new();
+        let mut writer = DescriptorWriter::new();
 
         writer.write_image(
             0,
@@ -1180,6 +1248,16 @@ impl VulkanRenderer {
         self.resize_requested = false;
         false
     }
+
+    fn init_scene_data(context: &VkContext) -> vk::DescriptorSetLayout {
+        let mut builder = LayoutBuilder::new();
+        builder.add_binding(0, vk::DescriptorType::UNIFORM_BUFFER);
+        builder.build(
+            &context.device,
+            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+            None,
+        )
+    }
 }
 
 impl Drop for VulkanRenderer {
@@ -1213,7 +1291,10 @@ impl Drop for VulkanRenderer {
         unsafe {
             self.context
                 .device
-                .destroy_descriptor_set_layout(self.draw_image_descriptor_layout, None)
+                .destroy_descriptor_set_layout(self.draw_image_descriptor_layout, None);
+            self.context
+                .device
+                .destroy_descriptor_set_layout(self.scene_data_layout, None);
         }
         self.draw_image
             .destroy(&self.context.device, &self.gpu_alloc);
@@ -1221,7 +1302,7 @@ impl Drop for VulkanRenderer {
             .destroy(&self.context.device, &self.gpu_alloc);
 
         self.frames.iter_mut().for_each(|frame| {
-            frame.destroy(&self.context.device);
+            frame.destroy(&self.context.device, &self.gpu_alloc);
         });
 
         self.immediate_submit.destroy(&self.context.device);
@@ -1239,21 +1320,23 @@ pub struct FrameData {
     acquire_semaphore: vk::Semaphore,
     render_fence: vk::Fence,
     descriptors: GrowableAllocator,
+    scene_buffer: AllocatedBuffer,
 }
 
 impl FrameData {
-    pub(crate) fn destroy(&mut self, device: &Device) {
+    pub(crate) fn destroy(&mut self, device: &Device, gpu_alloc: &vk_mem::Allocator) {
         self.clean_resources(device);
         unsafe {
             device.destroy_command_pool(self.command_pool, None);
             device.destroy_semaphore(self.acquire_semaphore, None);
             device.destroy_fence(self.render_fence, None);
             self.descriptors.destroy_pools(device);
+            self.scene_buffer.destroy(gpu_alloc);
         }
     }
 
     pub(crate) fn clean_resources(&mut self, device: &Device) {
-        self.descriptors.clear_pools(device)
+        self.descriptors.clear_pools(device);
     }
 }
 

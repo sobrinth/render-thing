@@ -35,3 +35,26 @@ pub struct GPUDrawPushConstants {
     pub world_matrix: [[f32; 4]; 4],
     pub vertex_buffer: vk::DeviceAddress,
 }
+
+#[repr(C)]
+pub struct GPUSceneData {
+    pub view: [[f32; 4]; 4],
+    pub proj: [[f32; 4]; 4],
+    pub view_proj: [[f32; 4]; 4],
+    pub ambient_color: [f32; 4],
+    pub sunlight_direction: [f32; 4],
+    pub sunlight_color: [f32; 4],
+}
+
+impl GPUSceneData {
+    pub fn default() -> Self {
+        Self {
+            view: [[0.0; 4]; 4],
+            proj: [[0.0; 4]; 4],
+            view_proj: [[0.0; 4]; 4],
+            ambient_color: [0.0, 0.0, 0.0, 0.0],
+            sunlight_direction: [0.0, 0.0, 0.0, 0.0],
+            sunlight_color: [0.0, 0.0, 0.0, 0.0],
+        }
+    }
+}
