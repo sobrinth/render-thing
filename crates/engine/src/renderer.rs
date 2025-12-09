@@ -882,17 +882,18 @@ impl VulkanRenderer {
 
         let draw_image_descriptors = pool.allocate(&context.device, layout);
 
-        let image_info = &[vk::DescriptorImageInfo::default()
-            .image_layout(vk::ImageLayout::GENERAL)
-            .image_view(draw_image.view)];
+        let mut writer = descriptor::DescriptorWriter::new();
 
-        let write_info = &[vk::WriteDescriptorSet::default()
-            .dst_binding(0)
-            .dst_set(draw_image_descriptors)
-            .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
-            .image_info(image_info)];
+        writer.write_image(
+            0,
+            draw_image.view,
+            vk::Sampler::null(),
+            vk::ImageLayout::GENERAL,
+            vk::DescriptorType::STORAGE_IMAGE,
+        );
 
-        unsafe { context.device.update_descriptor_sets(write_info, &[]) }
+        writer.update_set(&context.device, draw_image_descriptors);
+
         (pool, layout, draw_image_descriptors)
     }
 
