@@ -1,4 +1,4 @@
-use ash::{Device, vk};
+use ash::vk;
 use itertools::Itertools;
 
 pub(crate) struct LayoutBuilder<'a> {
@@ -100,6 +100,7 @@ pub(crate) struct PoolSizeRatio {
     pub(crate) ratio: f32,
 }
 
+#[derive(Debug, Clone)]
 pub(crate) struct GrowableAllocator {
     ratios: Vec<PoolSizeRatio>,
     full_pools: Vec<vk::DescriptorPool>,
@@ -108,7 +109,7 @@ pub(crate) struct GrowableAllocator {
 }
 
 impl GrowableAllocator {
-    fn init(device: &Device, max_sets: u32, pool_ratios: Vec<PoolSizeRatio>) -> Self {
+    fn init(device: &ash::Device, max_sets: u32, pool_ratios: Vec<PoolSizeRatio>) -> Self {
         let pool = Self::create_pool(device, max_sets, pool_ratios.clone());
 
         Self {
@@ -119,7 +120,7 @@ impl GrowableAllocator {
         }
     }
 
-    fn clear_pools(&mut self, device: &Device) {
+    fn clear_pools(&mut self, device: &ash::Device) {
         for poll in self.ready_pools.drain(..) {
             unsafe {
                 device
@@ -138,7 +139,7 @@ impl GrowableAllocator {
         }
     }
 
-    fn destroy_pools(&mut self, device: &Device) {
+    fn destroy_pools(&mut self, device: &ash::Device) {
         for poll in self.ready_pools.drain(..) {
             unsafe { device.destroy_descriptor_pool(poll, None) }
         }
@@ -148,10 +149,9 @@ impl GrowableAllocator {
         }
     }
 
-    fn allocate(&mut self, device: &Device, layout: vk::DescriptorSetLayout) -> vk::DescriptorSet {
+    fn allocate(&mut self, device: &ash::Device, layout: vk::DescriptorSetLayout) -> vk::DescriptorSet {
         let mut pool_to_use = self.get_pool(device);
 
-        // do I need pnext?
         let mut alloc_info = vk::DescriptorSetAllocateInfo::default()
             .descriptor_pool(pool_to_use)
             .set_layouts(core::slice::from_ref(&layout));
@@ -173,7 +173,7 @@ impl GrowableAllocator {
         ds
     }
 
-    fn get_pool(&mut self, device: &Device) -> vk::DescriptorPool {
+    fn get_pool(&mut self, device: &ash::Device) -> vk::DescriptorPool {
         if !self.ready_pools.is_empty() {
             self.ready_pools.pop().unwrap()
         } else {
@@ -188,7 +188,7 @@ impl GrowableAllocator {
     }
 
     fn create_pool(
-        device: &Device,
+        device: &ash::Device,
         set_count: u32,
         pool_ratios: Vec<PoolSizeRatio>,
     ) -> vk::DescriptorPool {
@@ -205,5 +205,84 @@ impl GrowableAllocator {
             .pool_sizes(&pool_sizes);
 
         unsafe { device.create_descriptor_pool(&create_info, None) }.unwrap()
+    }
+}
+
+pub struct DescriptorWriter<'a> {
+    image_infos: Vec<(vk::DescriptorImageInfo, vk::WriteDescriptorSet<'a>)>,
+    buffer_infos: Vec<(vk::DescriptorBufferInfo, vk::WriteDescriptorSet<'a>)>,
+}
+
+impl<'a> DescriptorWriter<'a> {
+    pub fn new() -> Self {
+        Self {
+            image_infos: Vec::new(),
+            buffer_infos: Vec::new(),
+        }
+    }
+    fn write_buffer(
+        &mut self,
+        binding: u32,
+        buffer: vk::Buffer,
+        size: vk::DeviceSize,
+        offset: vk::DeviceSize,
+        descriptor_type: vk::DescriptorType,
+    ) {
+        let buffer_info = vk::DescriptorBufferInfo {
+            buffer,
+            offset,
+            range: size,
+        };
+        let write = vk::WriteDescriptorSet::default()
+            .dst_binding(binding)
+            .descriptor_count(1)
+            .descriptor_type(descriptor_type);
+
+        self.buffer_infos.push((buffer_info, write));
+    }
+
+    pub fn write_image(
+        &mut self,
+        binding: u32,
+        image_view: vk::ImageView,
+        sampler: vk::Sampler,
+        layout: vk::ImageLayout,
+        descriptor_type: vk::DescriptorType,
+    ) {
+        let image_info = vk::DescriptorImageInfo {
+            sampler,
+            image_view,
+            image_layout: layout,
+        };
+
+        let write = vk::WriteDescriptorSet::default()
+            .dst_binding(binding)
+            .descriptor_count(1)
+            .descriptor_type(descriptor_type);
+
+        self.image_infos.push((image_info, write));
+    }
+
+    pub fn clear(&mut self) {
+        self.buffer_infos.clear();
+        self.image_infos.clear();
+    }
+
+    pub fn update_set(&mut self, device: &ash::Device, desc_set: vk::DescriptorSet) {
+        let mut writes = Vec::new();
+
+        for (buffer_info, write) in self.buffer_infos.iter_mut() {
+            write.dst_set = desc_set;
+            write.p_buffer_info = buffer_info;
+            writes.push(*write);
+        }
+
+        for (image_info, write) in self.image_infos.iter_mut() {
+            write.dst_set = desc_set;
+            write.p_image_info = image_info;
+            writes.push(*write);
+        }
+
+        unsafe { device.update_descriptor_sets(&writes, &[]) }
     }
 }
