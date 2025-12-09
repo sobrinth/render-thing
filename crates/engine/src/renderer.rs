@@ -19,7 +19,7 @@ pub(crate) const FRAME_OVERLAP: u32 = 2;
 
 pub(crate) struct VulkanRenderer {
     frame_number: u32,
-    pub window_size: (u32, u32),
+    window_size: (u32, u32),
     render_scale: f32,
     render_size: (u32, u32),
     gpu_alloc: Arc<vk_mem::Allocator>,
@@ -795,6 +795,13 @@ impl VulkanRenderer {
 
     pub(crate) fn wait_gpu_idle(&self) {
         unsafe { self.context.device.device_wait_idle() }.unwrap();
+    }
+
+    pub(crate) fn resize(&mut self, size: (u32, u32)) {
+        if self.window_size.0 != size.0 || self.window_size.1 != size.1 {
+            self.window_size = size;
+            self.resize_requested = true;
+        }
     }
 
     fn create_image(
