@@ -29,7 +29,7 @@ impl Engine {
     }
 
     pub fn resize(&mut self, size: (u32, u32)) {
-        self.renderer.window_size = size;
+        self.renderer.resize(size);
     }
 
     pub fn on_window_event(&mut self, window: &Window, event: &WindowEvent) {
