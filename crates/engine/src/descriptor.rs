@@ -149,7 +149,7 @@ impl GrowableAllocator {
         }
     }
 
-    fn allocate(
+    pub(crate) fn allocate(
         &mut self,
         device: &ash::Device,
         layout: vk::DescriptorSetLayout,
@@ -224,7 +224,7 @@ impl<'a> DescriptorWriter<'a> {
             buffer_infos: Vec::new(),
         }
     }
-    fn write_buffer(
+    pub(crate) fn write_buffer(
         &mut self,
         binding: u32,
         buffer: vk::Buffer,
