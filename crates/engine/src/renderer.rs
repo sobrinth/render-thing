@@ -1,4 +1,5 @@
 use crate::context::VkContext;
+use crate::descriptor::{GrowableAllocator, PoolSizeRatio};
 use crate::meshes::{MeshAsset, load_gltf_meshes};
 use crate::pipeline::PipelineBuilder;
 use crate::primitives::{GPUDrawPushConstants, GPUMeshBuffers, Vertex};
@@ -187,25 +188,25 @@ impl VulkanRenderer {
         };
 
         const ONE_SECOND: u64 = 1_000_000_000;
-        let frame_index = self.frame_number % FRAME_OVERLAP;
-        let mut frame = self.frames[frame_index as usize];
+        let frame_index: usize = (self.frame_number % FRAME_OVERLAP) as usize;
 
-        let cmd = frame.main_command_buffer;
+        let cmd = self.frames[frame_index].main_command_buffer;
         let gpu = &self.context.device;
 
         unsafe {
             // wait for the GPU to have finished the last rendering of this frame.
-            gpu.wait_for_fences(&[frame.render_fence], true, ONE_SECOND)
+            gpu.wait_for_fences(&[self.frames[frame_index].render_fence], true, ONE_SECOND)
                 .unwrap();
-            gpu.reset_fences(&[frame.render_fence]).unwrap();
+            gpu.reset_fences(&[self.frames[frame_index].render_fence])
+                .unwrap();
         }
-        frame.clean_resources();
+        self.frames[frame_index].clean_resources(&self.context.device);
 
         let res = unsafe {
             self.swapchain.swapchain_fn.acquire_next_image(
                 self.swapchain.swapchain,
                 ONE_SECOND,
-                frame.acquire_semaphore,
+                self.frames[frame_index].acquire_semaphore,
                 vk::Fence::null(),
             )
         };
@@ -224,7 +225,7 @@ impl VulkanRenderer {
             &mut self.ui_context,
             _window,
             &self.graphics_queue,
-            &frame,
+            &self.frames[frame_index],
             (
                 &mut self.background_effects[self.active_background_effect],
                 &mut self.active_background_effect,
@@ -356,7 +357,7 @@ impl VulkanRenderer {
             .device_mask(0)];
 
         let wait_info = &[vk::SemaphoreSubmitInfo::default()
-            .semaphore(frame.acquire_semaphore)
+            .semaphore(self.frames[frame_index].acquire_semaphore)
             .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
             .device_index(0)
             .value(1)];
@@ -378,7 +379,7 @@ impl VulkanRenderer {
             gpu.queue_submit2(
                 self.graphics_queue.queue,
                 &[submit_info],
-                frame.render_fence,
+                self.frames[frame_index].render_fence,
             )
             .unwrap()
         }
@@ -782,11 +783,34 @@ impl VulkanRenderer {
 
             let render_fence = unsafe { context.device.create_fence(&fence_info, None).unwrap() };
 
+            // create descriptor allocator exclusive to this frame
+            let pool_ratios = [
+                PoolSizeRatio {
+                    descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
+                    ratio: 3.0,
+                },
+                PoolSizeRatio {
+                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+                    ratio: 3.0,
+                },
+                PoolSizeRatio {
+                    descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+                    ratio: 3.0,
+                },
+                PoolSizeRatio {
+                    descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                    ratio: 4.0,
+                },
+            ];
+
+            let desc_allocator = GrowableAllocator::init(&context.device, 1000, &pool_ratios);
+
             let frame = FrameData {
                 command_pool: pool,
                 main_command_buffer: buffer,
                 acquire_semaphore: swapchain_semaphore,
                 render_fence,
+                descriptors: desc_allocator,
             };
             frames.push(frame);
         }
@@ -1207,25 +1231,30 @@ impl Drop for VulkanRenderer {
     }
 }
 
-#[derive(Copy, Clone)]
+// maybe no clone?
+#[derive(Clone)]
 pub struct FrameData {
     pub command_pool: vk::CommandPool,
     main_command_buffer: vk::CommandBuffer,
     acquire_semaphore: vk::Semaphore,
     render_fence: vk::Fence,
+    descriptors: GrowableAllocator,
 }
 
 impl FrameData {
     pub(crate) fn destroy(&mut self, device: &Device) {
+        self.clean_resources(device);
         unsafe {
             device.destroy_command_pool(self.command_pool, None);
             device.destroy_semaphore(self.acquire_semaphore, None);
             device.destroy_fence(self.render_fence, None);
+            self.descriptors.destroy_pools(device);
         }
-        self.clean_resources()
     }
 
-    pub(crate) fn clean_resources(&mut self) {}
+    pub(crate) fn clean_resources(&mut self, device: &Device) {
+        self.descriptors.clear_pools(device)
+    }
 }
 
 #[derive(Copy, Clone)]
