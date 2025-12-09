@@ -109,22 +109,22 @@ pub(crate) struct GrowableAllocator {
 }
 
 impl GrowableAllocator {
-    fn init(device: &ash::Device, max_sets: u32, pool_ratios: Vec<PoolSizeRatio>) -> Self {
-        let pool = Self::create_pool(device, max_sets, pool_ratios.clone());
+    pub(crate) fn init(device: &ash::Device, max_sets: u32, pool_ratios: &[PoolSizeRatio]) -> Self {
+        let pool = Self::create_pool(device, max_sets, pool_ratios);
 
         Self {
-            ratios: pool_ratios,
+            ratios: pool_ratios.to_vec(),
             full_pools: Vec::new(),
             ready_pools: vec![pool],
             sets_per_pool: (max_sets as f32 * 1.5) as u32,
         }
     }
 
-    fn clear_pools(&mut self, device: &ash::Device) {
-        for poll in self.ready_pools.drain(..) {
+    pub fn clear_pools(&mut self, device: &ash::Device) {
+        for pool in self.ready_pools.iter() {
             unsafe {
                 device
-                    .reset_descriptor_pool(poll, vk::DescriptorPoolResetFlags::empty())
+                    .reset_descriptor_pool(*pool, vk::DescriptorPoolResetFlags::empty())
                     .unwrap()
             }
         }
@@ -139,9 +139,9 @@ impl GrowableAllocator {
         }
     }
 
-    fn destroy_pools(&mut self, device: &ash::Device) {
-        for poll in self.ready_pools.drain(..) {
-            unsafe { device.destroy_descriptor_pool(poll, None) }
+    pub fn destroy_pools(&mut self, device: &ash::Device) {
+        for pool in self.ready_pools.drain(..) {
+            unsafe { device.destroy_descriptor_pool(pool, None) }
         }
 
         for pool in self.full_pools.drain(..) {
@@ -149,7 +149,11 @@ impl GrowableAllocator {
         }
     }
 
-    fn allocate(&mut self, device: &ash::Device, layout: vk::DescriptorSetLayout) -> vk::DescriptorSet {
+    fn allocate(
+        &mut self,
+        device: &ash::Device,
+        layout: vk::DescriptorSetLayout,
+    ) -> vk::DescriptorSet {
         let mut pool_to_use = self.get_pool(device);
 
         let mut alloc_info = vk::DescriptorSetAllocateInfo::default()
@@ -177,7 +181,7 @@ impl GrowableAllocator {
         if !self.ready_pools.is_empty() {
             self.ready_pools.pop().unwrap()
         } else {
-            let c_pool = Self::create_pool(device, self.sets_per_pool, self.ratios.clone());
+            let c_pool = Self::create_pool(device, self.sets_per_pool, &self.ratios);
 
             self.sets_per_pool = (self.sets_per_pool as f32 * 1.5) as u32;
             if self.sets_per_pool > 4092 {
@@ -190,10 +194,10 @@ impl GrowableAllocator {
     fn create_pool(
         device: &ash::Device,
         set_count: u32,
-        pool_ratios: Vec<PoolSizeRatio>,
+        pool_ratios: &[PoolSizeRatio],
     ) -> vk::DescriptorPool {
         let mut pool_sizes = vec![];
-        for ratio in &pool_ratios {
+        for ratio in pool_ratios {
             pool_sizes.push(vk::DescriptorPoolSize {
                 ty: ratio.descriptor_type,
                 descriptor_count: (ratio.ratio * set_count as f32) as u32,
