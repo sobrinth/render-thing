@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::renderer::VulkanRenderer;
 use winit::event::WindowEvent;
 use winit::window::Window;
