@@ -82,11 +82,6 @@
 - Issue: `VulkanRenderer` initializes `active_mesh: 2` in `crates/engine/src/renderer.rs:154`. This assumes the loaded glTF file has at least 3 meshes.
 - Files: `crates/engine/src/renderer.rs:154`
 - Impact: If the loaded model has fewer than 3 meshes, `meshes[self.active_mesh]` will panic at `crates/engine/src/renderer.rs:594`.
-
-**Descriptor pool growth cap is off-by-one:**
-- Issue: `GrowableAllocator::get_pool` caps `sets_per_pool` at `4092` (`crates/engine/src/descriptor.rs:188`). The Vulkan spec maximum for descriptor pool sets is typically `4096`. The value `4092` appears arbitrary rather than derived from a physical device query.
-- Files: `crates/engine/src/descriptor.rs:188`
-
 ---
 
 ## Performance Concerns
@@ -125,23 +120,6 @@
 - Impact: Any Vulkan error (device lost, out of memory, surface lost) crashes the process immediately. For a learning/development renderer this is acceptable, but limits robustness.
 - Notable panics: `renderer.rs:230` on `acquire_next_image` for non-`OUT_OF_DATE` errors, `renderer.rs:434` on non-`OUT_OF_DATE` present errors, `descriptor.rs:173` on unexpected descriptor allocation failures.
 
-**glTF loading silently swallows errors:**
-- Issue: `load_gltf_meshes` uses `gltf::import(path).ok()?` which silently discards import errors and returns `None`.
-  - `crates/engine/src/meshes.rs:36`
-- Impact: If the asset file is missing or corrupt, the renderer initializes with `meshes: None` and silently renders nothing (the draw call is behind `if let Some(meshes) = &self.meshes`). No log message is emitted on failure.
-- Fix approach: Log the error before discarding it, at minimum.
-
-**glTF index reading only handles U16:**
-- Issue: The index reading code in `load_gltf_meshes` only handles `ReadIndices::U16(Iter::Standard(iter))`.
-  - `crates/engine/src/meshes.rs:56–62`
-- Impact: glTF files with `U32` indices (common for meshes with >65535 vertices) or `U8` indices are silently skipped, producing an empty index buffer. The renderer would then draw 0 primitives without any error.
-- Fix approach: Handle all three index types (`U8`, `U16`, `U32`).
-
-**glTF UV coordinates read from channel 1, not 0:**
-- Issue: UV coordinates are read from `read_tex_coords(1)` instead of the conventional `read_tex_coords(0)`.
-  - `crates/engine/src/meshes.rs:80`
-- Impact: Most glTF files store primary UVs in channel 0. Reading channel 1 will produce empty UVs for most assets, causing incorrect or missing texture coordinates. The comment `// I hope so lol` on line 52 suggests uncertainty about correctness in the mesh loading code generally.
-
 **Shader file loading panics on missing file:**
 - Issue: `read_shader_from_file` uses `.unwrap()` on `std::fs::File::open`.
   - `crates/engine/src/renderer.rs:994`
@@ -150,11 +128,6 @@
 ---
 
 ## Fragile Areas
-
-**`active_mesh` index can go out of bounds:**
-- Issue: The mesh index slider in the UI is bounded to `0..=meshes.len() - 1` (`crates/engine/src/ui.rs:116`), but `active_mesh` is initialized to `2` unconditionally. If `meshes` is `None` or contains fewer than 3 entries, the array access at `crates/engine/src/renderer.rs:594` panics.
-- Files: `crates/engine/src/renderer.rs:594`, `crates/engine/src/renderer.rs:154`
-- Safe modification: Clamp `active_mesh` to `meshes.len().saturating_sub(1)` at initialization, or default to `0`.
 
 **Image queue sharing mode not implemented:**
 - Issue: The swapchain create info comment `// TODO: db: Handle image sharing mode if graphics / present queue are different` at `crates/engine/src/swapchain.rs:56` means the code silently assumes the graphics and present queues are the same family index (i.e., `EXCLUSIVE` sharing mode is implicitly used).
@@ -179,11 +152,6 @@
 - Files: `crates/engine/src/renderer.rs:596–613`
 - Impact: No scene graph, no camera abstraction. Adding a second object or a movable camera requires modifying the renderer directly.
 
-**No texture/material support:**
-- Issue: UV coordinates are loaded from glTF (though from the wrong channel — see above) but are set to `0.0` in the assembled `Vertex` struct (`crates/engine/src/meshes.rs:112–113`). No samplers, no texture images, no material pipeline variants exist.
-- Files: `crates/engine/src/meshes.rs:112–113`
-- Impact: All meshes render with color-as-normals override (`OVERRIDE_COLORS: bool = true` at `crates/engine/src/meshes.rs:121`). Textures are not functional.
-
 **`before_frame` UI function takes a large untyped tuple:**
 - Issue: The `before_frame` function in `crates/engine/src/ui.rs:67–74` accepts a 6-element tuple of heterogeneous mutable references as its `active_data` parameter. This is the UI layer reaching directly into renderer internals.
 - Files: `crates/engine/src/ui.rs:62–76`
@@ -199,10 +167,6 @@
 - Files: `crates/assets/build.rs:47`
 - Impact: New contributors get an unhelpful error message. No version check is performed, so old glslangValidator versions may produce incompatible SPIR-V silently.
 - Fix approach: Document the required tool and version in README. Consider using the `shaderc` Rust crate to compile shaders without an external tool dependency.
-
-**Build script `rerun-if-changed` lists a file that does not match compilation:**
-- Issue: `build.rs` registers `shader.frag` and `shader.vert` (`crates/assets/build.rs:15–16`) as change-detection targets, but the `compile_shaders` function compiles all non-`.spv` files in the directory indiscriminately. These filenames suggest older tutorial-era shaders that may or may not still be present.
-- Files: `crates/assets/build.rs:15–16`
 
 ---
 
