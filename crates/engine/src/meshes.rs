@@ -45,18 +45,15 @@ pub fn load_gltf_meshes<P: AsRef<Path>>(
         let mut indices = Vec::new();
 
         for primitive in mesh.primitives() {
-            vertices.clear();
-            indices.clear();
-
             let surface = GeoSurface {
-                start_index: 0u32,
+                start_index: indices.len() as u32,
                 count: primitive.indices()?.count() as u32,
             };
             let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
 
             match reader.read_indices() {
                 Some(read_indices) => {
-                    indices = read_indices.into_u32().collect();
+                    indices.append(&mut read_indices.into_u32().collect());
                 }
                 None => {
                     log::warn!("Skipping non-indexed primitive in mesh '{}'", name);
