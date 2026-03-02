@@ -440,7 +440,6 @@ impl VulkanRenderer {
         self.frame_number += 1;
     }
 
-    #[allow(dead_code)]
     fn immediate_submit<F>(
         gpu: &Device,
         imm_data: &ImmediateSubmitData,
@@ -1364,7 +1363,6 @@ impl AllocatedImage {
 }
 
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
 struct ImmediateSubmitData {
     command_pool: vk::CommandPool,
     command_buffer: vk::CommandBuffer,
@@ -1390,7 +1388,6 @@ pub(crate) struct ComputePushConstants {
 }
 
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
 pub(crate) struct ComputeEffect {
     pub name: &'static str,
     pipeline: vk::Pipeline,
@@ -1405,7 +1402,6 @@ impl ComputeEffect {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct AllocatedBuffer {
     buffer: vk::Buffer,
     allocation: vk_mem::Allocation,
