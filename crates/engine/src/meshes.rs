@@ -33,7 +33,9 @@ pub fn load_gltf_meshes<P: AsRef<Path>>(
 ) -> Option<Vec<MeshAsset>> {
     log::debug!("Loading glTF mesh: {}", path.as_ref().display());
 
-    let (document, buffers, _images) = gltf::import(path).ok()?;
+    let (document, buffers, _images) = gltf::import(&path).map_err(|e| {
+        log::error!("Failed to load glTF '{}': {}", path.as_ref().display(), e);
+    }).ok()?;
 
     let mut meshes = Vec::new();
 
@@ -53,11 +55,13 @@ pub fn load_gltf_meshes<P: AsRef<Path>>(
             };
             let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
 
-            if let Some(gltf::mesh::util::ReadIndices::U16(Iter::Standard(iter))) =
-                reader.read_indices()
-            {
-                for v in iter {
-                    indices.push(v as u32);
+            match reader.read_indices() {
+                Some(read_indices) => {
+                    indices = read_indices.into_u32().collect();
+                }
+                None => {
+                    log::warn!("Skipping non-indexed primitive in mesh '{}'", name);
+                    continue;
                 }
             }
 
@@ -76,14 +80,10 @@ pub fn load_gltf_meshes<P: AsRef<Path>>(
                 }
             }
 
-            let mut uvs = Vec::new();
-            if let Some(gltf::mesh::util::ReadTexCoords::F32(Iter::Standard(iter))) =
-                reader.read_tex_coords(1)
-            {
-                for v in iter {
-                    uvs.push(v);
-                }
-            }
+            let uvs: Vec<[f32; 2]> = reader
+                .read_tex_coords(0)
+                .map(|tc| tc.into_f32().collect())
+                .unwrap_or_default();
 
             let mut colors = Vec::new();
             if let Some(gltf::mesh::util::ReadColors::RgbaF32(Iter::Standard(iter))) =
@@ -105,12 +105,13 @@ pub fn load_gltf_meshes<P: AsRef<Path>>(
                 } else {
                     colors[i]
                 };
+                let (uv_x, uv_y) = uvs.get(i).copied().map(|v| (v[0], v[1])).unwrap_or((0.0, 0.0));
                 let vtx = Vertex {
                     position: *v,
                     normal,
                     color,
-                    uv_x: 0.0,
-                    uv_y: 0.0,
+                    uv_x,
+                    uv_y,
                 };
                 vertices.push(vtx);
             });
