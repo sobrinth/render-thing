@@ -1,6 +1,5 @@
 use crate::primitives::{GPUMeshBuffers, Vertex};
 use crate::renderer::VulkanRenderer;
-use gltf::accessor::Iter;
 use std::path::Path;
 use std::sync::Arc;
 use vk_mem::Allocator;
@@ -31,9 +30,11 @@ pub fn load_gltf_meshes<P: AsRef<Path>>(
 ) -> Option<Vec<MeshAsset>> {
     log::debug!("Loading glTF mesh: {}", path.as_ref().display());
 
-    let (document, buffers, _images) = gltf::import(&path).map_err(|e| {
-        log::error!("Failed to load glTF '{}': {}", path.as_ref().display(), e);
-    }).ok()?;
+    let (document, buffers, _images) = gltf::import(&path)
+        .map_err(|e| {
+            log::error!("Failed to load glTF '{}': {}", path.as_ref().display(), e);
+        })
+        .ok()?;
 
     let mut meshes = Vec::new();
 
@@ -49,7 +50,7 @@ pub fn load_gltf_meshes<P: AsRef<Path>>(
 
             let surface = GeoSurface {
                 start_index: 0u32,
-                count: primitive.indices()?.count() as u32, // Is this correct? I hope so lol
+                count: primitive.indices()?.count() as u32,
             };
             let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
 
@@ -63,34 +64,25 @@ pub fn load_gltf_meshes<P: AsRef<Path>>(
                 }
             }
 
-            let mut positions = Vec::new();
-            if let Some(iter) = reader.read_positions() {
-                vertices.reserve(iter.len());
-                for v in iter {
-                    positions.push(v);
-                }
-            }
+            let positions: Vec<[f32; 3]> = reader
+                .read_positions()
+                .map(|p| p.collect())
+                .unwrap_or_default();
 
-            let mut normals = Vec::new();
-            if let Some(iter) = reader.read_normals() {
-                for v in iter {
-                    normals.push(v);
-                }
-            }
+            let normals: Vec<[f32; 3]> = reader
+                .read_normals()
+                .map(|n| n.collect())
+                .unwrap_or_default();
 
             let uvs: Vec<[f32; 2]> = reader
                 .read_tex_coords(0)
                 .map(|tc| tc.into_f32().collect())
                 .unwrap_or_default();
 
-            let mut colors = Vec::new();
-            if let Some(gltf::mesh::util::ReadColors::RgbaF32(Iter::Standard(iter))) =
-                reader.read_colors(0)
-            {
-                for v in iter {
-                    colors.push(v);
-                }
-            }
+            let colors: Vec<[f32; 4]> = reader
+                .read_colors(0)
+                .map(|tc| tc.into_rgba_f32().collect())
+                .unwrap_or_default();
 
             positions.iter().enumerate().for_each(|(i, v)| {
                 let normal = if normals.is_empty() {
@@ -103,7 +95,11 @@ pub fn load_gltf_meshes<P: AsRef<Path>>(
                 } else {
                     colors[i]
                 };
-                let (uv_x, uv_y) = uvs.get(i).copied().map(|v| (v[0], v[1])).unwrap_or((0.0, 0.0));
+                let (uv_x, uv_y) = uvs
+                    .get(i)
+                    .copied()
+                    .map(|v| (v[0], v[1]))
+                    .unwrap_or((0.0, 0.0));
                 let vtx = Vertex {
                     position: *v,
                     normal,

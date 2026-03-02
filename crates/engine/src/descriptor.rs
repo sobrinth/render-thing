@@ -184,8 +184,8 @@ impl GrowableAllocator {
             let c_pool = Self::create_pool(device, self.sets_per_pool, &self.ratios);
 
             self.sets_per_pool = (self.sets_per_pool as f32 * 1.5) as u32;
-            if self.sets_per_pool > 4092 {
-                self.sets_per_pool = 4092;
+            if self.sets_per_pool > 4096 {
+                self.sets_per_pool = 4096;
             }
             c_pool
         }
