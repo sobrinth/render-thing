@@ -5,14 +5,12 @@ use std::path::Path;
 use std::sync::Arc;
 use vk_mem::Allocator;
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct GeoSurface {
     pub start_index: u32,
     pub count: u32,
 }
 
-#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct MeshAsset {
     pub name: String,

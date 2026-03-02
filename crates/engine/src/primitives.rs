@@ -23,7 +23,6 @@ impl Default for Vertex {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct GPUMeshBuffers {
     pub index_buffer: AllocatedBuffer,
     pub vertex_buffer: AllocatedBuffer,

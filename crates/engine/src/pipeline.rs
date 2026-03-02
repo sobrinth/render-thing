@@ -39,7 +39,6 @@ pub(crate) struct PipelineBuilder<'a> {
 const VK_FALSE: Bool32 = 0u32;
 const VK_TRUE: Bool32 = 1u32;
 
-#[allow(dead_code)]
 impl<'a> PipelineBuilder<'a> {
     pub(crate) fn init() -> Self {
         let color_blend_attachment = vk::PipelineColorBlendAttachmentState::default();
