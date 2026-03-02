@@ -32,26 +32,6 @@
 
 ---
 
-## Global Suppressed Warnings
-
-**Crate-wide `dead_code` suppression:**
-- Issue: `crates/engine/src/lib.rs` line 1 has `#![allow(dead_code)]` applied at the crate level. This silences all dead-code warnings across the entire engine crate. The git commit message `"Globally allow dead-code in engine for now"` confirms this was a deliberate temporary measure.
-- Files: `crates/engine/src/lib.rs:1`
-- Impact: Dead code accumulates silently. Unused functions, fields, and types that should be cleaned up will never be surfaced by the compiler. This is the most impactful suppression in the codebase.
-- Fix approach: Remove the crate-level attribute, run `cargo check`, and either implement or delete each flagged item. Then apply targeted `#[allow(dead_code)]` only to items with a documented reason.
-
-**Individual `#[allow(dead_code)]` on types still under development:**
-- Issue: Several types carry item-level `#[allow(dead_code)]` that are redundant under the crate-level suppression but will need to be addressed when the crate-level attribute is removed.
-  - `crates/engine/src/pipeline.rs:42` — entire `PipelineBuilder` impl block
-  - `crates/engine/src/renderer.rs:443` — `immediate_submit` function (currently unused at call sites)
-  - `crates/engine/src/renderer.rs:1367` — `ImmediateSubmitData` struct
-  - `crates/engine/src/renderer.rs:1393` — `ComputeEffect` struct
-  - `crates/engine/src/renderer.rs:1408` — `AllocatedBuffer` struct
-  - `crates/engine/src/primitives.rs:26` — `GPUMeshBuffers` struct
-  - `crates/engine/src/meshes.rs:8,15` — `GeoSurface` and `MeshAsset` structs
-
----
-
 ## `unsafe` Usage
 
 **Pervasive but necessary `unsafe` for Vulkan FFI:**
@@ -185,19 +165,6 @@
 - Issue: The comment in `crates/engine/src/ui.rs:193–194` reads `// ? soundness with multiple frames in flight` and `// ? move to after frame`. Textures marked for freeing are deferred to the next frame's `after_frame` call, but with `FRAME_OVERLAP = 2`, a texture freed in frame N may still be in use by GPU work from frame N-1.
 - Files: `crates/engine/src/ui.rs:193–201`
 - Impact: Potential use-after-free of GPU texture resources if the GPU is still reading the texture when it is destroyed. Validation layers may catch this in debug builds.
-
-**`FrameData` implements `Clone` but Vulkan handles are non-owning after clone:**
-- Issue: `FrameData` derives `Clone` (`crates/engine/src/renderer.rs:1316` comment: `// maybe no clone?`). Cloning a `FrameData` duplicates Vulkan handles (`vk::CommandPool`, `vk::Semaphore`, `vk::Fence`) without duplicating the underlying GPU resources. The `destroy` method will then attempt to destroy the same handles twice.
-- Files: `crates/engine/src/renderer.rs:1316–1325`
-- Impact: Double-free of Vulkan handles if `FrameData` is ever cloned and both copies are dropped. Currently `FrameData` is stored in a `Vec` and not cloned in practice, but the derived `Clone` is a latent bug.
-- Fix approach: Remove the `Clone` derive, or implement a correct clone (which for GPU objects typically means "don't clone, use `Arc`").
-
-**`AllocatedBuffer` implements `Clone` with same double-free risk:**
-- Issue: `AllocatedBuffer` derives `Clone` (`crates/engine/src/renderer.rs:1407`). Cloning duplicates the `vk::Buffer` handle and `vk_mem::Allocation`. The `destroy` method frees both. Two live `AllocatedBuffer` instances referring to the same allocation will both attempt to free it.
-- Files: `crates/engine/src/renderer.rs:1407–1451`
-- Impact: Same double-free risk as `FrameData`. `AllocatedBuffer` is used in `GPUMeshBuffers` and `FrameData`, both of which are also `Clone`.
-
----
 
 ## Missing Abstractions
 

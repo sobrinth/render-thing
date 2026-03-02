@@ -1311,8 +1311,6 @@ impl Drop for VulkanRenderer {
     }
 }
 
-// maybe no clone?
-#[derive(Clone)]
 pub struct FrameData {
     pub command_pool: vk::CommandPool,
     main_command_buffer: vk::CommandBuffer,
@@ -1401,7 +1399,7 @@ impl ComputeEffect {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct AllocatedBuffer {
     buffer: vk::Buffer,
     allocation: vk_mem::Allocation,
