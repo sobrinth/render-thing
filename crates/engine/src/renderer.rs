@@ -151,7 +151,7 @@ impl VulkanRenderer {
             mesh_pipeline,
             mesh_pipeline_layout,
             meshes: None,
-            active_mesh: 2,
+            active_mesh: 0,
             scene_data_layout,
             scene_data: GPUSceneData::default(),
         };
