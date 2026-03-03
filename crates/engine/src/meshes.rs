@@ -2,6 +2,7 @@ use crate::primitives::{GPUMeshBuffers, Vertex};
 use crate::renderer::VulkanRenderer;
 use std::path::Path;
 use std::sync::Arc;
+use nalgebra_glm as glm;
 use vk_mem::Allocator;
 
 #[derive(Debug, Clone, Copy)]
@@ -24,6 +25,16 @@ impl MeshAsset {
     }
 }
 
+fn node_to_mat4(node: &gltf::Node) -> glm::Mat4 {
+    let m = node.transform().matrix(); // [[f32; 4]; 4], column-major (m[col][row])
+    glm::Mat4::from_column_slice(&[
+        m[0][0], m[0][1], m[0][2], m[0][3],
+        m[1][0], m[1][1], m[1][2], m[1][3],
+        m[2][0], m[2][1], m[2][2], m[2][3],
+        m[3][0], m[3][1], m[3][2], m[3][3],
+    ])
+}
+
 pub fn load_gltf_meshes<P: AsRef<Path>>(
     renderer: &VulkanRenderer,
     path: P,
@@ -38,11 +49,25 @@ pub fn load_gltf_meshes<P: AsRef<Path>>(
 
     let mut meshes = Vec::new();
 
-    for mesh in document.meshes() {
-        let name = String::from(mesh.name()?);
+    let nodes: Vec<gltf::Node> = document
+        .default_scene()
+        .map(|s| s.nodes().collect())
+        .unwrap_or_else(|| document.nodes().collect());
+
+    for node in nodes {
+        let Some(mesh) = node.mesh() else { continue };
+
+        let name = node
+            .name()
+            .or_else(|| mesh.name())
+            .map(String::from)
+            .unwrap_or_else(|| format!("node_{}", node.index()));
         let mut surfaces = Vec::new();
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
+
+        let transform = node_to_mat4(&node);
+        let normal_matrix = glm::transpose(&glm::inverse(&transform));
 
         for primitive in mesh.primitives() {
             let surface = GeoSurface {
@@ -83,12 +108,12 @@ pub fn load_gltf_meshes<P: AsRef<Path>>(
 
             positions.iter().enumerate().for_each(|(i, v)| {
                 let normal = if normals.is_empty() {
-                    [1.0, 0.0, 0.0]
+                    [1.0_f32, 0.0, 0.0]
                 } else {
                     normals[i]
                 };
                 let color = if colors.is_empty() {
-                    [1.0, 1.0, 1.0, 1.0]
+                    [1.0_f32, 1.0, 1.0, 1.0]
                 } else {
                     colors[i]
                 };
@@ -97,9 +122,14 @@ pub fn load_gltf_meshes<P: AsRef<Path>>(
                     .copied()
                     .map(|v| (v[0], v[1]))
                     .unwrap_or((0.0, 0.0));
+
+                let world_pos = transform * glm::vec4(v[0], v[1], v[2], 1.0);
+                let world_normal_raw = normal_matrix * glm::vec4(normal[0], normal[1], normal[2], 0.0);
+                let world_normal = glm::normalize(&world_normal_raw.xyz());
+
                 let vtx = Vertex {
-                    position: *v,
-                    normal,
+                    position: [world_pos.x, world_pos.y, world_pos.z],
+                    normal: [world_normal.x, world_normal.y, world_normal.z],
                     color,
                     uv_x,
                     uv_y,
