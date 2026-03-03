@@ -13,3 +13,4 @@ assets/models/downloaded
 .idea/**/shelf
 
 .claude/settings.local.json
+.worktrees/
