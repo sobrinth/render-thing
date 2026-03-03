@@ -1,4 +1,20 @@
-# STATE — vulkan-rust Cleanup Milestone
+---
+gsd_state_version: 1.0
+milestone: cleanup-2026-03
+milestone_name: Mesh Loading Correctness Cleanup
+current_phase: (none — milestone complete)
+current_plan: (none)
+status: milestone_complete
+stopped_at: cleanup-2026-03 milestone archived 2026-03-03
+last_updated: "2026-03-03"
+progress:
+  total_phases: 2
+  completed_phases: 2
+  total_plans: 2
+  completed_plans: 2
+---
+
+# STATE — vulkan-rust
 
 *Project memory. Updated at each phase/plan boundary.*
 
@@ -6,53 +22,30 @@
 
 ## Project Reference
 
+See: .planning/PROJECT.md (updated 2026-03-03)
+
 **Core value:** A correct, non-crashing foundation for experimenting with Vulkan rendering techniques.
-**Milestone goal:** Fix correctness bugs and low-hanging-fruit issues from the 2026-03-02 codebase audit.
-**Scope constraint:** Bug fixes and safe refactors only — no architectural changes.
+**Current focus:** Planning next milestone (remaining audit items: CRASH-06, CLEAN-01, 03, 04, 05)
 
 ---
 
 ## Current Position
 
-**Current phase:** Phase 2 — Handle Safety
-**Current plan:** (next plan TBD)
-**Status:** Phase 1 complete; ready to begin Phase 2
+**Milestone:** cleanup-2026-03 — COMPLETE ✅
+**Next milestone:** Not yet started — run `/gsd:new-milestone` to begin
 
-**Progress:**
+**Completed phases:**
 ```
-[COMPLETE  ] Phase 1: Mesh Loading Correctness
-[          ] Phase 2: Handle Safety
-[          ] Phase 3: UI and Timing
-[          ] Phase 4: Safe Push Constants
-[          ] Phase 5: Dependency Updates
+[COMPLETE] Phase 1: Mesh Loading Correctness
+[COMPLETE] Phase 2: Handle Safety
+[        ] Phase 3: UI and Timing (deferred)
+[        ] Phase 4: Safe Push Constants (deferred)
+[        ] Phase 5: Dependency Updates (deferred)
 ```
-
-Overall: 1/5 phases complete
-
----
-
-## Performance Metrics
-
-| Metric | Value |
-|--------|-------|
-| Phases defined | 5 |
-| Requirements mapped | 11/11 |
-| Plans created | 1 |
-| Plans complete | 1 |
 
 ---
 
 ## Accumulated Context
-
-### Key Decisions
-
-| Decision | Rationale | Status |
-|----------|-----------|--------|
-| Default active_mesh to 0 | Safest default; UI slider still allows any valid mesh | Accepted |
-| Retain gltf::accessor::Iter import | Colors block (line 89) still uses Iter::Standard; out of scope for Phase 1 | Accepted |
-| Use bytemuck for push constants | Compile-time Pod/Zeroable checks vs silent transmute | Pending |
-| Leave `#![allow(dead_code)]` | Too many items to audit cleanly during a bug-fix pass | Accepted |
-| Remove sleep, rely on FIFO present mode | Integer division gives wrong frame time; FIFO is correct | Pending |
 
 ### Known Constraints
 
@@ -65,25 +58,18 @@ Overall: 1/5 phases complete
 
 | File | Relevance |
 |------|-----------|
-| `crates/engine/src/renderer.rs` | Monolithic 1452-line renderer; CRASH-01 (fixed), CRASH-04, CRASH-05, CLEAN-03 |
-| `crates/engine/src/meshes.rs` | glTF loading; CRASH-02 (fixed), CRASH-03 (fixed), CLEAN-02 (fixed) |
-| `crates/engine/src/ui.rs` | egui integration; CRASH-06, CLEAN-01 |
-| `crates/application/src/main.rs` | Application entry point; CLEAN-04 |
-| `crates/engine/src/primitives.rs` | AllocatedBuffer definition; CRASH-05 cascade |
-| `Cargo.toml` / `Cargo.lock` | Dependency manifest; CLEAN-05 |
-
-### Blockers
-
-None currently.
+| `crates/engine/src/renderer.rs` | Monolithic renderer; CLEAN-03 (transmute→bytemuck) still pending |
+| `crates/engine/src/ui.rs` | egui integration; CRASH-06 (texture timing), CLEAN-01 (slider range) still pending |
+| `crates/application/src/main.rs` | Application entry point; CLEAN-04 (frame sleep) still pending |
+| `Cargo.toml` / `Cargo.lock` | Dependency manifest; CLEAN-05 (dep updates) still pending |
 
 ### Open Questions
 
-- CRASH-06: Is the current deferred-free strategy for UI textures actually safe with FRAME_OVERLAP=2? Needs investigation before deciding whether to fix or document.
+- CRASH-06: Is the current deferred-free strategy for UI textures actually safe with FRAME_OVERLAP=2?
 
 ---
 
 ## Session Continuity
 
-**Last updated:** 2026-03-02 (Phase 1 complete)
-**Stopped at:** Completed 01-PLAN.md (all 4 tasks, cargo build exit 0)
-**Next action:** Plan and execute Phase 2: Handle Safety
+**Last updated:** 2026-03-03 (cleanup-2026-03 milestone archived)
+**Next action:** `/gsd:new-milestone` to plan remaining cleanup items (CRASH-06, CLEAN-01, 03, 04, 05)
