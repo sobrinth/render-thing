@@ -35,6 +35,38 @@ fn node_to_mat4(node: &gltf::Node) -> glm::Mat4 {
     ])
 }
 
+fn scene_roots(document: &gltf::Document) -> Vec<gltf::Node<'_>> {
+    if let Some(scene) = document.default_scene() {
+        return scene.nodes().collect();
+    }
+    if let Some(scene) = document.scenes().next() {
+        return scene.nodes().collect();
+    }
+    // No scenes at all — find nodes that are not referenced as any child
+    let child_indices: std::collections::HashSet<usize> = document
+        .nodes()
+        .flat_map(|n| n.children().map(|c| c.index()))
+        .collect();
+    document
+        .nodes()
+        .filter(|n| !child_indices.contains(&n.index()))
+        .collect()
+}
+
+fn collect_mesh_nodes<'a>(
+    nodes: impl Iterator<Item = gltf::Node<'a>>,
+    parent_world: &glm::Mat4,
+    out: &mut Vec<(gltf::Node<'a>, glm::Mat4)>,
+) {
+    for node in nodes {
+        let world = parent_world * node_to_mat4(&node);
+        if node.mesh().is_some() {
+            out.push((node.clone(), world));
+        }
+        collect_mesh_nodes(node.children(), &world, out);
+    }
+}
+
 pub fn load_gltf_meshes<P: AsRef<Path>>(
     renderer: &VulkanRenderer,
     path: P,
@@ -49,13 +81,15 @@ pub fn load_gltf_meshes<P: AsRef<Path>>(
 
     let mut meshes = Vec::new();
 
-    let nodes: Vec<gltf::Node> = document
-        .default_scene()
-        .map(|s| s.nodes().collect())
-        .unwrap_or_else(|| document.nodes().collect());
+    let mut mesh_nodes: Vec<(gltf::Node, glm::Mat4)> = Vec::new();
+    collect_mesh_nodes(
+        scene_roots(&document).into_iter(),
+        &glm::Mat4::identity(),
+        &mut mesh_nodes,
+    );
 
-    for node in nodes {
-        let Some(mesh) = node.mesh() else { continue };
+    for (node, transform) in mesh_nodes {
+        let mesh = node.mesh().unwrap(); // safe: collect_mesh_nodes only pushes mesh-bearing nodes
 
         let name = node
             .name()
@@ -66,7 +100,6 @@ pub fn load_gltf_meshes<P: AsRef<Path>>(
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
 
-        let transform = node_to_mat4(&node);
         let normal_matrix = glm::transpose(&glm::inverse(&transform));
 
         for primitive in mesh.primitives() {
