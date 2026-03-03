@@ -15,8 +15,8 @@ unsafe extern "system" fn vulkan_debug_callback(
 
     let message = unsafe { CStr::from_ptr((*p_callback_data).p_message) };
     match flag {
-        Flag::VERBOSE => log::debug!("{:?} - {:?}", typ, message),
-        Flag::INFO => log::info!("{:?} - {:?}", typ, message),
+        Flag::VERBOSE => log::trace!("{:?} - {:?}", typ, message),
+        Flag::INFO => log::debug!("{:?} - {:?}", typ, message),
         Flag::WARNING => log::warn!("{:?} - {:?}", typ, message),
         _ => log::error!("{:?} - {:?}", typ, message),
     }
