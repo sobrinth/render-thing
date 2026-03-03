@@ -155,7 +155,8 @@ impl VulkanRenderer {
             scene_data_layout,
             scene_data: GPUSceneData::default(),
         };
-        renderer.meshes = load_gltf_meshes(&renderer, "assets/models/basicmesh.glb");
+        // renderer.meshes = load_gltf_meshes(&renderer, "assets/models/basicmesh.glb");
+        renderer.meshes = load_gltf_meshes(&renderer, "assets/models/downloaded/abbey.glb");
 
         renderer
     }
