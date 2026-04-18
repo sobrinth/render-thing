@@ -59,6 +59,9 @@ pub(crate) struct VulkanRenderer {
     default_sampler_linear: vk::Sampler,
 
     white_image: AllocatedImage,
+    grey_image: AllocatedImage,
+    black_image: AllocatedImage,
+    checkerboard_image: AllocatedImage,
 
     single_image_layout: vk::DescriptorSetLayout,
 }
@@ -142,7 +145,11 @@ impl VulkanRenderer {
             Self::initialize_mesh_pipeline(&context, &draw_image, &depth_image, &single_image_layout);
 
         // default data
-        let white = u32::from_be_bytes([255, 255, 255, 255]);
+        let white = u32::from_ne_bytes([255, 255, 255, 255]);
+        let grey = u32::from_ne_bytes([128, 128, 128, 255]);
+        let magenta = u32::from_ne_bytes([255, 0, 255, 255]);
+        let black = u32::from_ne_bytes([0, 0, 0, 0]);
+
         let white_image = AllocatedImage::create_from_data(
             &gpu_alloc,
             &context,
@@ -155,6 +162,57 @@ impl VulkanRenderer {
             vk::ImageAspectFlags::COLOR,
             false,
         );
+
+        let grey_image = AllocatedImage::create_from_data(
+            &gpu_alloc,
+            &context,
+            &immediate_submit,
+            &graphics_queue,
+            &[grey],
+            (1, 1),
+            vk::Format::R8G8B8A8_UNORM,
+            vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+            vk::ImageAspectFlags::COLOR,
+            false,
+        );
+
+        let black_image = AllocatedImage::create_from_data(
+            &gpu_alloc,
+            &context,
+            &immediate_submit,
+            &graphics_queue,
+            &[black],
+            (1, 1),
+            vk::Format::R8G8B8A8_UNORM,
+            vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+            vk::ImageAspectFlags::COLOR,
+            false,
+        );
+
+        let mut checkerboard_data = [0u32; 16 * 16];
+        for x in 0..16 {
+            for y in 0..16 {
+                checkerboard_data[x + y * 16] = if ((x%2) ^ (y%2)) == 0 {
+                    magenta
+                } else {
+                    black
+                }
+            }
+        }
+
+        let checkerboard_image = AllocatedImage::create_from_data(
+            &gpu_alloc,
+            &context,
+            &immediate_submit,
+            &graphics_queue,
+            &checkerboard_data,
+            (16, 16),
+            vk::Format::R8G8B8A8_UNORM,
+            vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+            vk::ImageAspectFlags::COLOR,
+            false,
+        );
+
 
         //sampler here??
         let mut sampler = vk::SamplerCreateInfo::default()
@@ -202,6 +260,9 @@ impl VulkanRenderer {
             default_sampler_nearest,
             default_sampler_linear,
             white_image,
+            grey_image,
+            black_image,
+            checkerboard_image,
             single_image_layout
         };
         renderer.meshes = load_gltf_meshes(&renderer, "assets/models/basicmesh.glb");
@@ -623,7 +684,7 @@ impl VulkanRenderer {
         let mut descriptor_writer = DescriptorWriter::new();
         descriptor_writer.write_image(
             0,
-            self.white_image.view,
+            self.checkerboard_image.view,
             self.default_sampler_nearest,
             vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             vk::DescriptorType::COMBINED_IMAGE_SAMPLER);
@@ -1183,8 +1244,8 @@ impl VulkanRenderer {
         // no multisampling
         builder.set_multisampling_none();
         // no blending
-        // builder.disable_blending();
-        builder.enable_blending_additive();
+        builder.disable_blending();
+        // builder.enable_blending_additive();
         // no depth testing
         // builder.disable_depth_test();
         builder.enable_depth_test(true, vk::CompareOp::GREATER_OR_EQUAL);
@@ -1351,6 +1412,9 @@ impl Drop for VulkanRenderer {
             self.context.device.destroy_sampler(self.default_sampler_linear, None);
 
             self.white_image.destroy(&self.context.device, &self.gpu_alloc);
+            self.grey_image.destroy(&self.context.device, &self.gpu_alloc);
+            self.black_image.destroy(&self.context.device, &self.gpu_alloc);
+            self.checkerboard_image.destroy(&self.context.device, &self.gpu_alloc);
 
             if let Some(meshes) = &mut self.meshes {
                 meshes.iter_mut().for_each(|m| m.destroy(&self.gpu_alloc));
