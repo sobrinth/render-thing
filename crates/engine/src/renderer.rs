@@ -155,8 +155,7 @@ impl VulkanRenderer {
             scene_data_layout,
             scene_data: GPUSceneData::default(),
         };
-        // renderer.meshes = load_gltf_meshes(&renderer, "assets/models/basicmesh.glb");
-        renderer.meshes = load_gltf_meshes(&renderer, "assets/models/downloaded/abbey.glb");
+        renderer.meshes = load_gltf_meshes(&renderer, "assets/models/basicmesh.glb");
 
         renderer
     }
@@ -1098,8 +1097,7 @@ impl VulkanRenderer {
         builder.set_input_topology(vk::PrimitiveTopology::TRIANGLE_LIST);
         // Fill triangles
         builder.set_polygon_mode(vk::PolygonMode::FILL);
-        // no backface culling
-        builder.set_cull_mode(vk::CullModeFlags::NONE, vk::FrontFace::CLOCKWISE);
+        builder.set_cull_mode(vk::CullModeFlags::BACK, vk::FrontFace::COUNTER_CLOCKWISE);
         // no multisampling
         builder.set_multisampling_none();
         // no blending
