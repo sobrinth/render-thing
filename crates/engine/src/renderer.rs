@@ -54,6 +54,13 @@ pub(crate) struct VulkanRenderer {
 
     meshes: Option<Vec<MeshAsset>>,
     active_mesh: usize,
+
+    default_sampler_nearest: vk::Sampler,
+    default_sampler_linear: vk::Sampler,
+
+    white_image: AllocatedImage,
+
+    single_image_layout: vk::DescriptorSetLayout,
 }
 
 impl VulkanRenderer {
@@ -126,8 +133,44 @@ impl VulkanRenderer {
                 .destroy_shader_module(gradient_color_shader_module, None);
         };
 
+        let mut dsl_builder = LayoutBuilder::new();
+        dsl_builder.add_binding(0, vk::DescriptorType::COMBINED_IMAGE_SAMPLER);
+        let single_image_layout = dsl_builder.build(&context.device, vk::ShaderStageFlags::FRAGMENT, None);
+
+
         let (mesh_pipeline, mesh_pipeline_layout) =
-            Self::initialize_mesh_pipeline(&context, &draw_image, &depth_image);
+            Self::initialize_mesh_pipeline(&context, &draw_image, &depth_image, &single_image_layout);
+
+        // default data
+        let white = u32::from_be_bytes([255, 255, 255, 255]);
+        let white_image = AllocatedImage::create_from_data(
+            &gpu_alloc,
+            &context,
+            &immediate_submit,
+            &graphics_queue,
+            &[white],
+            (1, 1),
+            vk::Format::R8G8B8A8_UNORM,
+            vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+            vk::ImageAspectFlags::COLOR,
+            false,
+        );
+
+        //sampler here??
+        let mut sampler = vk::SamplerCreateInfo::default()
+            .mag_filter(vk::Filter::NEAREST)
+            .min_filter(vk::Filter::NEAREST);
+
+        let default_sampler_nearest = unsafe {
+            context.device.create_sampler(&sampler, None).unwrap()
+        };
+
+        sampler = sampler.mag_filter(vk::Filter::LINEAR);
+        sampler = sampler.min_filter(vk::Filter::LINEAR);
+
+        let default_sampler_linear = unsafe {
+            context.device.create_sampler(&sampler, None).unwrap()
+        };
 
         let mut renderer = Self {
             frame_number: 0,
@@ -156,6 +199,10 @@ impl VulkanRenderer {
             active_mesh: 0,
             scene_data_layout,
             scene_data: GPUSceneData::default(),
+            default_sampler_nearest,
+            default_sampler_linear,
+            white_image,
+            single_image_layout
         };
         renderer.meshes = load_gltf_meshes(&renderer, "assets/models/basicmesh.glb");
 
@@ -571,6 +618,28 @@ impl VulkanRenderer {
             );
         }
 
+        // Bind descriptor set for drawing
+        let image_set = self.frames[frame_index].descriptors.allocate(&self.context.device, self.single_image_layout);
+        let mut descriptor_writer = DescriptorWriter::new();
+        descriptor_writer.write_image(
+            0,
+            self.white_image.view,
+            self.default_sampler_nearest,
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            vk::DescriptorType::COMBINED_IMAGE_SAMPLER);
+        descriptor_writer.update_set(&self.context.device, image_set);
+
+        unsafe {
+            self.context.device.cmd_bind_descriptor_sets(
+                cmd,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.mesh_pipeline_layout,
+                0,
+                &[image_set],
+                &[],
+            )
+        }
+
         // dynamic viewport and scissor
         let viewport = vk::Viewport {
             x: 0f32,
@@ -897,7 +966,7 @@ impl VulkanRenderer {
         }
     }
 
-    fn create_image(
+    pub fn create_image(
         context: &VkContext,
         gpu_alloc: &vk_mem::Allocator,
         image_resolution: (u32, u32),
@@ -914,7 +983,9 @@ impl VulkanRenderer {
 
         let mip_levels = if mip_mapped {
             u32::ilog2(u32::max(image_resolution.0, image_resolution.1)) + 1
-        } else { 1u32 };
+        } else {
+            1u32
+        };
 
         let create_info = vk::ImageCreateInfo::default()
             .image_type(vk::ImageType::TYPE_2D)
@@ -1075,9 +1146,10 @@ impl VulkanRenderer {
         context: &VkContext,
         draw_image: &AllocatedImage,
         depth_image: &AllocatedImage,
+        image_dsl: &vk::DescriptorSetLayout,
     ) -> (vk::Pipeline, vk::PipelineLayout) {
         let frag_module =
-            Self::create_shader_module(&context.device, "assets/shaders/colored_triangle.frag.spv");
+            Self::create_shader_module(&context.device, "assets/shaders/tex_image.frag.spv");
         let vert_module = Self::create_shader_module(
             &context.device,
             "assets/shaders/colored_triangle_mesh.vert.spv",
@@ -1088,8 +1160,11 @@ impl VulkanRenderer {
             .size(size_of::<GPUDrawPushConstants>() as u32)
             .stage_flags(vk::ShaderStageFlags::VERTEX)];
 
+        let idsl = &[*image_dsl];
+
         let layout_info =
-            vk::PipelineLayoutCreateInfo::default().push_constant_ranges(buffer_range);
+            vk::PipelineLayoutCreateInfo::default().push_constant_ranges(buffer_range)
+                .set_layouts(idsl);
 
         let pipeline_layout =
             unsafe { context.device.create_pipeline_layout(&layout_info, None) }.unwrap();
@@ -1271,6 +1346,12 @@ impl Drop for VulkanRenderer {
         self.wait_gpu_idle();
 
         unsafe {
+            // Default images and sampler
+            self.context.device.destroy_sampler(self.default_sampler_nearest, None);
+            self.context.device.destroy_sampler(self.default_sampler_linear, None);
+
+            self.white_image.destroy(&self.context.device, &self.gpu_alloc);
+
             if let Some(meshes) = &mut self.meshes {
                 meshes.iter_mut().for_each(|m| m.destroy(&self.gpu_alloc));
             }
@@ -1300,6 +1381,9 @@ impl Drop for VulkanRenderer {
             self.context
                 .device
                 .destroy_descriptor_set_layout(self.scene_data_layout, None);
+            self.context
+                .device
+                .destroy_descriptor_set_layout(self.single_image_layout, None);
         }
         self.draw_image
             .destroy(&self.context.device, &self.gpu_alloc);
@@ -1364,10 +1448,102 @@ impl AllocatedImage {
             allocator.destroy_image(self.image, &mut self.allocation);
         }
     }
+
+    pub(crate) fn create_from_data(
+        gpu_alloc: &Arc<vk_mem::Allocator>,
+        context: &VkContext,
+        imm_data: &ImmediateSubmitData,
+        graphics_queue: &QueueData,
+        data: &[u32],
+        image_resolution: (u32, u32),
+        format: vk::Format,
+        usage: vk::ImageUsageFlags,
+        aspect_flags: vk::ImageAspectFlags,
+        mip_mapped: bool,
+    ) -> AllocatedImage {
+        let extent = vk::Extent3D {
+            width: image_resolution.0,
+            height: image_resolution.1,
+            depth: 1,
+        };
+
+        let data_size = size_of_val(data);
+
+        let mut upload_buffer = AllocatedBuffer::create(
+            gpu_alloc,
+            data_size as u64,
+            vk::BufferUsageFlags::TRANSFER_SRC,
+            vk_mem::MemoryUsage::AutoPreferDevice,
+            Some(
+                vk_mem::AllocationCreateFlags::MAPPED
+                    | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
+            ),
+        );
+
+        let new_image = VulkanRenderer::create_image(
+            context,
+            gpu_alloc,
+            image_resolution,
+            format,
+            usage,
+            aspect_flags,
+            mip_mapped,
+        );
+
+        unsafe {
+            let dst_data = gpu_alloc.map_memory(&mut upload_buffer.allocation).unwrap();
+            std::ptr::copy_nonoverlapping(data.as_ptr() as *const u8, dst_data, data_size);
+            gpu_alloc.unmap_memory(&mut upload_buffer.allocation);
+        }
+
+        VulkanRenderer::immediate_submit(&context.device, imm_data, graphics_queue, |cmd| {
+            VulkanRenderer::transition_image(
+                &context.device,
+                cmd,
+                new_image.image,
+                vk::ImageLayout::UNDEFINED,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            );
+
+            let copy_region = vk::BufferImageCopy::default()
+                .buffer_offset(0)
+                .buffer_row_length(0)
+                .buffer_image_height(0)
+                .image_subresource(vk::ImageSubresourceLayers {
+                    aspect_mask: aspect_flags,
+                    mip_level: 0,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                })
+                .image_extent(extent);
+
+            unsafe {
+                context.device.cmd_copy_buffer_to_image(
+                    cmd,
+                    upload_buffer.buffer,
+                    new_image.image,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    &[copy_region],
+                )
+            }
+
+            VulkanRenderer::transition_image(
+                &context.device,
+                cmd,
+                new_image.image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            );
+        });
+
+        upload_buffer.destroy(gpu_alloc);
+
+        new_image
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
-struct ImmediateSubmitData {
+pub struct ImmediateSubmitData {
     command_pool: vk::CommandPool,
     command_buffer: vk::CommandBuffer,
     fence: vk::Fence,
