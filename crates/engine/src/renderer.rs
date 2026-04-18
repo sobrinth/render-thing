@@ -13,8 +13,10 @@ use std::mem;
 use std::path::Path;
 use std::sync::Arc;
 use vk_mem::Alloc;
-use winit::event::WindowEvent;
+use winit::event::{ElementState, WindowEvent};
+use winit::keyboard::Key;
 use winit::window::Window;
+use crate::camera::Camera;
 
 pub(crate) const FRAME_OVERLAP: u32 = 2;
 
@@ -64,6 +66,8 @@ pub(crate) struct VulkanRenderer {
     checkerboard_image: AllocatedImage,
 
     single_image_layout: vk::DescriptorSetLayout,
+
+    main_camera: Camera,
 }
 
 impl VulkanRenderer {
@@ -229,6 +233,7 @@ impl VulkanRenderer {
         let default_sampler_linear = unsafe {
             context.device.create_sampler(&sampler, None).unwrap()
         };
+        let main_camera = Camera::new();
 
         let mut renderer = Self {
             frame_number: 0,
@@ -263,7 +268,8 @@ impl VulkanRenderer {
             grey_image,
             black_image,
             checkerboard_image,
-            single_image_layout
+            single_image_layout,
+            main_camera
         };
         renderer.meshes = load_gltf_meshes(&renderer, "assets/models/basicmesh.glb");
 
@@ -277,6 +283,10 @@ impl VulkanRenderer {
             .as_mut()
             .unwrap()
             .on_window_event(window, event);
+    }
+
+    pub(crate) fn on_key_event(&mut self, key_event: (ElementState, Key)) {
+        self.main_camera.handle_key_event(key_event);
     }
 
     pub(crate) fn draw(&mut self, _window: &Window) {
@@ -720,11 +730,14 @@ impl VulkanRenderer {
 
         unsafe { self.context.device.cmd_set_scissor(cmd, 0, &[scissor]) }
 
+        self.main_camera.update();
+
         // Draw monkey head from meshes
         if let Some(meshes) = &self.meshes {
             let mesh = &meshes[self.active_mesh];
 
-            let view = glm::translate(&Mat4::identity(), &glm::vec3(0.0, 0.0, -5.0));
+            // let view = glm::translate(&Mat4::identity(), &glm::vec3(0.0, 0.0, -5.0));
+            let view = self.main_camera.get_view_matrix();
 
             /*
                Use perspective_zo to get a projection matrix that is correct for vulkan

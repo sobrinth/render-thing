@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 use crate::renderer::VulkanRenderer;
-use winit::event::WindowEvent;
+use winit::event::{ElementState, WindowEvent};
+use winit::keyboard::Key;
 use winit::window::Window;
 extern crate nalgebra_glm as glm;
 
@@ -14,6 +15,7 @@ mod pipeline;
 mod primitives;
 mod swapchain;
 mod ui;
+mod camera;
 
 pub struct Engine {
     renderer: VulkanRenderer,
@@ -36,7 +38,10 @@ impl Engine {
     pub fn on_window_event(&mut self, window: &Window, event: &WindowEvent) {
         self.renderer.on_window_event(window, event);
     }
-
+    
+    pub fn on_key_press(&mut self, key_event: (ElementState, Key)) {
+        self.renderer.on_key_event(key_event);
+    }
     pub fn stop(&mut self) {
         self.renderer.wait_gpu_idle();
     }

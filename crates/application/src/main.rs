@@ -1,9 +1,10 @@
 use engine::Engine;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::{MouseScrollDelta, StartCause, WindowEvent};
+use winit::event::{ElementState, MouseScrollDelta, StartCause, WindowEvent};
 use winit::event_loop::ControlFlow::Poll;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 use winit::window::{Window, WindowId};
 
 const WIDTH: u32 = 1280;
@@ -76,6 +77,14 @@ impl ApplicationHandler for Application {
                 //     app.cursor_position[1] - position.1,
                 // ]);
                 // app.cursor_position = [position.0, position.1];
+            }
+            WindowEvent::KeyboardInput { event, .. } => {
+                let app = self.engine.as_mut().unwrap();
+                if (event.state == ElementState::Pressed || event.state == ElementState::Released) && !event.repeat {
+                    let key = event.key_without_modifiers();
+                    app.on_key_press((event.state, key.clone()));
+                }
+
             }
             WindowEvent::MouseWheel {
                 delta: MouseScrollDelta::LineDelta(_, _v_lines),
