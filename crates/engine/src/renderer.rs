@@ -78,6 +78,7 @@ impl VulkanRenderer {
                 | vk::ImageUsageFlags::STORAGE
                 | vk::ImageUsageFlags::COLOR_ATTACHMENT,
             vk::ImageAspectFlags::COLOR,
+            false,
         );
 
         let depth_image = Self::create_image(
@@ -87,6 +88,7 @@ impl VulkanRenderer {
             vk::Format::D32_SFLOAT,
             vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
             vk::ImageAspectFlags::DEPTH,
+            false,
         );
 
         let (descriptor_allocator, draw_image_descriptor_layout, draw_image_descriptors) =
@@ -902,6 +904,7 @@ impl VulkanRenderer {
         format: vk::Format,
         usage: vk::ImageUsageFlags,
         aspect_flags: vk::ImageAspectFlags,
+        mip_mapped: bool,
     ) -> AllocatedImage {
         let extent = vk::Extent3D {
             width: image_resolution.0,
@@ -909,11 +912,15 @@ impl VulkanRenderer {
             depth: 1,
         };
 
+        let mip_levels = if mip_mapped {
+            u32::ilog2(u32::max(image_resolution.0, image_resolution.1)) + 1
+        } else { 1u32 };
+
         let create_info = vk::ImageCreateInfo::default()
             .image_type(vk::ImageType::TYPE_2D)
             .format(format)
             .extent(extent)
-            .mip_levels(1)
+            .mip_levels(mip_levels)
             .array_layers(1)
             .samples(vk::SampleCountFlags::TYPE_1)
             .tiling(vk::ImageTiling::OPTIMAL)
@@ -935,7 +942,7 @@ impl VulkanRenderer {
             .subresource_range(
                 vk::ImageSubresourceRange::default()
                     .base_mip_level(0)
-                    .level_count(1)
+                    .level_count(mip_levels)
                     .base_array_layer(0)
                     .layer_count(1)
                     .aspect_mask(aspect_flags),
@@ -1400,9 +1407,9 @@ impl ComputeEffect {
 
 #[derive(Debug)]
 pub struct AllocatedBuffer {
-    buffer: vk::Buffer,
+    pub buffer: vk::Buffer,
     allocation: vk_mem::Allocation,
-    info: vk_mem::AllocationInfo,
+    pub info: vk_mem::AllocationInfo,
 }
 
 impl AllocatedBuffer {
