@@ -13,7 +13,7 @@ use std::mem;
 use std::path::Path;
 use std::sync::Arc;
 use vk_mem::Alloc;
-use winit::event::{ElementState, WindowEvent};
+use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::keyboard::Key;
 use winit::window::Window;
 use crate::camera::Camera;
@@ -67,6 +67,7 @@ pub(crate) struct VulkanRenderer {
 
     single_image_layout: vk::DescriptorSetLayout,
 
+    mouse_pos: (i32, i32),
     main_camera: Camera,
 }
 
@@ -269,7 +270,8 @@ impl VulkanRenderer {
             black_image,
             checkerboard_image,
             single_image_layout,
-            main_camera
+            main_camera,
+            mouse_pos: (0, 0),
         };
         renderer.meshes = load_gltf_meshes(&renderer, "assets/models/basicmesh.glb");
 
@@ -286,7 +288,19 @@ impl VulkanRenderer {
     }
 
     pub(crate) fn on_key_event(&mut self, key_event: (ElementState, Key)) {
+        // TODO: UI should intercept if focused input and stuff
         self.main_camera.handle_key_event(key_event);
+    }
+
+    pub(crate) fn on_mouse_event(&mut self, new_pos: (i32, i32)) {
+        // TODO: UI should intercept if mouse is over it
+        self.main_camera.handle_mouse_event(self.mouse_pos, new_pos);
+        self.mouse_pos = new_pos;
+    }
+
+    pub(crate) fn on_mouse_button_event(&mut self, button: MouseButton, state: ElementState) {
+        // TODO: UI should intercept if mouse is over it
+       self.main_camera.handle_mouse_button_event(button, state);
     }
 
     pub(crate) fn draw(&mut self, _window: &Window) {
