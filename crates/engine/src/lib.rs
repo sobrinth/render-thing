@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 use crate::renderer::VulkanRenderer;
-use winit::event::{ElementState, WindowEvent};
+use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::keyboard::Key;
 use winit::window::Window;
 extern crate nalgebra_glm as glm;
@@ -42,6 +42,15 @@ impl Engine {
     pub fn on_key_press(&mut self, key_event: (ElementState, Key)) {
         self.renderer.on_key_event(key_event);
     }
+
+    pub fn on_mouse_event(&mut self, new_pos: (i32, i32)) {
+        self.renderer.on_mouse_event(new_pos);
+    }
+
+    pub fn on_mouse_button_event(&mut self, button: MouseButton, state: ElementState) {
+        self.renderer.on_mouse_button_event(button, state);
+    }
+
     pub fn stop(&mut self) {
         self.renderer.wait_gpu_idle();
     }

@@ -64,14 +64,15 @@ impl ApplicationHandler for Application {
                 let app = self.engine.as_mut().unwrap();
                 app.resize(size.into());
             }
-            WindowEvent::MouseInput { .. } => {
-                // self.vulkan.as_mut().unwrap().is_left_clicked =
-                //     state == ElementState::Pressed && button == MouseButton::Left;
+            WindowEvent::MouseInput { button, state, .. } => {
+                let app = self.engine.as_mut().unwrap();
+                app.on_mouse_button_event(button, state);
             }
             WindowEvent::CursorMoved { position, .. } => {
-                let _app = self.engine.as_mut().unwrap();
+                let app = self.engine.as_mut().unwrap();
 
-                let _position: (i32, i32) = position.into();
+                let position: (i32, i32) = position.into();
+                app.on_mouse_event(position);
                 // app.cursor_delta = Some([
                 //     app.cursor_position[0] - position.0,
                 //     app.cursor_position[1] - position.1,
