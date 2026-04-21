@@ -81,11 +81,12 @@ impl ApplicationHandler for Application {
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 let app = self.engine.as_mut().unwrap();
-                if (event.state == ElementState::Pressed || event.state == ElementState::Released) && !event.repeat {
+                if (event.state == ElementState::Pressed || event.state == ElementState::Released)
+                    && !event.repeat
+                {
                     let key = event.key_without_modifiers();
                     app.on_key_press((event.state, key.clone()));
                 }
-
             }
             WindowEvent::MouseWheel {
                 delta: MouseScrollDelta::LineDelta(_, _v_lines),

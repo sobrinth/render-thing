@@ -7,6 +7,7 @@ extern crate nalgebra_glm as glm;
 
 mod renderer;
 
+mod camera;
 mod context;
 mod debug;
 mod descriptor;
@@ -15,7 +16,6 @@ mod pipeline;
 mod primitives;
 mod swapchain;
 mod ui;
-mod camera;
 
 pub struct Engine {
     renderer: VulkanRenderer,
@@ -38,7 +38,7 @@ impl Engine {
     pub fn on_window_event(&mut self, window: &Window, event: &WindowEvent) {
         self.renderer.on_window_event(window, event);
     }
-    
+
     pub fn on_key_press(&mut self, key_event: (ElementState, Key)) {
         self.renderer.on_key_event(key_event);
     }
