@@ -20,6 +20,7 @@ fn main() {
     println!("cargo::rerun-if-changed=../../assets/shaders/colored_triangle.vert");
     println!("cargo::rerun-if-changed=../../assets/shaders/colored_triangle.frag");
     println!("cargo::rerun-if-changed=../../assets/shaders/colored_triangle_mesh.frag");
+    println!("cargo::rerun-if-changed=../../assets/shaders/tex_image.frag")
 }
 
 fn should_skip_shader_compilation() -> bool {

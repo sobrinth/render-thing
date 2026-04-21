@@ -64,8 +64,8 @@ impl Swapchain {
 
         let swapchain_fn =
             ash::khr::swapchain::Device::new(&vk_context.instance, &vk_context.device);
-        let swapchain = unsafe { swapchain_fn.create_swapchain(&create_info, None).unwrap() };
-        let swapchain_images = unsafe { swapchain_fn.get_swapchain_images(swapchain).unwrap() };
+        let swapchain = unsafe { swapchain_fn.create_swapchain(&create_info, None) }.unwrap();
+        let swapchain_images = unsafe { swapchain_fn.get_swapchain_images(swapchain) }.unwrap();
 
         let swapchain_image_views = swapchain_images
             .iter()
@@ -138,23 +138,16 @@ impl SwapchainSupportDetails {
         surface_fn: &surface::Instance,
         surface: vk::SurfaceKHR,
     ) -> Self {
-        let capabilities = unsafe {
-            surface_fn
-                .get_physical_device_surface_capabilities(device, surface)
-                .unwrap()
-        };
+        let capabilities =
+            unsafe { surface_fn.get_physical_device_surface_capabilities(device, surface) }
+                .unwrap();
 
-        let formats = unsafe {
-            surface_fn
-                .get_physical_device_surface_formats(device, surface)
-                .unwrap()
-        };
+        let formats =
+            unsafe { surface_fn.get_physical_device_surface_formats(device, surface) }.unwrap();
 
-        let present_modes = unsafe {
-            surface_fn
-                .get_physical_device_surface_present_modes(device, surface)
-                .unwrap()
-        };
+        let present_modes =
+            unsafe { surface_fn.get_physical_device_surface_present_modes(device, surface) }
+                .unwrap();
 
         Self {
             capabilities,

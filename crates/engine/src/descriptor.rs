@@ -122,19 +122,13 @@ impl GrowableAllocator {
 
     pub fn clear_pools(&mut self, device: &ash::Device) {
         for pool in self.ready_pools.iter() {
-            unsafe {
-                device
-                    .reset_descriptor_pool(*pool, vk::DescriptorPoolResetFlags::empty())
-                    .unwrap()
-            }
+            unsafe { device.reset_descriptor_pool(*pool, vk::DescriptorPoolResetFlags::empty()) }
+                .unwrap();
         }
 
         for pool in self.full_pools.drain(..) {
-            unsafe {
-                device
-                    .reset_descriptor_pool(pool, vk::DescriptorPoolResetFlags::empty())
-                    .unwrap()
-            }
+            unsafe { device.reset_descriptor_pool(pool, vk::DescriptorPoolResetFlags::empty()) }
+                .unwrap();
             self.ready_pools.push(pool);
         }
     }
@@ -168,7 +162,7 @@ impl GrowableAllocator {
 
                 pool_to_use = self.get_pool(device);
                 alloc_info = alloc_info.descriptor_pool(pool_to_use);
-                unsafe { device.allocate_descriptor_sets(&alloc_info).unwrap()[0] }
+                unsafe { device.allocate_descriptor_sets(&alloc_info) }.unwrap()[0]
             }
             Err(e) => panic!("Failed to allocate descriptor set: {:?}", e),
         };
