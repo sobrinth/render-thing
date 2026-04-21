@@ -2,8 +2,6 @@ use crate::primitives::{GPUMeshBuffers, Vertex};
 use crate::renderer::VulkanRenderer;
 use nalgebra_glm as glm;
 use std::path::Path;
-use std::sync::Arc;
-use vk_mem::Allocator;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct GeoSurface {
@@ -16,13 +14,6 @@ pub(crate) struct MeshAsset {
     pub name: String,
     pub surfaces: Vec<GeoSurface>,
     pub mesh_buffers: GPUMeshBuffers,
-}
-
-impl MeshAsset {
-    pub fn destroy(&mut self, gpu_alloc: &Arc<Allocator>) {
-        self.mesh_buffers.index_buffer.destroy(gpu_alloc);
-        self.mesh_buffers.vertex_buffer.destroy(gpu_alloc);
-    }
 }
 
 fn node_to_mat4(node: &gltf::Node) -> glm::Mat4 {
