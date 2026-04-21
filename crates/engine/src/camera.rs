@@ -1,4 +1,4 @@
-﻿use glm::Vec3;
+use glm::Vec3;
 use winit::event::{ElementState, MouseButton};
 use winit::keyboard::{Key, NamedKey};
 
