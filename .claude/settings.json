@@ -1,0 +1,19 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cargo fmt"
+          },
+          {
+            "type": "command",
+            "command": "cargo clippy --quiet"
+          }
+        ]
+      }
+    ]
+  }
+}
