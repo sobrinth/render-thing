@@ -21,6 +21,7 @@ typedef struct VkGraphicsPipelineCreateInfo {
     int32_t                                          basePipelineIndex;     Ignore
 } VkGraphicsPipelineCreateInfo;
  */
+use ash::Device;
 use ash::vk;
 use ash::vk::Bool32;
 
@@ -32,7 +33,7 @@ pub(crate) struct PipelineBuilder<'a> {
     rasterizer: vk::PipelineRasterizationStateCreateInfo<'a>,
     multisampling: vk::PipelineMultisampleStateCreateInfo<'a>,
     depth_stencil: vk::PipelineDepthStencilStateCreateInfo<'a>,
-    pub pipeline_layout: vk::PipelineLayout,
+    pub(crate) pipeline_layout: vk::PipelineLayout,
     color_attachment_format: vk::Format,
 }
 
@@ -209,5 +210,49 @@ impl<'a> PipelineBuilder<'a> {
         self.depth_stencil.back = vk::StencilOpState::default();
         self.depth_stencil.min_depth_bounds = 0.0;
         self.depth_stencil.max_depth_bounds = 1.0;
+    }
+}
+
+pub(crate) struct Pipeline {
+    pub(crate) pipeline: vk::Pipeline,
+    pub(crate) layout: vk::PipelineLayout,
+    device: Device,
+}
+
+impl Pipeline {
+    pub(crate) fn new(pipeline: vk::Pipeline, layout: vk::PipelineLayout, device: Device) -> Self {
+        Self {
+            pipeline,
+            layout,
+            device,
+        }
+    }
+}
+
+impl Drop for Pipeline {
+    fn drop(&mut self) {
+        unsafe {
+            self.device.destroy_pipeline(self.pipeline, None);
+            self.device.destroy_pipeline_layout(self.layout, None);
+        }
+    }
+}
+
+pub(crate) struct PipelineLayout {
+    pub(crate) layout: vk::PipelineLayout,
+    device: Device,
+}
+
+impl PipelineLayout {
+    pub(crate) fn new(layout: vk::PipelineLayout, device: Device) -> Self {
+        Self { layout, device }
+    }
+}
+
+impl Drop for PipelineLayout {
+    fn drop(&mut self) {
+        unsafe {
+            self.device.destroy_pipeline_layout(self.layout, None);
+        }
     }
 }
