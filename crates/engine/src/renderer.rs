@@ -1,4 +1,5 @@
 use crate::camera::Camera;
+use crate::command_buffer::{CommandBuffer, Recording, Submitted};
 use crate::context::VkContext;
 use crate::descriptor::{
     DescriptorSetLayout, DescriptorWriter, GrowableAllocator, LayoutBuilder, PoolSizeRatio,
@@ -331,7 +332,7 @@ impl VulkanRenderer {
         const ONE_SECOND: u64 = 1_000_000_000;
         let frame_index: usize = (self.resources.frame_number % FRAME_OVERLAP) as usize;
 
-        let cmd = self.resources.frames[frame_index].main_command_buffer;
+        let raw_cmd = self.resources.frames[frame_index].main_command_buffer;
 
         // wait for the GPU to have finished the last rendering of this frame.
         unsafe {
@@ -389,38 +390,29 @@ impl VulkanRenderer {
         );
 
         // Reset and begin command buffer for the frame
-        unsafe {
-            self.context
-                .device
-                .reset_command_buffer(cmd, vk::CommandBufferResetFlags::default())
-        }
-        .unwrap();
-
-        let cmd_begin_info = vk::CommandBufferBeginInfo::default()
-            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-
-        unsafe {
-            self.context
-                .device
-                .begin_command_buffer(cmd, &cmd_begin_info)
-        }
-        .unwrap();
+        // SAFETY: render_fence was waited on and reset above; no other wrapper exists for this handle.
+        let cmd = unsafe { CommandBuffer::<Submitted>::wrap(raw_cmd) };
+        let cmd = cmd.reset(&self.context.device);
+        let cmd = cmd.begin(
+            &self.context.device,
+            vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
+        );
 
         // transition the main draw image to Layout::GENERAL so we can draw into it.
         // we will overwrite the contents, so we don't care about the old layout
         Self::transition_image(
             &self.context.device,
-            cmd,
+            cmd.handle(),
             self.resources.draw_image.image,
             vk::ImageLayout::UNDEFINED,
             vk::ImageLayout::GENERAL,
         );
 
-        self.draw_background(cmd, &self.context.device, draw_extent);
+        self.draw_background(cmd.handle(), &self.context.device, draw_extent);
 
         Self::transition_image(
             &self.context.device,
-            cmd,
+            cmd.handle(),
             self.resources.draw_image.image,
             vk::ImageLayout::GENERAL,
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
@@ -428,25 +420,25 @@ impl VulkanRenderer {
 
         Self::transition_image(
             &self.context.device,
-            cmd,
+            cmd.handle(),
             self.resources.depth_image.image,
             vk::ImageLayout::UNDEFINED,
             vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
         );
 
-        self.draw_geometry(frame_index, cmd, draw_extent);
+        self.draw_geometry(frame_index, cmd.handle(), draw_extent);
 
         // transition the draw image and the swapchain image into their correct transfer layouts.
         Self::transition_image(
             &self.context.device,
-            cmd,
+            cmd.handle(),
             self.resources.draw_image.image,
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
         );
         Self::transition_image(
             &self.context.device,
-            cmd,
+            cmd.handle(),
             self.resources.swapchain.images[image_index],
             vk::ImageLayout::UNDEFINED,
             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
@@ -455,7 +447,7 @@ impl VulkanRenderer {
         // copy the draw image to the swapchain image
         Self::copy_image_to_image(
             &self.context.device,
-            cmd,
+            cmd.handle(),
             self.resources.draw_image.image,
             self.resources.swapchain.images[image_index],
             draw_extent,
@@ -466,7 +458,7 @@ impl VulkanRenderer {
 
         Self::transition_image(
             &self.context.device,
-            cmd,
+            cmd.handle(),
             self.resources.swapchain.images[image_index],
             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
@@ -488,36 +480,36 @@ impl VulkanRenderer {
         unsafe {
             self.context
                 .device
-                .cmd_begin_rendering(cmd, &rendering_info)
+                .cmd_begin_rendering(cmd.handle(), &rendering_info)
         }
 
         let swapchain_extent = self.resources.swapchain.properties.extent;
         ui::render(
             &mut self.resources.ui_context,
-            cmd,
+            cmd.handle(),
             swapchain_extent,
             ui_primitives,
         );
 
-        unsafe { self.context.device.cmd_end_rendering(cmd) }
+        unsafe { self.context.device.cmd_end_rendering(cmd.handle()) }
 
         // set the swapchain image to Layout::PRESENT so we can present it
         Self::transition_image(
             &self.context.device,
-            cmd,
+            cmd.handle(),
             self.resources.swapchain.images[image_index],
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             vk::ImageLayout::PRESENT_SRC_KHR,
         );
 
         // finalize command buffer
-        unsafe { self.context.device.end_command_buffer(cmd) }.unwrap();
+        let cmd = cmd.end(&self.context.device);
 
         // Prepare queue submission
         // we want to wait on the present_semaphore, as that is signaled when the swapchain is ready,
         // we will signal render_semaphore, to signal rendering has finished
         let cmd_info = &[vk::CommandBufferSubmitInfo::default()
-            .command_buffer(cmd)
+            .command_buffer(cmd.handle())
             .device_mask(0)];
 
         let wait_info = &[vk::SemaphoreSubmitInfo::default()
@@ -547,6 +539,7 @@ impl VulkanRenderer {
             )
         }
         .unwrap();
+        cmd.into_submitted(); // type-level marker: buffer is now pending, no Vulkan call
 
         // Prepare presentation
         // this will put the image just rendered to into the visible window
@@ -588,33 +581,27 @@ impl VulkanRenderer {
         graphics_queue: &QueueData,
         func: F,
     ) where
-        F: FnOnce(vk::CommandBuffer),
+        F: FnOnce(&CommandBuffer<Recording>),
     {
         unsafe { gpu.reset_fences(&[imm_data.fence]) }.unwrap();
-        unsafe {
-            gpu.reset_command_buffer(
-                imm_data.command_buffer,
-                vk::CommandBufferResetFlags::default(),
-            )
-        }
-        .unwrap();
 
-        let cmd_begin_info = vk::CommandBufferBeginInfo::default()
-            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+        let cmd = unsafe { CommandBuffer::<Submitted>::wrap(imm_data.command_buffer) };
+        let cmd = cmd.reset(gpu);
+        let cmd = cmd.begin(gpu, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
 
-        unsafe { gpu.begin_command_buffer(imm_data.command_buffer, &cmd_begin_info) }.unwrap();
+        func(&cmd);
 
-        func(imm_data.command_buffer);
-
-        unsafe { gpu.end_command_buffer(imm_data.command_buffer) }.unwrap();
+        let cmd = cmd.end(gpu);
 
         let cmd_info = &[vk::CommandBufferSubmitInfo::default()
-            .command_buffer(imm_data.command_buffer)
+            .command_buffer(cmd.handle())
             .device_mask(0)];
 
         let submit = &[vk::SubmitInfo2::default().command_buffer_infos(cmd_info)];
 
         unsafe { gpu.queue_submit2(graphics_queue.queue, submit, imm_data.fence) }.unwrap();
+
+        cmd.into_submitted(); // type-level marker: buffer is now pending, no Vulkan call
 
         unsafe { gpu.wait_for_fences(&[imm_data.fence], true, 1_000_000_000) }.unwrap();
     }
@@ -1381,7 +1368,7 @@ impl VulkanRenderer {
                 .size(vertex_buffer_size as u64)];
             unsafe {
                 context.device.cmd_copy_buffer(
-                    cmd,
+                    cmd.handle(),
                     staging.buffer,
                     meshes.vertex_buffer.buffer,
                     vertex_copy,
@@ -1395,7 +1382,7 @@ impl VulkanRenderer {
 
             unsafe {
                 context.device.cmd_copy_buffer(
-                    cmd,
+                    cmd.handle(),
                     staging.buffer,
                     meshes.index_buffer.buffer,
                     index_copy,
@@ -1548,7 +1535,7 @@ impl AllocatedImage {
         VulkanRenderer::immediate_submit(&context.device, imm_data, graphics_queue, |cmd| {
             VulkanRenderer::transition_image(
                 &context.device,
-                cmd,
+                cmd.handle(),
                 new_image.image,
                 vk::ImageLayout::UNDEFINED,
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
@@ -1568,7 +1555,7 @@ impl AllocatedImage {
 
             unsafe {
                 context.device.cmd_copy_buffer_to_image(
-                    cmd,
+                    cmd.handle(),
                     upload_buffer.buffer,
                     new_image.image,
                     vk::ImageLayout::TRANSFER_DST_OPTIMAL,
@@ -1578,7 +1565,7 @@ impl AllocatedImage {
 
             VulkanRenderer::transition_image(
                 &context.device,
-                cmd,
+                cmd.handle(),
                 new_image.image,
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                 vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,

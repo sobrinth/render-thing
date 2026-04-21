@@ -8,6 +8,7 @@ extern crate nalgebra_glm as glm;
 mod renderer;
 
 mod camera;
+mod command_buffer;
 mod context;
 mod debug;
 mod descriptor;
