@@ -1,8 +1,10 @@
 use crate::camera::Camera;
 use crate::context::VkContext;
-use crate::descriptor::{DescriptorWriter, GrowableAllocator, LayoutBuilder, PoolSizeRatio};
+use crate::descriptor::{
+    DescriptorSetLayout, DescriptorWriter, GrowableAllocator, LayoutBuilder, PoolSizeRatio,
+};
 use crate::meshes::{MeshAsset, load_gltf_meshes};
-use crate::pipeline::PipelineBuilder;
+use crate::pipeline::{Pipeline, PipelineBuilder, PipelineLayout};
 use crate::primitives::{GPUDrawPushConstants, GPUMeshBuffers, GPUSceneData, Vertex};
 use crate::swapchain::Swapchain;
 use crate::ui::UiContext;
@@ -10,6 +12,7 @@ use crate::{descriptor, ui};
 use ash::{Device, vk};
 use glm::Mat4;
 use itertools::Itertools;
+use std::mem::ManuallyDrop;
 use std::path::Path;
 use std::sync::Arc;
 use vk_mem::Alloc;
@@ -19,55 +22,45 @@ use winit::window::Window;
 
 pub(crate) const FRAME_OVERLAP: u32 = 2;
 
-pub(crate) struct VulkanRenderer {
+struct RendererResources {
     frame_number: u32,
     window_size: (u32, u32),
     render_scale: f32,
     render_size: (u32, u32),
-    gpu_alloc: Arc<vk_mem::Allocator>,
-    ui_context: UiContext,
-    pub context: VkContext,
     resize_requested: bool,
-
+    mouse_pos: (i32, i32),
+    main_camera: Camera,
+    ui_context: UiContext,
+    gpu_alloc: Arc<vk_mem::Allocator>,
     swapchain: Swapchain,
-
     frames: Vec<FrameData>,
     graphics_queue: QueueData,
-
     descriptor_allocator: descriptor::Allocator,
-
     immediate_submit: ImmediateSubmitData,
-
     draw_image: AllocatedImage,
     draw_image_descriptors: vk::DescriptorSet,
-    draw_image_descriptor_layout: vk::DescriptorSetLayout,
+    draw_image_descriptor_layout: DescriptorSetLayout,
     depth_image: AllocatedImage,
-
-    effect_pipeline_layout: vk::PipelineLayout,
+    effect_pipeline_layout: PipelineLayout,
     background_effects: Vec<ComputeEffect>,
     active_background_effect: usize,
-
-    mesh_pipeline: vk::Pipeline,
-    mesh_pipeline_layout: vk::PipelineLayout,
-
+    mesh_pipeline: Pipeline,
     scene_data: GPUSceneData,
-    scene_data_layout: vk::DescriptorSetLayout,
-
+    scene_data_layout: DescriptorSetLayout,
     meshes: Option<Vec<MeshAsset>>,
     active_mesh: usize,
-
-    default_sampler_nearest: vk::Sampler,
-    default_sampler_linear: vk::Sampler,
-
+    default_sampler_nearest: Sampler,
+    default_sampler_linear: Sampler,
     white_image: AllocatedImage,
     grey_image: AllocatedImage,
     black_image: AllocatedImage,
     checkerboard_image: AllocatedImage,
+    single_image_layout: DescriptorSetLayout,
+}
 
-    single_image_layout: vk::DescriptorSetLayout,
-
-    mouse_pos: (i32, i32),
-    main_camera: Camera,
+pub(crate) struct VulkanRenderer {
+    resources: ManuallyDrop<RendererResources>,
+    pub(crate) context: ManuallyDrop<VkContext>,
 }
 
 impl VulkanRenderer {
@@ -121,7 +114,7 @@ impl VulkanRenderer {
 
         let (effects, effect_pipeline_layout) = Self::initialize_effect_pipelines(
             &context,
-            &draw_image_descriptor_layout,
+            &draw_image_descriptor_layout.layout,
             &[
                 (gradient_shader_module, "color_grid"),
                 (gradient_color_shader_module, "gradient"),
@@ -145,11 +138,11 @@ impl VulkanRenderer {
         let single_image_layout =
             dsl_builder.build(&context.device, vk::ShaderStageFlags::FRAGMENT, None);
 
-        let (mesh_pipeline, mesh_pipeline_layout) = Self::initialize_mesh_pipeline(
+        let mesh_pipeline = Self::initialize_mesh_pipeline(
             &context,
             &draw_image,
             &depth_image,
-            &single_image_layout,
+            &single_image_layout.layout,
         );
 
         // default data
@@ -226,60 +219,62 @@ impl VulkanRenderer {
             .mag_filter(vk::Filter::NEAREST)
             .min_filter(vk::Filter::NEAREST);
 
-        let default_sampler_nearest =
-            unsafe { context.device.create_sampler(&sampler, None) }.unwrap();
+        let nearest_handle = unsafe { context.device.create_sampler(&sampler, None) }.unwrap();
+        let default_sampler_nearest = Sampler::new(nearest_handle, context.device.clone());
 
         sampler = sampler.mag_filter(vk::Filter::LINEAR);
         sampler = sampler.min_filter(vk::Filter::LINEAR);
 
-        let default_sampler_linear =
-            unsafe { context.device.create_sampler(&sampler, None) }.unwrap();
+        let linear_handle = unsafe { context.device.create_sampler(&sampler, None) }.unwrap();
+        let default_sampler_linear = Sampler::new(linear_handle, context.device.clone());
         let main_camera = Camera::new();
 
         let mut renderer = Self {
-            frame_number: 0,
-            window_size,
-            render_scale: 1f32,
-            render_size: (0, 0),
-            gpu_alloc,
-            context,
-            resize_requested: false,
-            ui_context: ui,
-            swapchain,
-            frames,
-            immediate_submit,
-            graphics_queue,
-            descriptor_allocator,
-            draw_image,
-            draw_image_descriptors,
-            draw_image_descriptor_layout,
-            depth_image,
-            effect_pipeline_layout,
-            background_effects: effects,
-            active_background_effect: 0,
-            mesh_pipeline,
-            mesh_pipeline_layout,
-            meshes: None,
-            active_mesh: 0,
-            scene_data_layout,
-            scene_data: GPUSceneData::default(),
-            default_sampler_nearest,
-            default_sampler_linear,
-            white_image,
-            grey_image,
-            black_image,
-            checkerboard_image,
-            single_image_layout,
-            main_camera,
-            mouse_pos: (0, 0),
+            resources: ManuallyDrop::new(RendererResources {
+                frame_number: 0,
+                window_size,
+                render_scale: 1f32,
+                render_size: (0, 0),
+                resize_requested: false,
+                mouse_pos: (0, 0),
+                main_camera,
+                ui_context: ui,
+                gpu_alloc,
+                swapchain,
+                frames,
+                graphics_queue,
+                descriptor_allocator,
+                immediate_submit,
+                draw_image,
+                draw_image_descriptors,
+                draw_image_descriptor_layout,
+                depth_image,
+                effect_pipeline_layout,
+                background_effects: effects,
+                active_background_effect: 0,
+                mesh_pipeline,
+                scene_data: GPUSceneData::default(),
+                scene_data_layout,
+                meshes: None,
+                active_mesh: 0,
+                default_sampler_nearest,
+                default_sampler_linear,
+                white_image,
+                grey_image,
+                black_image,
+                checkerboard_image,
+                single_image_layout,
+            }),
+            context: ManuallyDrop::new(context),
         };
-        renderer.meshes = load_gltf_meshes(&renderer, "assets/models/basicmesh.glb");
+        renderer.resources.meshes = load_gltf_meshes(&renderer, "assets/models/basicmesh.glb");
 
         renderer
     }
 
     pub(crate) fn on_window_event(&mut self, window: &Window, event: &WindowEvent) {
         let _ = self
+            .resources
             .ui_context
             .state
             .as_mut()
@@ -289,22 +284,27 @@ impl VulkanRenderer {
 
     pub(crate) fn on_key_event(&mut self, key_event: (ElementState, Key)) {
         // TODO: UI should intercept if focused input and stuff
-        self.main_camera.handle_key_event(key_event);
+        self.resources.main_camera.handle_key_event(key_event);
     }
 
     pub(crate) fn on_mouse_event(&mut self, new_pos: (i32, i32)) {
         // TODO: UI should intercept if mouse is over it
-        self.main_camera.handle_mouse_event(self.mouse_pos, new_pos);
-        self.mouse_pos = new_pos;
+        let old_pos = self.resources.mouse_pos;
+        self.resources
+            .main_camera
+            .handle_mouse_event(old_pos, new_pos);
+        self.resources.mouse_pos = new_pos;
     }
 
     pub(crate) fn on_mouse_button_event(&mut self, button: MouseButton, state: ElementState) {
         // TODO: UI should intercept if mouse is over it
-        self.main_camera.handle_mouse_button_event(button, state);
+        self.resources
+            .main_camera
+            .handle_mouse_button_event(button, state);
     }
 
     pub(crate) fn draw(&mut self, _window: &Window) {
-        if self.resize_requested {
+        if self.resources.resize_requested {
             let minimized = Self::resize_swapchain(self);
             if minimized {
                 return;
@@ -313,30 +313,30 @@ impl VulkanRenderer {
 
         let draw_extent = (
             f32::min(
-                self.swapchain.properties.extent.height as f32,
-                self.draw_image.extent.height as f32,
-            ) * self.render_scale,
+                self.resources.swapchain.properties.extent.height as f32,
+                self.resources.draw_image.extent.height as f32,
+            ) * self.resources.render_scale,
             f32::min(
-                self.swapchain.properties.extent.width as f32,
-                self.draw_image.extent.width as f32,
-            ) * self.render_scale,
+                self.resources.swapchain.properties.extent.width as f32,
+                self.resources.draw_image.extent.width as f32,
+            ) * self.resources.render_scale,
         );
-        self.render_size = (draw_extent.0 as u32, draw_extent.1 as u32);
+        self.resources.render_size = (draw_extent.0 as u32, draw_extent.1 as u32);
 
         let draw_extent = vk::Extent2D {
-            height: self.render_size.0,
-            width: self.render_size.1,
+            height: self.resources.render_size.0,
+            width: self.resources.render_size.1,
         };
 
         const ONE_SECOND: u64 = 1_000_000_000;
-        let frame_index: usize = (self.frame_number % FRAME_OVERLAP) as usize;
+        let frame_index: usize = (self.resources.frame_number % FRAME_OVERLAP) as usize;
 
-        let cmd = self.frames[frame_index].main_command_buffer;
+        let cmd = self.resources.frames[frame_index].main_command_buffer;
 
         // wait for the GPU to have finished the last rendering of this frame.
         unsafe {
             self.context.device.wait_for_fences(
-                &[self.frames[frame_index].render_fence],
+                &[self.resources.frames[frame_index].render_fence],
                 true,
                 ONE_SECOND,
             )
@@ -345,16 +345,16 @@ impl VulkanRenderer {
         unsafe {
             self.context
                 .device
-                .reset_fences(&[self.frames[frame_index].render_fence])
+                .reset_fences(&[self.resources.frames[frame_index].render_fence])
         }
         .unwrap();
-        self.frames[frame_index].clean_resources(&self.context.device);
+        self.resources.frames[frame_index].clean_resources(&self.context.device);
 
         let res = unsafe {
-            self.swapchain.swapchain_fn.acquire_next_image(
-                self.swapchain.swapchain,
+            self.resources.swapchain.swapchain_fn.acquire_next_image(
+                self.resources.swapchain.swapchain,
                 ONE_SECOND,
-                self.frames[frame_index].acquire_semaphore,
+                self.resources.frames[frame_index].acquire_semaphore,
                 vk::Fence::null(),
             )
         };
@@ -362,25 +362,29 @@ impl VulkanRenderer {
         let image_index = match res {
             Ok((image_index, _)) => image_index as usize,
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                self.resize_requested = true;
+                self.resources.resize_requested = true;
                 return;
             }
             Err(err) => panic!("Failed to acquire next image. Cause: {err}"),
         };
 
         // BEFORE FRAME
+        // Extract values needed to avoid simultaneous borrow conflicts through ManuallyDrop
+        let active_effect_idx = self.resources.active_background_effect;
+        let render_size = self.resources.render_size;
+        let res = &mut *self.resources;
         let ui_primitives = ui::before_frame(
-            &mut self.ui_context,
+            &mut res.ui_context,
             _window,
-            &self.graphics_queue,
-            &self.frames[frame_index],
+            &res.graphics_queue,
+            &res.frames[frame_index],
             (
-                &mut self.background_effects[self.active_background_effect],
-                &mut self.active_background_effect,
-                &mut self.active_mesh,
-                &mut self.meshes,
-                &mut self.render_scale,
-                self.render_size,
+                &mut res.background_effects[active_effect_idx],
+                &mut res.active_background_effect,
+                &mut res.active_mesh,
+                &mut res.meshes,
+                &mut res.render_scale,
+                render_size,
             ),
         );
 
@@ -407,7 +411,7 @@ impl VulkanRenderer {
         Self::transition_image(
             &self.context.device,
             cmd,
-            self.draw_image.image,
+            self.resources.draw_image.image,
             vk::ImageLayout::UNDEFINED,
             vk::ImageLayout::GENERAL,
         );
@@ -417,7 +421,7 @@ impl VulkanRenderer {
         Self::transition_image(
             &self.context.device,
             cmd,
-            self.draw_image.image,
+            self.resources.draw_image.image,
             vk::ImageLayout::GENERAL,
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
         );
@@ -425,7 +429,7 @@ impl VulkanRenderer {
         Self::transition_image(
             &self.context.device,
             cmd,
-            self.depth_image.image,
+            self.resources.depth_image.image,
             vk::ImageLayout::UNDEFINED,
             vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
         );
@@ -436,14 +440,14 @@ impl VulkanRenderer {
         Self::transition_image(
             &self.context.device,
             cmd,
-            self.draw_image.image,
+            self.resources.draw_image.image,
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
         );
         Self::transition_image(
             &self.context.device,
             cmd,
-            self.swapchain.images[image_index],
+            self.resources.swapchain.images[image_index],
             vk::ImageLayout::UNDEFINED,
             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
         );
@@ -452,10 +456,10 @@ impl VulkanRenderer {
         Self::copy_image_to_image(
             &self.context.device,
             cmd,
-            self.draw_image.image,
-            self.swapchain.images[image_index],
+            self.resources.draw_image.image,
+            self.resources.swapchain.images[image_index],
             draw_extent,
-            self.swapchain.properties.extent,
+            self.resources.swapchain.properties.extent,
         );
 
         // DO THE UI RENDER
@@ -463,20 +467,20 @@ impl VulkanRenderer {
         Self::transition_image(
             &self.context.device,
             cmd,
-            self.swapchain.images[image_index],
+            self.resources.swapchain.images[image_index],
             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
         );
 
         let color_attachment_info = vk::RenderingAttachmentInfo::default()
-            .image_view(self.swapchain.image_views[image_index])
+            .image_view(self.resources.swapchain.image_views[image_index])
             .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
             .store_op(vk::AttachmentStoreOp::STORE);
 
         let rendering_info = vk::RenderingInfo::default()
             .render_area(vk::Rect2D {
                 offset: vk::Offset2D { x: 0, y: 0 },
-                extent: self.swapchain.properties.extent,
+                extent: self.resources.swapchain.properties.extent,
             })
             .layer_count(1)
             .color_attachments(std::slice::from_ref(&color_attachment_info));
@@ -487,10 +491,11 @@ impl VulkanRenderer {
                 .cmd_begin_rendering(cmd, &rendering_info)
         }
 
+        let swapchain_extent = self.resources.swapchain.properties.extent;
         ui::render(
-            &mut self.ui_context,
+            &mut self.resources.ui_context,
             cmd,
-            self.swapchain.properties.extent,
+            swapchain_extent,
             ui_primitives,
         );
 
@@ -500,7 +505,7 @@ impl VulkanRenderer {
         Self::transition_image(
             &self.context.device,
             cmd,
-            self.swapchain.images[image_index],
+            self.resources.swapchain.images[image_index],
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             vk::ImageLayout::PRESENT_SRC_KHR,
         );
@@ -516,13 +521,13 @@ impl VulkanRenderer {
             .device_mask(0)];
 
         let wait_info = &[vk::SemaphoreSubmitInfo::default()
-            .semaphore(self.frames[frame_index].acquire_semaphore)
+            .semaphore(self.resources.frames[frame_index].acquire_semaphore)
             .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
             .device_index(0)
             .value(1)];
 
         let signal_info = &[vk::SemaphoreSubmitInfo::default()
-            .semaphore(self.swapchain.semaphores[image_index])
+            .semaphore(self.resources.swapchain.semaphores[image_index])
             .stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS)
             .device_index(0)
             .value(1)];
@@ -536,9 +541,9 @@ impl VulkanRenderer {
         // render_fence will now block until the graphic commands finish execution
         unsafe {
             self.context.device.queue_submit2(
-                self.graphics_queue.queue,
+                self.resources.graphics_queue.queue,
                 &[submit_info],
-                self.frames[frame_index].render_fence,
+                self.resources.frames[frame_index].render_fence,
             )
         }
         .unwrap();
@@ -549,31 +554,32 @@ impl VulkanRenderer {
         let image_indices = &[image_index as u32];
 
         let present_info = vk::PresentInfoKHR::default()
-            .swapchains(core::slice::from_ref(&self.swapchain.swapchain))
+            .swapchains(core::slice::from_ref(&self.resources.swapchain.swapchain))
             .wait_semaphores(core::slice::from_ref(
-                &self.swapchain.semaphores[image_index],
+                &self.resources.swapchain.semaphores[image_index],
             ))
             .image_indices(image_indices);
 
         // TODO db: Maybe use `VK_EXT_swapchain_maintenance1` to be able to use a fence here and "circumvent" the semaphore per image
         let res = unsafe {
-            self.swapchain
+            self.resources
+                .swapchain
                 .swapchain_fn
-                .queue_present(self.graphics_queue.queue, &present_info)
+                .queue_present(self.resources.graphics_queue.queue, &present_info)
         };
 
         match res {
             Ok(_) => {}
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                self.resize_requested = true;
+                self.resources.resize_requested = true;
             }
             Err(e) => panic!("Failed to present swapchain image: {:?}", e),
         }
 
-        ui::after_frame(&mut self.ui_context);
+        ui::after_frame(&mut self.resources.ui_context);
 
         // increase the number of frames drawn
-        self.frame_number += 1;
+        self.resources.frame_number += 1;
     }
 
     fn immediate_submit<F>(
@@ -614,7 +620,8 @@ impl VulkanRenderer {
     }
 
     fn draw_background(&self, cmd: vk::CommandBuffer, gpu: &Device, extent: vk::Extent2D) {
-        let active_background = self.background_effects[self.active_background_effect];
+        let active_background =
+            &self.resources.background_effects[self.resources.active_background_effect];
 
         // bind the gradient drawing compute pipeline
         unsafe {
@@ -630,9 +637,9 @@ impl VulkanRenderer {
             gpu.cmd_bind_descriptor_sets(
                 cmd,
                 vk::PipelineBindPoint::COMPUTE,
-                self.effect_pipeline_layout,
+                self.resources.effect_pipeline_layout.layout,
                 0,
-                &[self.draw_image_descriptors],
+                &[self.resources.draw_image_descriptors],
                 &[],
             )
         }
@@ -640,7 +647,7 @@ impl VulkanRenderer {
         unsafe {
             gpu.cmd_push_constants(
                 cmd,
-                self.effect_pipeline_layout,
+                self.resources.effect_pipeline_layout.layout,
                 vk::ShaderStageFlags::COMPUTE,
                 0,
                 std::slice::from_raw_parts(
@@ -664,13 +671,13 @@ impl VulkanRenderer {
     fn draw_geometry(&mut self, frame_index: usize, cmd: vk::CommandBuffer, extent: vk::Extent2D) {
         // begin a render pass with the draw image
         let color_attachment = vk::RenderingAttachmentInfo::default()
-            .image_view(self.draw_image.view)
+            .image_view(self.resources.draw_image.view)
             .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
             .load_op(vk::AttachmentLoadOp::LOAD) // maybe clear?
             .store_op(vk::AttachmentStoreOp::STORE);
 
         let depth_attachment = vk::RenderingAttachmentInfo::default()
-            .image_view(self.depth_image.view)
+            .image_view(self.resources.depth_image.view)
             .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
             .load_op(vk::AttachmentLoadOp::CLEAR)
             .store_op(vk::AttachmentStoreOp::STORE)
@@ -695,19 +702,20 @@ impl VulkanRenderer {
             self.context.device.cmd_bind_pipeline(
                 cmd,
                 vk::PipelineBindPoint::GRAPHICS,
-                self.mesh_pipeline,
+                self.resources.mesh_pipeline.pipeline,
             );
         }
 
         // Bind descriptor set for drawing
-        let image_set = self.frames[frame_index]
+        let single_image_layout = self.resources.single_image_layout.layout;
+        let image_set = self.resources.frames[frame_index]
             .descriptors
-            .allocate(&self.context.device, self.single_image_layout);
+            .allocate(&self.context.device, single_image_layout);
         let mut descriptor_writer = DescriptorWriter::new();
         descriptor_writer.write_image(
             0,
-            self.checkerboard_image.view,
-            self.default_sampler_nearest,
+            self.resources.checkerboard_image.view,
+            self.resources.default_sampler_nearest.sampler,
             vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
         );
@@ -717,7 +725,7 @@ impl VulkanRenderer {
             self.context.device.cmd_bind_descriptor_sets(
                 cmd,
                 vk::PipelineBindPoint::GRAPHICS,
-                self.mesh_pipeline_layout,
+                self.resources.mesh_pipeline.layout,
                 0,
                 &[image_set],
                 &[],
@@ -743,14 +751,14 @@ impl VulkanRenderer {
 
         unsafe { self.context.device.cmd_set_scissor(cmd, 0, &[scissor]) }
 
-        self.main_camera.update();
+        self.resources.main_camera.update();
 
         // Draw monkey head from meshes
-        if let Some(meshes) = &self.meshes {
-            let mesh = &meshes[self.active_mesh];
+        if let Some(meshes) = &self.resources.meshes {
+            let mesh = &meshes[self.resources.active_mesh];
 
             // let view = glm::translate(&Mat4::identity(), &glm::vec3(0.0, 0.0, -5.0));
-            let view = self.main_camera.get_view_matrix();
+            let view = self.resources.main_camera.get_view_matrix();
 
             /*
                Use perspective_zo to get a projection matrix that is correct for vulkan
@@ -779,7 +787,7 @@ impl VulkanRenderer {
             unsafe {
                 self.context.device.cmd_push_constants(
                     cmd,
-                    self.mesh_pipeline_layout,
+                    self.resources.mesh_pipeline.layout,
                     vk::ShaderStageFlags::VERTEX,
                     0,
                     std::slice::from_raw_parts(
@@ -806,24 +814,28 @@ impl VulkanRenderer {
         }
 
         // dynamic temporal data
-        let scene_mem_ptr = self.frames[frame_index].scene_buffer.info.mapped_data;
+        let scene_mem_ptr = self.resources.frames[frame_index]
+            .scene_buffer
+            .info
+            .mapped_data;
 
         unsafe {
             std::ptr::copy_nonoverlapping(
-                (&self.scene_data as *const GPUSceneData) as *const u8,
+                (&self.resources.scene_data as *const GPUSceneData) as *const u8,
                 scene_mem_ptr as *mut u8,
                 size_of::<GPUSceneData>(),
             )
         }
 
-        let desc_set = self.frames[frame_index]
+        let scene_data_layout = self.resources.scene_data_layout.layout;
+        let desc_set = self.resources.frames[frame_index]
             .descriptors
-            .allocate(&self.context.device, self.scene_data_layout);
+            .allocate(&self.context.device, scene_data_layout);
 
         let mut writer = DescriptorWriter::new();
         writer.write_buffer(
             0,
-            self.frames[frame_index].scene_buffer.buffer,
+            self.resources.frames[frame_index].scene_buffer.buffer,
             size_of::<GPUSceneData>() as u64,
             0,
             vk::DescriptorType::UNIFORM_BUFFER,
@@ -951,12 +963,13 @@ impl VulkanRenderer {
             command_buffer,
             command_pool,
             fence,
+            device: context.device.clone(),
         }
     }
 
     fn create_framedata(
         context: &VkContext,
-        gpu_alloc: &vk_mem::Allocator,
+        gpu_alloc: &Arc<vk_mem::Allocator>,
         graphics_queue: &QueueData,
     ) -> Vec<FrameData> {
         let commandpool_info = vk::CommandPoolCreateInfo::default()
@@ -1025,6 +1038,7 @@ impl VulkanRenderer {
                 render_fence,
                 descriptors: desc_allocator,
                 scene_buffer,
+                device: context.device.clone(),
             };
             frames.push(frame);
         }
@@ -1036,15 +1050,15 @@ impl VulkanRenderer {
     }
 
     pub(crate) fn resize(&mut self, size: (u32, u32)) {
-        if self.window_size.0 != size.0 || self.window_size.1 != size.1 {
-            self.window_size = size;
-            self.resize_requested = true;
+        if self.resources.window_size.0 != size.0 || self.resources.window_size.1 != size.1 {
+            self.resources.window_size = size;
+            self.resources.resize_requested = true;
         }
     }
 
     pub fn create_image(
         context: &VkContext,
-        gpu_alloc: &vk_mem::Allocator,
+        gpu_alloc: &Arc<vk_mem::Allocator>,
         image_resolution: (u32, u32),
         format: vk::Format,
         usage: vk::ImageUsageFlags,
@@ -1103,6 +1117,8 @@ impl VulkanRenderer {
             allocation,
             extent,
             format,
+            device: context.device.clone(),
+            allocator: Arc::clone(gpu_alloc),
         }
     }
 
@@ -1111,7 +1127,7 @@ impl VulkanRenderer {
         draw_image: &AllocatedImage,
     ) -> (
         descriptor::Allocator,
-        vk::DescriptorSetLayout,
+        DescriptorSetLayout,
         vk::DescriptorSet,
     ) {
         let pool_sizes = [PoolSizeRatio {
@@ -1125,7 +1141,7 @@ impl VulkanRenderer {
         let layout = builder.build(&context.device, vk::ShaderStageFlags::COMPUTE, None);
         builder.clear();
 
-        let draw_image_descriptors = pool.allocate(&context.device, layout);
+        let draw_image_descriptors = pool.allocate(&context.device, layout.layout);
 
         let mut writer = DescriptorWriter::new();
 
@@ -1158,7 +1174,7 @@ impl VulkanRenderer {
         context: &VkContext,
         image_dsl: &vk::DescriptorSetLayout,
         shaders: &[(vk::ShaderModule, &'static str)],
-    ) -> (Vec<ComputeEffect>, vk::PipelineLayout) {
+    ) -> (Vec<ComputeEffect>, PipelineLayout) {
         let push_constants = &[vk::PushConstantRange::default()
             .offset(0)
             .size(size_of::<ComputePushConstants>() as u32)
@@ -1176,7 +1192,6 @@ impl VulkanRenderer {
                 .map(|(shader, name)| {
                     let pipeline = Self::initialize_shader_pipeline(context, shader, &layout);
                     let mut effect = ComputeEffect {
-                        layout,
                         name,
                         pipeline,
                         data: ComputePushConstants {
@@ -1185,6 +1200,7 @@ impl VulkanRenderer {
                             data3: [0.0; 4],
                             data4: [0.0; 4],
                         },
+                        device: context.device.clone(),
                     };
                     if *name == "sky" {
                         effect.data.data1 = [0.1, 0.2, 0.4, 0.97];
@@ -1192,7 +1208,7 @@ impl VulkanRenderer {
                     effect
                 })
                 .collect_vec(),
-            layout,
+            PipelineLayout::new(layout, context.device.clone()),
         )
     }
 
@@ -1223,7 +1239,7 @@ impl VulkanRenderer {
         draw_image: &AllocatedImage,
         depth_image: &AllocatedImage,
         image_dsl: &vk::DescriptorSetLayout,
-    ) -> (vk::Pipeline, vk::PipelineLayout) {
+    ) -> Pipeline {
         let frag_module =
             Self::create_shader_module(&context.device, "assets/shaders/tex_image.frag.spv");
         let vert_module = Self::create_shader_module(
@@ -1276,15 +1292,15 @@ impl VulkanRenderer {
             context.device.destroy_shader_module(vert_module, None);
             context.device.destroy_shader_module(frag_module, None);
         };
-        (pipeline, pipeline_layout)
+        Pipeline::new(pipeline, pipeline_layout, context.device.clone())
     }
 
     pub(crate) fn upload_mesh(&self, indices: &[u32], vertices: &[Vertex]) -> GPUMeshBuffers {
         Self::upload_mesh_internal(
-            &self.gpu_alloc,
+            &self.resources.gpu_alloc,
             &self.context,
-            &self.immediate_submit,
-            &self.graphics_queue,
+            &self.resources.immediate_submit,
+            &self.resources.graphics_queue,
             indices,
             vertices,
         )
@@ -1386,26 +1402,27 @@ impl VulkanRenderer {
                 )
             }
         });
-        staging.destroy(gpu_alloc);
-
         meshes
     }
 
     fn resize_swapchain(&mut self) -> bool {
         self.wait_gpu_idle();
-        if self.window_size.0 == 0 || self.window_size.1 == 0 {
+        if self.resources.window_size.0 == 0 || self.resources.window_size.1 == 0 {
             return true;
         }
 
-        self.swapchain.destroy(&self.context.device);
+        self.resources.swapchain.destroy(&self.context.device);
 
-        self.swapchain = Swapchain::create(&self.context, [self.window_size.0, self.window_size.1]);
+        self.resources.swapchain = Swapchain::create(
+            &self.context,
+            [self.resources.window_size.0, self.resources.window_size.1],
+        );
 
-        self.resize_requested = false;
+        self.resources.resize_requested = false;
         false
     }
 
-    fn init_scene_data(context: &VkContext) -> vk::DescriptorSetLayout {
+    fn init_scene_data(context: &VkContext) -> DescriptorSetLayout {
         let mut builder = LayoutBuilder::new();
         builder.add_binding(0, vk::DescriptorType::UNIFORM_BUFFER);
         builder.build(
@@ -1419,71 +1436,25 @@ impl VulkanRenderer {
 impl Drop for VulkanRenderer {
     fn drop(&mut self) {
         log::trace!("Start: Dropping renderer");
-        self.wait_gpu_idle();
-
         unsafe {
-            // Default images and sampler
-            self.context
-                .device
-                .destroy_sampler(self.default_sampler_nearest, None);
-            self.context
-                .device
-                .destroy_sampler(self.default_sampler_linear, None);
-
-            self.white_image
-                .destroy(&self.context.device, &self.gpu_alloc);
-            self.grey_image
-                .destroy(&self.context.device, &self.gpu_alloc);
-            self.black_image
-                .destroy(&self.context.device, &self.gpu_alloc);
-            self.checkerboard_image
-                .destroy(&self.context.device, &self.gpu_alloc);
-
-            if let Some(meshes) = &mut self.meshes {
-                meshes.iter_mut().for_each(|m| m.destroy(&self.gpu_alloc));
-            }
-
-            self.context
-                .device
-                .destroy_pipeline(self.mesh_pipeline, None);
-
-            self.context
-                .device
-                .destroy_pipeline_layout(self.mesh_pipeline_layout, None);
-
-            self.context
-                .device
-                .destroy_pipeline_layout(self.effect_pipeline_layout, None);
+            self.context.device.device_wait_idle().unwrap();
+            // Swapchain and descriptor::Allocator do not yet have Drop impls
+            self.resources.swapchain.destroy(&self.context.device);
+            // Destroy the descriptor pool before ManuallyDrop::drop(resources). Safe because
+            // raw vk::DescriptorSet handles (e.g. draw_image_descriptors) are Copy with no
+            // destructor — no Vulkan API is called on them when resources drops, so there is
+            // no double-free. TODO: remove these explicit calls once descriptor::Allocator
+            // gains a Drop impl.
+            self.resources
+                .descriptor_allocator
+                .clear_descriptors(&self.context.device);
+            self.resources
+                .descriptor_allocator
+                .destroy_pool(&self.context.device);
+            // All other fields have Drop impls and clean up automatically
+            ManuallyDrop::drop(&mut self.resources);
+            ManuallyDrop::drop(&mut self.context); // device + instance destroyed last
         }
-        self.background_effects.iter_mut().for_each(|effect| {
-            effect.destroy(&self.context.device);
-        });
-        self.descriptor_allocator
-            .clear_descriptors(&self.context.device);
-        self.descriptor_allocator.destroy_pool(&self.context.device);
-        unsafe {
-            self.context
-                .device
-                .destroy_descriptor_set_layout(self.draw_image_descriptor_layout, None);
-            self.context
-                .device
-                .destroy_descriptor_set_layout(self.scene_data_layout, None);
-            self.context
-                .device
-                .destroy_descriptor_set_layout(self.single_image_layout, None);
-        }
-        self.draw_image
-            .destroy(&self.context.device, &self.gpu_alloc);
-        self.depth_image
-            .destroy(&self.context.device, &self.gpu_alloc);
-
-        self.frames.iter_mut().for_each(|frame| {
-            frame.destroy(&self.context.device, &self.gpu_alloc);
-        });
-
-        self.immediate_submit.destroy(&self.context.device);
-
-        self.swapchain.destroy(&self.context.device);
         log::trace!("End: Dropping renderer");
     }
 }
@@ -1495,20 +1466,22 @@ pub struct FrameData {
     render_fence: vk::Fence,
     descriptors: GrowableAllocator,
     scene_buffer: AllocatedBuffer,
+    device: Device,
+}
+
+impl Drop for FrameData {
+    fn drop(&mut self) {
+        self.descriptors.destroy_pools(&self.device);
+        // scene_buffer drops automatically via its own Drop
+        unsafe {
+            self.device.destroy_command_pool(self.command_pool, None);
+            self.device.destroy_semaphore(self.acquire_semaphore, None);
+            self.device.destroy_fence(self.render_fence, None);
+        }
+    }
 }
 
 impl FrameData {
-    pub(crate) fn destroy(&mut self, device: &Device, gpu_alloc: &vk_mem::Allocator) {
-        self.clean_resources(device);
-        unsafe {
-            device.destroy_command_pool(self.command_pool, None);
-            device.destroy_semaphore(self.acquire_semaphore, None);
-            device.destroy_fence(self.render_fence, None);
-            self.descriptors.destroy_pools(device);
-            self.scene_buffer.destroy(gpu_alloc);
-        }
-    }
-
     pub(crate) fn clean_resources(&mut self, device: &Device) {
         self.descriptors.clear_pools(device);
     }
@@ -1526,16 +1499,21 @@ pub(crate) struct AllocatedImage {
     pub(crate) allocation: vk_mem::Allocation,
     pub(crate) extent: vk::Extent3D,
     pub(crate) format: vk::Format,
+    device: Device,
+    allocator: Arc<vk_mem::Allocator>,
+}
+
+impl Drop for AllocatedImage {
+    fn drop(&mut self) {
+        unsafe {
+            self.device.destroy_image_view(self.view, None);
+            self.allocator
+                .destroy_image(self.image, &mut self.allocation);
+        }
+    }
 }
 
 impl AllocatedImage {
-    pub(crate) fn destroy(&mut self, device: &Device, allocator: &vk_mem::Allocator) {
-        unsafe {
-            device.destroy_image_view(self.view, None);
-            allocator.destroy_image(self.image, &mut self.allocation);
-        }
-    }
-
     pub(crate) fn create_from_data(
         gpu_alloc: &Arc<vk_mem::Allocator>,
         context: &VkContext,
@@ -1621,24 +1599,22 @@ impl AllocatedImage {
             );
         });
 
-        upload_buffer.destroy(gpu_alloc);
-
         new_image
     }
 }
 
-#[derive(Debug, Clone, Copy)]
 pub struct ImmediateSubmitData {
     command_pool: vk::CommandPool,
     command_buffer: vk::CommandBuffer,
     fence: vk::Fence,
+    device: Device,
 }
 
-impl ImmediateSubmitData {
-    pub(crate) fn destroy(&mut self, device: &Device) {
+impl Drop for ImmediateSubmitData {
+    fn drop(&mut self) {
         unsafe {
-            device.destroy_command_pool(self.command_pool, None);
-            device.destroy_fence(self.fence, None);
+            self.device.destroy_command_pool(self.command_pool, None);
+            self.device.destroy_fence(self.fence, None);
         }
     }
 }
@@ -1652,30 +1628,38 @@ pub(crate) struct ComputePushConstants {
     pub data4: [f32; 4],
 }
 
-#[derive(Debug, Clone, Copy)]
 pub(crate) struct ComputeEffect {
     pub name: &'static str,
     pipeline: vk::Pipeline,
-    layout: vk::PipelineLayout,
     pub data: ComputePushConstants,
+    device: Device,
 }
 
-impl ComputeEffect {
-    pub fn destroy(&mut self, device: &Device) {
-        unsafe { device.destroy_pipeline(self.pipeline, None) }
+impl Drop for ComputeEffect {
+    fn drop(&mut self) {
+        unsafe { self.device.destroy_pipeline(self.pipeline, None) }
     }
 }
 
-#[derive(Debug)]
 pub struct AllocatedBuffer {
     pub buffer: vk::Buffer,
     allocation: vk_mem::Allocation,
     pub info: vk_mem::AllocationInfo,
+    allocator: Arc<vk_mem::Allocator>,
+}
+
+impl std::fmt::Debug for AllocatedBuffer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AllocatedBuffer")
+            .field("buffer", &self.buffer)
+            .field("info", &self.info)
+            .finish()
+    }
 }
 
 impl AllocatedBuffer {
     pub fn create(
-        allocator: &vk_mem::Allocator,
+        allocator: &Arc<vk_mem::Allocator>,
         size: u64,
         usage: vk::BufferUsageFlags,
         memory_usage: vk_mem::MemoryUsage,
@@ -1704,10 +1688,33 @@ impl AllocatedBuffer {
             buffer,
             allocation,
             info,
+            allocator: Arc::clone(allocator),
         }
     }
+}
 
-    pub fn destroy(&mut self, allocator: &vk_mem::Allocator) {
-        unsafe { allocator.destroy_buffer(self.buffer, &mut self.allocation) }
+impl Drop for AllocatedBuffer {
+    fn drop(&mut self) {
+        unsafe {
+            self.allocator
+                .destroy_buffer(self.buffer, &mut self.allocation)
+        }
+    }
+}
+
+pub(crate) struct Sampler {
+    pub(crate) sampler: vk::Sampler,
+    device: Device,
+}
+
+impl Sampler {
+    pub(crate) fn new(sampler: vk::Sampler, device: Device) -> Self {
+        Self { sampler, device }
+    }
+}
+
+impl Drop for Sampler {
+    fn drop(&mut self) {
+        unsafe { self.device.destroy_sampler(self.sampler, None) }
     }
 }

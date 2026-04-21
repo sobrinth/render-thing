@@ -1,5 +1,23 @@
+use ash::Device;
 use ash::vk;
 use itertools::Itertools;
+
+pub(crate) struct DescriptorSetLayout {
+    pub(crate) layout: vk::DescriptorSetLayout,
+    device: Device,
+}
+
+impl DescriptorSetLayout {
+    pub(crate) fn new(layout: vk::DescriptorSetLayout, device: Device) -> Self {
+        Self { layout, device }
+    }
+}
+
+impl Drop for DescriptorSetLayout {
+    fn drop(&mut self) {
+        unsafe { self.device.destroy_descriptor_set_layout(self.layout, None) }
+    }
+}
 
 pub(crate) struct LayoutBuilder<'a> {
     bindings: Vec<vk::DescriptorSetLayoutBinding<'a>>,
@@ -28,7 +46,7 @@ impl LayoutBuilder<'_> {
         device: &ash::Device,
         stage_flags: vk::ShaderStageFlags,
         create_flags: Option<vk::DescriptorSetLayoutCreateFlags>,
-    ) -> vk::DescriptorSetLayout {
+    ) -> DescriptorSetLayout {
         self.bindings
             .iter_mut()
             .for_each(|binding| binding.stage_flags |= stage_flags);
@@ -39,7 +57,8 @@ impl LayoutBuilder<'_> {
             info = info.flags(flags);
         }
 
-        unsafe { device.create_descriptor_set_layout(&info, None) }.unwrap()
+        let layout = unsafe { device.create_descriptor_set_layout(&info, None) }.unwrap();
+        DescriptorSetLayout::new(layout, device.clone())
     }
 }
 
