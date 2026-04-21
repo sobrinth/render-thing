@@ -1411,11 +1411,11 @@ impl VulkanRenderer {
             return true;
         }
 
-        self.resources.swapchain.destroy(&self.context.device);
-
-        self.resources.swapchain = Swapchain::create(
+        let old_handle = self.resources.swapchain.swapchain;
+        self.resources.swapchain = Swapchain::recreate(
             &self.context,
             [self.resources.window_size.0, self.resources.window_size.1],
+            old_handle,
         );
 
         self.resources.resize_requested = false;
@@ -1438,20 +1438,6 @@ impl Drop for VulkanRenderer {
         log::trace!("Start: Dropping renderer");
         unsafe {
             self.context.device.device_wait_idle().unwrap();
-            // Swapchain and descriptor::Allocator do not yet have Drop impls
-            self.resources.swapchain.destroy(&self.context.device);
-            // Destroy the descriptor pool before ManuallyDrop::drop(resources). Safe because
-            // raw vk::DescriptorSet handles (e.g. draw_image_descriptors) are Copy with no
-            // destructor — no Vulkan API is called on them when resources drops, so there is
-            // no double-free. TODO: remove these explicit calls once descriptor::Allocator
-            // gains a Drop impl.
-            self.resources
-                .descriptor_allocator
-                .clear_descriptors(&self.context.device);
-            self.resources
-                .descriptor_allocator
-                .destroy_pool(&self.context.device);
-            // All other fields have Drop impls and clean up automatically
             ManuallyDrop::drop(&mut self.resources);
             ManuallyDrop::drop(&mut self.context); // device + instance destroyed last
         }

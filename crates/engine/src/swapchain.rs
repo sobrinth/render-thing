@@ -11,10 +11,27 @@ pub(crate) struct Swapchain {
     pub(crate) images: Vec<vk::Image>,
     pub(crate) semaphores: Vec<vk::Semaphore>,
     pub(crate) image_views: Vec<vk::ImageView>,
+    device: Device,
 }
 
 impl Swapchain {
     pub(crate) fn create(vk_context: &VkContext, dimensions: [u32; 2]) -> Self {
+        Self::create_impl(vk_context, dimensions, vk::SwapchainKHR::null())
+    }
+
+    pub(crate) fn recreate(
+        vk_context: &VkContext,
+        dimensions: [u32; 2],
+        old_swapchain: vk::SwapchainKHR,
+    ) -> Self {
+        Self::create_impl(vk_context, dimensions, old_swapchain)
+    }
+
+    fn create_impl(
+        vk_context: &VkContext,
+        dimensions: [u32; 2],
+        old_swapchain: vk::SwapchainKHR,
+    ) -> Self {
         let details = SwapchainSupportDetails::new(
             vk_context.physical_device,
             &vk_context.surface_fn,
@@ -60,6 +77,7 @@ impl Swapchain {
                 .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
                 .present_mode(swapchain_properties.present_mode)
                 .clipped(true)
+                .old_swapchain(old_swapchain)
         };
 
         let swapchain_fn =
@@ -102,18 +120,21 @@ impl Swapchain {
             images: swapchain_images,
             semaphores: swapchain_semaphore,
             image_views: swapchain_image_views,
+            device: vk_context.device.clone(),
         }
     }
+}
 
-    pub(crate) fn destroy(&mut self, device: &Device) {
+impl Drop for Swapchain {
+    fn drop(&mut self) {
         log::trace!("Start: Destroying swapchain");
         unsafe {
             self.image_views
                 .iter()
-                .for_each(|image_view| device.destroy_image_view(*image_view, None));
+                .for_each(|v| self.device.destroy_image_view(*v, None));
             self.semaphores
                 .iter()
-                .for_each(|semaphore| device.destroy_semaphore(*semaphore, None));
+                .for_each(|s| self.device.destroy_semaphore(*s, None));
             self.swapchain_fn.destroy_swapchain(self.swapchain, None);
         }
         log::trace!("End: Destroying swapchain");

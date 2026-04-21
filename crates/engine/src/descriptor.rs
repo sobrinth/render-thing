@@ -64,6 +64,7 @@ impl LayoutBuilder<'_> {
 
 pub(crate) struct Allocator {
     pool: vk::DescriptorPool,
+    device: Device,
 }
 
 impl Allocator {
@@ -88,7 +89,10 @@ impl Allocator {
 
         let pool = unsafe { device.create_descriptor_pool(&pool_info, None) }.unwrap();
 
-        Self { pool }
+        Self {
+            pool,
+            device: device.clone(),
+        }
     }
 
     pub(crate) fn allocate(
@@ -102,14 +106,11 @@ impl Allocator {
 
         unsafe { device.allocate_descriptor_sets(&alloc_info) }.unwrap()[0]
     }
+}
 
-    pub(crate) fn clear_descriptors(&self, device: &ash::Device) {
-        unsafe { device.reset_descriptor_pool(self.pool, vk::DescriptorPoolResetFlags::empty()) }
-            .unwrap();
-    }
-
-    pub(crate) fn destroy_pool(&self, device: &ash::Device) {
-        unsafe { device.destroy_descriptor_pool(self.pool, None) }
+impl Drop for Allocator {
+    fn drop(&mut self) {
+        unsafe { self.device.destroy_descriptor_pool(self.pool, None) }
     }
 }
 
