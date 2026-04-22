@@ -1,4 +1,4 @@
-use crate::renderer::AllocatedBuffer;
+use crate::resources::AllocatedBuffer;
 use ash::vk;
 
 #[repr(C)]

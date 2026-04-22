@@ -6,6 +6,7 @@ extern crate nalgebra_glm as glm;
 
 mod frame;
 mod renderer;
+mod resources;
 
 mod camera;
 mod command_buffer;
