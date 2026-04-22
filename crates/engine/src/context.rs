@@ -1,7 +1,6 @@
 use crate::debug::{
     check_validation_layer_support, get_layer_names_and_pointers, setup_debug_messenger,
 };
-use crate::renderer::QueueData;
 use crate::swapchain;
 use ash::Instance;
 use ash::ext::debug_utils;
@@ -299,6 +298,12 @@ impl Drop for VkContext {
         }
         log::trace!("End: Dropping context");
     }
+}
+
+#[derive(Copy, Clone)]
+pub(crate) struct QueueData {
+    pub(crate) queue: vk::Queue,
+    pub(crate) family_index: u32,
 }
 
 #[derive(Clone, Copy)]
