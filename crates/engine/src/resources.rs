@@ -1,5 +1,6 @@
 use crate::command_buffer::{ImmediateSubmitData, transition_image};
 use crate::context::{QueueData, VkContext};
+use crate::primitives::{GPUMeshBuffers, Vertex};
 use ash::{Device, vk};
 use std::sync::Arc;
 use vk_mem::Alloc;
@@ -258,4 +259,99 @@ impl Drop for Sampler {
     fn drop(&mut self) {
         unsafe { self.device.destroy_sampler(self.sampler, None) }
     }
+}
+
+pub(crate) fn upload_mesh_buffers(
+    gpu_alloc: &Arc<vk_mem::Allocator>,
+    context: &VkContext,
+    imm_data: &ImmediateSubmitData,
+    graphics_queue: &QueueData,
+    indices: &[u32],
+    vertices: &[Vertex],
+) -> GPUMeshBuffers {
+    let vertex_buffer_size = size_of_val(vertices);
+    let index_buffer_size = size_of_val(indices);
+
+    let vertex_buffer = AllocatedBuffer::create(
+        gpu_alloc,
+        vertex_buffer_size as u64,
+        vk::BufferUsageFlags::STORAGE_BUFFER
+            | vk::BufferUsageFlags::TRANSFER_DST
+            | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
+        vk_mem::MemoryUsage::AutoPreferDevice,
+        None,
+    );
+    let index_buffer = AllocatedBuffer::create(
+        gpu_alloc,
+        index_buffer_size as u64,
+        vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+        vk_mem::MemoryUsage::AutoPreferDevice,
+        None,
+    );
+
+    let device_address_info = vk::BufferDeviceAddressInfo::default().buffer(vertex_buffer.buffer);
+    let device_address = unsafe {
+        context
+            .device
+            .get_buffer_device_address(&device_address_info)
+    };
+
+    let meshes = GPUMeshBuffers {
+        vertex_buffer,
+        index_buffer,
+        vertex_buffer_address: device_address,
+    };
+
+    let mut staging = AllocatedBuffer::create(
+        gpu_alloc,
+        (vertex_buffer_size + index_buffer_size) as u64,
+        vk::BufferUsageFlags::TRANSFER_SRC,
+        vk_mem::MemoryUsage::AutoPreferHost,
+        Some(
+            vk_mem::AllocationCreateFlags::MAPPED
+                | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
+        ),
+    );
+
+    let dst_data = unsafe { gpu_alloc.map_memory(&mut staging.allocation) }.unwrap();
+    unsafe {
+        std::ptr::copy_nonoverlapping(vertices.as_ptr() as *const u8, dst_data, vertex_buffer_size);
+        std::ptr::copy_nonoverlapping(
+            indices.as_ptr() as *const u8,
+            dst_data.add(vertex_buffer_size),
+            index_buffer_size,
+        );
+    };
+    unsafe { gpu_alloc.unmap_memory(&mut staging.allocation) };
+
+    imm_data.submit(&context.device, graphics_queue, |cmd| {
+        let vertex_copy = &[vk::BufferCopy::default()
+            .dst_offset(0)
+            .src_offset(0)
+            .size(vertex_buffer_size as u64)];
+        unsafe {
+            context.device.cmd_copy_buffer(
+                cmd.handle(),
+                staging.buffer,
+                meshes.vertex_buffer.buffer,
+                vertex_copy,
+            )
+        }
+
+        let index_copy = &[vk::BufferCopy::default()
+            .dst_offset(0)
+            .src_offset(vertex_buffer_size as u64)
+            .size(index_buffer_size as u64)];
+
+        unsafe {
+            context.device.cmd_copy_buffer(
+                cmd.handle(),
+                staging.buffer,
+                meshes.index_buffer.buffer,
+                index_copy,
+            )
+        }
+    });
+
+    meshes
 }
