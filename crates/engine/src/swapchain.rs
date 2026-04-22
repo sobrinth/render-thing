@@ -1,4 +1,5 @@
 use crate::context::VkContext;
+use crate::sync::Semaphore;
 use ash::khr::surface;
 use ash::{Device, vk};
 use itertools::Itertools;
@@ -9,7 +10,7 @@ pub(crate) struct Swapchain {
     pub(crate) swapchain: vk::SwapchainKHR,
 
     pub(crate) images: Vec<vk::Image>,
-    pub(crate) semaphores: Vec<vk::Semaphore>,
+    pub(crate) semaphores: Vec<Semaphore>,
     pub(crate) image_views: Vec<vk::ImageView>,
     device: Device,
 }
@@ -106,11 +107,7 @@ impl Swapchain {
 
         let swapchain_semaphore = swapchain_images
             .iter()
-            .map(|_i| {
-                let create_info = vk::SemaphoreCreateInfo::default();
-
-                unsafe { vk_context.device.create_semaphore(&create_info, None) }.unwrap()
-            })
+            .map(|_i| Semaphore::new(&vk_context.device))
             .collect_vec();
 
         Self {
@@ -132,9 +129,6 @@ impl Drop for Swapchain {
             self.image_views
                 .iter()
                 .for_each(|v| self.device.destroy_image_view(*v, None));
-            self.semaphores
-                .iter()
-                .for_each(|s| self.device.destroy_semaphore(*s, None));
             self.swapchain_fn.destroy_swapchain(self.swapchain, None);
         }
         log::trace!("End: Destroying swapchain");
