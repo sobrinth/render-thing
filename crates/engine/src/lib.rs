@@ -4,6 +4,7 @@ use crate::renderer::VulkanRenderer;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 extern crate nalgebra_glm as glm;
 
+mod frame;
 mod renderer;
 
 mod camera;
