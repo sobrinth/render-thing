@@ -1,6 +1,7 @@
 use crate::context::QueueData;
+use crate::frame::FrameData;
 use crate::meshes::MeshAsset;
-use crate::renderer::{ComputeEffect, FRAME_OVERLAP, FrameData};
+use crate::renderer::{ComputeEffect, FRAME_OVERLAP};
 use crate::swapchain::SwapchainProperties;
 use ash::Device;
 use ash::vk::{CommandBuffer, Extent2D};

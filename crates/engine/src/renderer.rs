@@ -5,6 +5,7 @@ use crate::descriptor;
 use crate::descriptor::{
     DescriptorSetLayout, DescriptorWriter, GrowableAllocator, LayoutBuilder, PoolSizeRatio,
 };
+use crate::frame::FrameData;
 use crate::input::{ElementState, Key, MouseButton};
 use crate::meshes::{MeshAsset, load_gltf_meshes};
 use crate::pipeline::{Pipeline, PipelineBuilder, PipelineLayout};
@@ -421,15 +422,15 @@ impl VulkanRenderer {
                 ),
             );
 
-            let frame = FrameData {
-                command_pool: pool,
-                main_command_buffer: buffer,
-                acquire_semaphore: swapchain_semaphore,
+            let frame = FrameData::new(
+                pool,
+                buffer,
+                swapchain_semaphore,
                 render_fence,
-                descriptors: desc_allocator,
+                desc_allocator,
                 scene_buffer,
-                device: context.device.clone(),
-            };
+                context.device.clone(),
+            );
             frames.push(frame);
         }
         frames
@@ -769,32 +770,6 @@ impl Drop for VulkanRenderer {
             ManuallyDrop::drop(&mut self.context); // device + instance destroyed last
         }
         log::trace!("End: Dropping renderer");
-    }
-}
-
-pub struct FrameData {
-    pub command_pool: vk::CommandPool,
-    pub(crate) main_command_buffer: vk::CommandBuffer,
-    pub(crate) acquire_semaphore: Semaphore,
-    pub(crate) render_fence: Fence,
-    pub(crate) descriptors: GrowableAllocator,
-    pub(crate) scene_buffer: AllocatedBuffer,
-    device: Device,
-}
-
-impl Drop for FrameData {
-    fn drop(&mut self) {
-        self.descriptors.destroy_pools(&self.device);
-        // scene_buffer drops automatically via its own Drop
-        unsafe {
-            self.device.destroy_command_pool(self.command_pool, None);
-        }
-    }
-}
-
-impl FrameData {
-    pub(crate) fn clean_resources(&mut self, device: &Device) {
-        self.descriptors.clear_pools(device);
     }
 }
 
