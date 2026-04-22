@@ -1,7 +1,8 @@
 use crate::command_buffer::{CommandBuffer, Submitted};
 use crate::descriptor::{DescriptorWriter, GrowableAllocator};
+use crate::pipeline::ComputePushConstants;
 use crate::primitives::{GPUDrawPushConstants, GPUSceneData};
-use crate::renderer::{ComputePushConstants, FRAME_OVERLAP, VulkanRenderer};
+use crate::renderer::{FRAME_OVERLAP, VulkanRenderer};
 use crate::resources::AllocatedBuffer;
 use crate::sync::{Fence, Semaphore};
 use crate::ui;
