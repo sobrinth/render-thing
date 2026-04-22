@@ -1,7 +1,9 @@
 use crate::command_buffer::{CommandBuffer, Submitted};
-use crate::descriptor::DescriptorWriter;
+use crate::descriptor::{DescriptorWriter, GrowableAllocator};
 use crate::primitives::{GPUDrawPushConstants, GPUSceneData};
 use crate::renderer::{ComputePushConstants, FRAME_OVERLAP, VulkanRenderer};
+use crate::resources::AllocatedBuffer;
+use crate::sync::{Fence, Semaphore};
 use crate::ui;
 use ash::{Device, vk};
 use glm::Mat4;
@@ -595,5 +597,51 @@ impl VulkanRenderer {
             .regions(blit_region);
 
         unsafe { device.cmd_blit_image2(cmd, &blit_info) }
+    }
+}
+
+pub struct FrameData {
+    pub command_pool: vk::CommandPool,
+    pub(crate) main_command_buffer: vk::CommandBuffer,
+    pub(crate) acquire_semaphore: Semaphore,
+    pub(crate) render_fence: Fence,
+    pub(crate) descriptors: GrowableAllocator,
+    pub(crate) scene_buffer: AllocatedBuffer,
+    device: Device,
+}
+
+impl Drop for FrameData {
+    fn drop(&mut self) {
+        self.descriptors.destroy_pools(&self.device);
+        // scene_buffer drops automatically via its own Drop
+        unsafe {
+            self.device.destroy_command_pool(self.command_pool, None);
+        }
+    }
+}
+
+impl FrameData {
+    pub(crate) fn new(
+        command_pool: vk::CommandPool,
+        main_command_buffer: vk::CommandBuffer,
+        acquire_semaphore: Semaphore,
+        render_fence: Fence,
+        descriptors: GrowableAllocator,
+        scene_buffer: AllocatedBuffer,
+        device: Device,
+    ) -> Self {
+        Self {
+            command_pool,
+            main_command_buffer,
+            acquire_semaphore,
+            render_fence,
+            descriptors,
+            scene_buffer,
+            device,
+        }
+    }
+
+    pub(crate) fn clean_resources(&mut self, device: &Device) {
+        self.descriptors.clear_pools(device);
     }
 }
