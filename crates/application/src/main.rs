@@ -117,7 +117,6 @@ impl ApplicationHandler for Application {
                 window.pre_present_notify();
                 let platform_output = engine.draw(raw_input);
                 ui.handle_platform_output(window, platform_output);
-                std::thread::sleep(std::time::Duration::from_millis(1000 / 60)); // not really 60 fps
                 window.request_redraw();
             }
             _ => (),
