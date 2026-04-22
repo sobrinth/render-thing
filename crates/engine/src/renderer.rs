@@ -12,7 +12,7 @@ use crate::pipeline::{
     ComputeEffect, ComputePushConstants, Pipeline, PipelineBuilder, PipelineLayout,
 };
 use crate::primitives::{GPUDrawPushConstants, GPUMeshBuffers, GPUSceneData, Vertex};
-use crate::resources::{AllocatedBuffer, AllocatedImage, Sampler};
+use crate::resources::{AllocatedBuffer, AllocatedImage, Sampler, upload_mesh_buffers};
 use crate::swapchain::Swapchain;
 use crate::sync::{Fence, Semaphore};
 use crate::ui::UiContext;
@@ -220,15 +220,16 @@ impl VulkanRenderer {
         );
 
         //sampler here??
-        let mut sampler = vk::SamplerCreateInfo::default()
+        let sampler = vk::SamplerCreateInfo::default()
             .mag_filter(vk::Filter::NEAREST)
             .min_filter(vk::Filter::NEAREST);
 
         let nearest_handle = unsafe { context.device.create_sampler(&sampler, None) }.unwrap();
         let default_sampler_nearest = Sampler::new(nearest_handle, context.device.clone());
 
-        sampler = sampler.mag_filter(vk::Filter::LINEAR);
-        sampler = sampler.min_filter(vk::Filter::LINEAR);
+        let sampler = vk::SamplerCreateInfo::default()
+            .mag_filter(vk::Filter::LINEAR)
+            .min_filter(vk::Filter::LINEAR);
 
         let linear_handle = unsafe { context.device.create_sampler(&sampler, None) }.unwrap();
         let default_sampler_linear = Sampler::new(linear_handle, context.device.clone());
@@ -591,7 +592,7 @@ impl VulkanRenderer {
     }
 
     pub(crate) fn upload_mesh(&self, indices: &[u32], vertices: &[Vertex]) -> GPUMeshBuffers {
-        Self::upload_mesh_internal(
+        upload_mesh_buffers(
             &self.resources.gpu_alloc,
             &self.context,
             &self.resources.immediate_submit,
@@ -599,105 +600,6 @@ impl VulkanRenderer {
             indices,
             vertices,
         )
-    }
-
-    fn upload_mesh_internal(
-        gpu_alloc: &Arc<vk_mem::Allocator>,
-        context: &VkContext,
-        imm_data: &ImmediateSubmitData,
-        graphics_queue: &QueueData,
-        indices: &[u32],
-        vertices: &[Vertex],
-    ) -> GPUMeshBuffers {
-        let vertex_buffer_size = size_of_val(vertices);
-        let index_buffer_size = size_of_val(indices);
-
-        let vertex_buffer = AllocatedBuffer::create(
-            gpu_alloc,
-            vertex_buffer_size as u64,
-            vk::BufferUsageFlags::STORAGE_BUFFER
-                | vk::BufferUsageFlags::TRANSFER_DST
-                | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
-            vk_mem::MemoryUsage::AutoPreferDevice,
-            None,
-        );
-        let index_buffer = AllocatedBuffer::create(
-            gpu_alloc,
-            index_buffer_size as u64,
-            vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
-            vk_mem::MemoryUsage::AutoPreferDevice,
-            None,
-        );
-
-        let device_address_info =
-            vk::BufferDeviceAddressInfo::default().buffer(vertex_buffer.buffer);
-        let device_address = unsafe {
-            context
-                .device
-                .get_buffer_device_address(&device_address_info)
-        };
-
-        let meshes = GPUMeshBuffers {
-            vertex_buffer,
-            index_buffer,
-            vertex_buffer_address: device_address,
-        };
-
-        let mut staging = AllocatedBuffer::create(
-            gpu_alloc,
-            (vertex_buffer_size + index_buffer_size) as u64,
-            vk::BufferUsageFlags::TRANSFER_SRC,
-            vk_mem::MemoryUsage::AutoPreferHost,
-            Some(
-                vk_mem::AllocationCreateFlags::MAPPED
-                    | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
-            ),
-        );
-
-        let dst_data = unsafe { gpu_alloc.map_memory(&mut staging.allocation) }.unwrap();
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                vertices.as_ptr() as *const u8,
-                dst_data,
-                vertex_buffer_size,
-            );
-            std::ptr::copy_nonoverlapping(
-                indices.as_ptr() as *const u8,
-                dst_data.add(vertex_buffer_size),
-                index_buffer_size,
-            );
-        };
-        unsafe { gpu_alloc.unmap_memory(&mut staging.allocation) };
-
-        imm_data.submit(&context.device, graphics_queue, |cmd| {
-            let vertex_copy = &[vk::BufferCopy::default()
-                .dst_offset(0)
-                .src_offset(0)
-                .size(vertex_buffer_size as u64)];
-            unsafe {
-                context.device.cmd_copy_buffer(
-                    cmd.handle(),
-                    staging.buffer,
-                    meshes.vertex_buffer.buffer,
-                    vertex_copy,
-                )
-            }
-
-            let index_copy = &[vk::BufferCopy::default()
-                .dst_offset(0)
-                .src_offset(vertex_buffer_size as u64)
-                .size(index_buffer_size as u64)];
-
-            unsafe {
-                context.device.cmd_copy_buffer(
-                    cmd.handle(),
-                    staging.buffer,
-                    meshes.index_buffer.buffer,
-                    index_copy,
-                )
-            }
-        });
-        meshes
     }
 
     pub(crate) fn resize_swapchain(&mut self) -> bool {
