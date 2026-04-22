@@ -16,6 +16,7 @@ mod meshes;
 mod pipeline;
 mod primitives;
 mod swapchain;
+mod sync;
 mod ui;
 
 pub struct Engine {
