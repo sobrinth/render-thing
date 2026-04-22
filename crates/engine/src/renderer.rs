@@ -8,6 +8,7 @@ use crate::meshes::{MeshAsset, load_gltf_meshes};
 use crate::pipeline::{Pipeline, PipelineBuilder, PipelineLayout};
 use crate::primitives::{GPUDrawPushConstants, GPUMeshBuffers, GPUSceneData, Vertex};
 use crate::swapchain::Swapchain;
+use crate::sync::{Fence, Semaphore};
 use crate::ui::UiContext;
 use crate::{descriptor, ui};
 use ash::{Device, vk};
@@ -335,27 +336,22 @@ impl VulkanRenderer {
         let raw_cmd = self.resources.frames[frame_index].main_command_buffer;
 
         // wait for the GPU to have finished the last rendering of this frame.
-        unsafe {
-            self.context.device.wait_for_fences(
-                &[self.resources.frames[frame_index].render_fence],
-                true,
-                ONE_SECOND,
-            )
-        }
-        .unwrap();
-        unsafe {
-            self.context
-                .device
-                .reset_fences(&[self.resources.frames[frame_index].render_fence])
-        }
-        .unwrap();
+        assert!(
+            self.resources.frames[frame_index]
+                .render_fence
+                .wait(ONE_SECOND),
+            "render fence timed out"
+        );
+        self.resources.frames[frame_index].render_fence.reset();
         self.resources.frames[frame_index].clean_resources(&self.context.device);
 
         let res = unsafe {
             self.resources.swapchain.swapchain_fn.acquire_next_image(
                 self.resources.swapchain.swapchain,
                 ONE_SECOND,
-                self.resources.frames[frame_index].acquire_semaphore,
+                self.resources.frames[frame_index]
+                    .acquire_semaphore
+                    .handle(),
                 vk::Fence::null(),
             )
         };
@@ -513,13 +509,17 @@ impl VulkanRenderer {
             .device_mask(0)];
 
         let wait_info = &[vk::SemaphoreSubmitInfo::default()
-            .semaphore(self.resources.frames[frame_index].acquire_semaphore)
+            .semaphore(
+                self.resources.frames[frame_index]
+                    .acquire_semaphore
+                    .handle(),
+            )
             .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
             .device_index(0)
             .value(1)];
 
         let signal_info = &[vk::SemaphoreSubmitInfo::default()
-            .semaphore(self.resources.swapchain.semaphores[image_index])
+            .semaphore(self.resources.swapchain.semaphores[image_index].handle())
             .stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS)
             .device_index(0)
             .value(1)];
@@ -535,7 +535,7 @@ impl VulkanRenderer {
             self.context.device.queue_submit2(
                 self.resources.graphics_queue.queue,
                 &[submit_info],
-                self.resources.frames[frame_index].render_fence,
+                self.resources.frames[frame_index].render_fence.handle(),
             )
         }
         .unwrap();
@@ -545,12 +545,12 @@ impl VulkanRenderer {
         // this will put the image just rendered to into the visible window
         // wait on render_semaphore for that, as it's necessary that drawing commands have finished
         let image_indices = &[image_index as u32];
+        let present_semaphore = self.resources.swapchain.semaphores[image_index].handle();
+        let present_semaphores = [present_semaphore];
 
         let present_info = vk::PresentInfoKHR::default()
             .swapchains(core::slice::from_ref(&self.resources.swapchain.swapchain))
-            .wait_semaphores(core::slice::from_ref(
-                &self.resources.swapchain.semaphores[image_index],
-            ))
+            .wait_semaphores(&present_semaphores)
             .image_indices(image_indices);
 
         // TODO db: Maybe use `VK_EXT_swapchain_maintenance1` to be able to use a fence here and "circumvent" the semaphore per image
@@ -583,7 +583,7 @@ impl VulkanRenderer {
     ) where
         F: FnOnce(&CommandBuffer<Recording>),
     {
-        unsafe { gpu.reset_fences(&[imm_data.fence]) }.unwrap();
+        imm_data.fence.reset();
 
         let cmd = unsafe { CommandBuffer::<Submitted>::wrap(imm_data.command_buffer) };
         let cmd = cmd.reset(gpu);
@@ -599,11 +599,15 @@ impl VulkanRenderer {
 
         let submit = &[vk::SubmitInfo2::default().command_buffer_infos(cmd_info)];
 
-        unsafe { gpu.queue_submit2(graphics_queue.queue, submit, imm_data.fence) }.unwrap();
+        unsafe { gpu.queue_submit2(graphics_queue.queue, submit, imm_data.fence.handle()) }
+            .unwrap();
 
         cmd.into_submitted(); // type-level marker: buffer is now pending, no Vulkan call
 
-        unsafe { gpu.wait_for_fences(&[imm_data.fence], true, 1_000_000_000) }.unwrap();
+        assert!(
+            imm_data.fence.wait(1_000_000_000),
+            "immediate submit fence timed out"
+        );
     }
 
     fn draw_background(&self, cmd: vk::CommandBuffer, gpu: &Device, extent: vk::Extent2D) {
@@ -943,13 +947,10 @@ impl VulkanRenderer {
         let command_buffer =
             unsafe { context.device.allocate_command_buffers(&commandbuffer_info) }.unwrap()[0];
 
-        let fence_info = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
-        let fence = unsafe { context.device.create_fence(&fence_info, None) }.unwrap();
-
         ImmediateSubmitData {
             command_buffer,
             command_pool,
-            fence,
+            fence: Fence::new_signaled(&context.device),
             device: context.device.clone(),
         }
     }
@@ -962,9 +963,6 @@ impl VulkanRenderer {
         let commandpool_info = vk::CommandPoolCreateInfo::default()
             .queue_family_index(graphics_queue.family_index)
             .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
-
-        let semaphore_info = vk::SemaphoreCreateInfo::default();
-        let fence_info = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
 
         let mut frames = Vec::with_capacity(FRAME_OVERLAP as usize);
 
@@ -980,10 +978,9 @@ impl VulkanRenderer {
             let buffer =
                 unsafe { context.device.allocate_command_buffers(&commandbuffer_info) }.unwrap()[0];
 
-            let swapchain_semaphore =
-                unsafe { context.device.create_semaphore(&semaphore_info, None) }.unwrap();
+            let swapchain_semaphore = Semaphore::new(&context.device);
 
-            let render_fence = unsafe { context.device.create_fence(&fence_info, None) }.unwrap();
+            let render_fence = Fence::new_signaled(&context.device);
 
             // create descriptor allocator exclusive to this frame
             let pool_ratios = [
@@ -1435,8 +1432,8 @@ impl Drop for VulkanRenderer {
 pub struct FrameData {
     pub command_pool: vk::CommandPool,
     main_command_buffer: vk::CommandBuffer,
-    acquire_semaphore: vk::Semaphore,
-    render_fence: vk::Fence,
+    acquire_semaphore: Semaphore,
+    render_fence: Fence,
     descriptors: GrowableAllocator,
     scene_buffer: AllocatedBuffer,
     device: Device,
@@ -1448,8 +1445,6 @@ impl Drop for FrameData {
         // scene_buffer drops automatically via its own Drop
         unsafe {
             self.device.destroy_command_pool(self.command_pool, None);
-            self.device.destroy_semaphore(self.acquire_semaphore, None);
-            self.device.destroy_fence(self.render_fence, None);
         }
     }
 }
@@ -1579,7 +1574,7 @@ impl AllocatedImage {
 pub struct ImmediateSubmitData {
     command_pool: vk::CommandPool,
     command_buffer: vk::CommandBuffer,
-    fence: vk::Fence,
+    fence: Fence,
     device: Device,
 }
 
@@ -1587,7 +1582,6 @@ impl Drop for ImmediateSubmitData {
     fn drop(&mut self) {
         unsafe {
             self.device.destroy_command_pool(self.command_pool, None);
-            self.device.destroy_fence(self.fence, None);
         }
     }
 }
