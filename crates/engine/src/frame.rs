@@ -1,4 +1,4 @@
-use crate::command_buffer::{CommandBuffer, Submitted};
+use crate::command_buffer::{CommandBuffer, Submitted, transition_image};
 use crate::descriptor::{DescriptorWriter, GrowableAllocator};
 use crate::pipeline::ComputePushConstants;
 use crate::primitives::{GPUDrawPushConstants, GPUSceneData};
@@ -101,7 +101,7 @@ impl VulkanRenderer {
 
         // transition the main draw image to Layout::GENERAL so we can draw into it.
         // we will overwrite the contents, so we don't care about the old layout
-        Self::transition_image(
+        transition_image(
             &self.context.device,
             cmd.handle(),
             self.resources.draw_image.image,
@@ -111,7 +111,7 @@ impl VulkanRenderer {
 
         self.draw_background(cmd.handle(), &self.context.device, draw_extent);
 
-        Self::transition_image(
+        transition_image(
             &self.context.device,
             cmd.handle(),
             self.resources.draw_image.image,
@@ -119,7 +119,7 @@ impl VulkanRenderer {
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
         );
 
-        Self::transition_image(
+        transition_image(
             &self.context.device,
             cmd.handle(),
             self.resources.depth_image.image,
@@ -130,14 +130,14 @@ impl VulkanRenderer {
         self.draw_geometry(frame_index, cmd.handle(), draw_extent);
 
         // transition the draw image and the swapchain image into their correct transfer layouts.
-        Self::transition_image(
+        transition_image(
             &self.context.device,
             cmd.handle(),
             self.resources.draw_image.image,
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
         );
-        Self::transition_image(
+        transition_image(
             &self.context.device,
             cmd.handle(),
             self.resources.swapchain.images[image_index],
@@ -157,7 +157,7 @@ impl VulkanRenderer {
 
         // DO THE UI RENDER
 
-        Self::transition_image(
+        transition_image(
             &self.context.device,
             cmd.handle(),
             self.resources.swapchain.images[image_index],
@@ -195,7 +195,7 @@ impl VulkanRenderer {
         unsafe { self.context.device.cmd_end_rendering(cmd.handle()) }
 
         // set the swapchain image to Layout::PRESENT so we can present it
-        Self::transition_image(
+        transition_image(
             &self.context.device,
             cmd.handle(),
             self.resources.swapchain.images[image_index],
@@ -508,45 +508,6 @@ impl VulkanRenderer {
         unsafe {
             self.context.device.cmd_end_rendering(cmd);
         }
-    }
-
-    pub(crate) fn transition_image(
-        device: &Device,
-        cmd: vk::CommandBuffer,
-        image: vk::Image,
-        current_layout: vk::ImageLayout,
-        new_layout: vk::ImageLayout,
-    ) {
-        let aspect_mask = if new_layout == vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL {
-            vk::ImageAspectFlags::DEPTH
-        } else {
-            vk::ImageAspectFlags::COLOR
-        };
-
-        let subresource_range = vk::ImageSubresourceRange::default()
-            .aspect_mask(aspect_mask)
-            .base_mip_level(0)
-            .level_count(vk::REMAINING_MIP_LEVELS)
-            .base_array_layer(0)
-            .layer_count(vk::REMAINING_ARRAY_LAYERS);
-
-        let image_barrier = vk::ImageMemoryBarrier2::default()
-            // Using ALL_COMMANDS is inefficient as it will stop gpu commands completely when it arrives at the barrier
-            // for more complex applications use correct stage masks
-            .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-            .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
-            .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-            .dst_access_mask(vk::AccessFlags2::MEMORY_WRITE | vk::AccessFlags2::MEMORY_READ)
-            .old_layout(current_layout)
-            .new_layout(new_layout)
-            .subresource_range(subresource_range)
-            .image(image);
-
-        let barriers = [image_barrier];
-
-        let dependency_info = vk::DependencyInfo::default().image_memory_barriers(&barriers);
-
-        unsafe { device.cmd_pipeline_barrier2(cmd, &dependency_info) }
     }
 
     fn copy_image_to_image(

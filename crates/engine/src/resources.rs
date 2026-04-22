@@ -1,4 +1,5 @@
-use crate::context::VkContext;
+use crate::command_buffer::{ImmediateSubmitData, transition_image};
+use crate::context::{QueueData, VkContext};
 use ash::{Device, vk};
 use std::sync::Arc;
 use vk_mem::Alloc;
@@ -149,6 +150,96 @@ impl AllocatedImage {
             device: context.device.clone(),
             allocator: Arc::clone(gpu_alloc),
         }
+    }
+}
+
+impl AllocatedImage {
+    pub(crate) fn create_from_data(
+        gpu_alloc: &Arc<vk_mem::Allocator>,
+        context: &VkContext,
+        imm_data: &ImmediateSubmitData,
+        graphics_queue: &QueueData,
+        data: &[u32],
+        image_resolution: (u32, u32),
+        format: vk::Format,
+        usage: vk::ImageUsageFlags,
+        aspect_flags: vk::ImageAspectFlags,
+        mip_mapped: bool,
+    ) -> AllocatedImage {
+        let extent = vk::Extent3D {
+            width: image_resolution.0,
+            height: image_resolution.1,
+            depth: 1,
+        };
+
+        let data_size = size_of_val(data);
+
+        let mut upload_buffer = AllocatedBuffer::create(
+            gpu_alloc,
+            data_size as u64,
+            vk::BufferUsageFlags::TRANSFER_SRC,
+            vk_mem::MemoryUsage::AutoPreferDevice,
+            Some(
+                vk_mem::AllocationCreateFlags::MAPPED
+                    | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
+            ),
+        );
+
+        let new_image = AllocatedImage::create(
+            context,
+            gpu_alloc,
+            image_resolution,
+            format,
+            usage,
+            aspect_flags,
+            mip_mapped,
+        );
+
+        let dst_data = unsafe { gpu_alloc.map_memory(&mut upload_buffer.allocation) }.unwrap();
+        unsafe { std::ptr::copy_nonoverlapping(data.as_ptr() as *const u8, dst_data, data_size) };
+        unsafe { gpu_alloc.unmap_memory(&mut upload_buffer.allocation) };
+
+        imm_data.submit(&context.device, graphics_queue, |cmd| {
+            transition_image(
+                &context.device,
+                cmd.handle(),
+                new_image.image,
+                vk::ImageLayout::UNDEFINED,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            );
+
+            let copy_region = vk::BufferImageCopy::default()
+                .buffer_offset(0)
+                .buffer_row_length(0)
+                .buffer_image_height(0)
+                .image_subresource(vk::ImageSubresourceLayers {
+                    aspect_mask: aspect_flags,
+                    mip_level: 0,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                })
+                .image_extent(extent);
+
+            unsafe {
+                context.device.cmd_copy_buffer_to_image(
+                    cmd.handle(),
+                    upload_buffer.buffer,
+                    new_image.image,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    &[copy_region],
+                )
+            }
+
+            transition_image(
+                &context.device,
+                cmd.handle(),
+                new_image.image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            );
+        });
+
+        new_image
     }
 }
 
