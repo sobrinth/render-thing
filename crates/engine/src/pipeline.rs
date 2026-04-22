@@ -256,3 +256,18 @@ impl Drop for PipelineLayout {
         }
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+pub(crate) struct ComputePushConstants {
+    pub data1: [f32; 4],
+    pub data2: [f32; 4],
+    pub data3: [f32; 4],
+    pub data4: [f32; 4],
+}
+
+pub(crate) struct ComputeEffect {
+    pub name: &'static str,
+    pub(crate) pipeline: Pipeline,
+    pub data: ComputePushConstants,
+}
