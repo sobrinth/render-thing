@@ -1,8 +1,7 @@
 #![allow(dead_code)]
+use crate::input::{ElementState, Key, MouseButton};
 use crate::renderer::VulkanRenderer;
-use winit::event::{ElementState, MouseButton, WindowEvent};
-use winit::keyboard::Key;
-use winit::window::Window;
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 extern crate nalgebra_glm as glm;
 
 mod renderer;
@@ -12,6 +11,7 @@ mod command_buffer;
 mod context;
 mod debug;
 mod descriptor;
+pub mod input;
 mod meshes;
 mod pipeline;
 mod primitives;
@@ -24,21 +24,24 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn initialize(window: &Window) -> Self {
-        let renderer = VulkanRenderer::initialize(window);
+    pub fn initialize(
+        window: &(impl HasDisplayHandle + HasWindowHandle),
+        window_size: (u32, u32),
+    ) -> Self {
+        let renderer = VulkanRenderer::initialize(window, window_size);
         Self { renderer }
     }
 
-    pub fn draw(&mut self, window: &Window) {
-        self.renderer.draw(window);
+    pub fn egui_context(&self) -> egui::Context {
+        self.renderer.egui_context()
+    }
+
+    pub fn draw(&mut self, raw_input: egui::RawInput) -> egui::PlatformOutput {
+        self.renderer.draw(raw_input)
     }
 
     pub fn resize(&mut self, size: (u32, u32)) {
         self.renderer.resize(size);
-    }
-
-    pub fn on_window_event(&mut self, window: &Window, event: &WindowEvent) {
-        self.renderer.on_window_event(window, event);
     }
 
     pub fn on_key_press(&mut self, key_event: (ElementState, Key)) {

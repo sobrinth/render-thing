@@ -1,6 +1,5 @@
+use crate::input::{ElementState, Key, MouseButton, NamedKey};
 use glm::Vec3;
-use winit::event::{ElementState, MouseButton};
-use winit::keyboard::{Key, NamedKey};
 
 pub struct Camera {
     pub velocity: Vec3,
@@ -49,16 +48,15 @@ impl Camera {
                 ElementState::Pressed => match n {
                     NamedKey::Space => self.velocity.y = 1f32,
                     NamedKey::Shift => self.velocity.y = -1f32,
-                    _ => {}
+                    NamedKey::Other => {}
                 },
                 ElementState::Released => match n {
                     NamedKey::Space => self.velocity.y = 0f32,
                     NamedKey::Shift => self.velocity.y = 0f32,
-                    _ => {}
+                    NamedKey::Other => {}
                 },
             },
-            Key::Unidentified(_) => {}
-            Key::Dead(_) => {}
+            Key::Other => {}
         }
     }
 

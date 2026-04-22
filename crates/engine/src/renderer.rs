@@ -4,6 +4,7 @@ use crate::context::VkContext;
 use crate::descriptor::{
     DescriptorSetLayout, DescriptorWriter, GrowableAllocator, LayoutBuilder, PoolSizeRatio,
 };
+use crate::input::{ElementState, Key, MouseButton};
 use crate::meshes::{MeshAsset, load_gltf_meshes};
 use crate::pipeline::{Pipeline, PipelineBuilder, PipelineLayout};
 use crate::primitives::{GPUDrawPushConstants, GPUMeshBuffers, GPUSceneData, Vertex};
@@ -14,13 +15,11 @@ use crate::{descriptor, ui};
 use ash::{Device, vk};
 use glm::Mat4;
 use itertools::Itertools;
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::mem::ManuallyDrop;
 use std::path::Path;
 use std::sync::Arc;
 use vk_mem::Alloc;
-use winit::event::{ElementState, MouseButton, WindowEvent};
-use winit::keyboard::Key;
-use winit::window::Window;
 
 pub(crate) const FRAME_OVERLAP: u32 = 2;
 
@@ -66,12 +65,14 @@ pub(crate) struct VulkanRenderer {
 }
 
 impl VulkanRenderer {
-    pub(crate) fn initialize(window: &Window) -> Self {
+    pub(crate) fn initialize(
+        window: &(impl HasDisplayHandle + HasWindowHandle),
+        window_size: (u32, u32),
+    ) -> Self {
         let (context, graphics_queue, gpu_alloc) = VkContext::initialize(window);
 
-        let window_size = (window.inner_size().width, window.inner_size().height);
         let swapchain = Swapchain::create(&context, [window_size.0, window_size.1]);
-        let ui = UiContext::initialize(window, &context.device, &gpu_alloc, swapchain.properties);
+        let ui = UiContext::initialize(&context.device, &gpu_alloc, swapchain.properties);
 
         let immediate_submit = Self::create_immediate_submit_data(&context, &graphics_queue);
 
@@ -274,14 +275,8 @@ impl VulkanRenderer {
         renderer
     }
 
-    pub(crate) fn on_window_event(&mut self, window: &Window, event: &WindowEvent) {
-        let _ = self
-            .resources
-            .ui_context
-            .state
-            .as_mut()
-            .unwrap()
-            .on_window_event(window, event);
+    pub(crate) fn egui_context(&self) -> egui::Context {
+        self.resources.ui_context.ctx.clone()
     }
 
     pub(crate) fn on_key_event(&mut self, key_event: (ElementState, Key)) {
@@ -305,11 +300,11 @@ impl VulkanRenderer {
             .handle_mouse_button_event(button, state);
     }
 
-    pub(crate) fn draw(&mut self, _window: &Window) {
+    pub(crate) fn draw(&mut self, raw_input: egui::RawInput) -> egui::PlatformOutput {
         if self.resources.resize_requested {
             let minimized = Self::resize_swapchain(self);
             if minimized {
-                return;
+                return egui::PlatformOutput::default();
             }
         }
 
@@ -360,7 +355,7 @@ impl VulkanRenderer {
             Ok((image_index, _)) => image_index as usize,
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
                 self.resources.resize_requested = true;
-                return;
+                return egui::PlatformOutput::default();
             }
             Err(err) => panic!("Failed to acquire next image. Cause: {err}"),
         };
@@ -370,9 +365,9 @@ impl VulkanRenderer {
         let active_effect_idx = self.resources.active_background_effect;
         let render_size = self.resources.render_size;
         let res = &mut *self.resources;
-        let ui_primitives = ui::before_frame(
+        let (ui_primitives, platform_output) = ui::before_frame(
             &mut res.ui_context,
-            _window,
+            raw_input,
             &res.graphics_queue,
             &res.frames[frame_index],
             (
@@ -573,6 +568,8 @@ impl VulkanRenderer {
 
         // increase the number of frames drawn
         self.resources.frame_number += 1;
+
+        platform_output
     }
 
     fn immediate_submit<F>(

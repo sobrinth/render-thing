@@ -8,11 +8,10 @@ use ash::ext::debug_utils;
 use ash::khr::surface;
 use ash::{Device, Entry, vk};
 use itertools::Itertools;
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::error::Error;
 use std::ffi::CStr;
 use std::sync::Arc;
-use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-use winit::window::Window;
 
 pub(crate) struct VkContext {
     _vulkan_fn: Entry,
@@ -25,9 +24,10 @@ pub(crate) struct VkContext {
 }
 
 impl VkContext {
-    pub(crate) fn initialize(window: &Window) -> (Self, QueueData, Arc<vk_mem::Allocator>) {
+    pub(crate) fn initialize(
+        window: &(impl HasDisplayHandle + HasWindowHandle),
+    ) -> (Self, QueueData, Arc<vk_mem::Allocator>) {
         log::trace!("Creating vulkan context");
-        // TODO: db: Probably move reference to `winit` out of VkContext
         let vulkan_fn = unsafe { Entry::load().expect("Failed to create ash entrypoint") };
         let instance = Self::create_instance(&vulkan_fn, window).unwrap();
 
@@ -69,7 +69,10 @@ impl VkContext {
         )
     }
 
-    fn create_instance(vulkan_fn: &Entry, window: &Window) -> Result<Instance, Box<dyn Error>> {
+    fn create_instance(
+        vulkan_fn: &Entry,
+        window: &impl HasDisplayHandle,
+    ) -> Result<Instance, Box<dyn Error>> {
         let app_name = c"Vulkan Application";
         let engine_name = c"No Engine";
         let app_info = vk::ApplicationInfo::default()
