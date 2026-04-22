@@ -1,5 +1,5 @@
 use crate::camera::Camera;
-use crate::command_buffer::{CommandBuffer, Recording, Submitted};
+use crate::command_buffer::ImmediateSubmitData;
 use crate::context::{QueueData, VkContext};
 use crate::descriptor;
 use crate::descriptor::{
@@ -302,41 +302,6 @@ impl VulkanRenderer {
             .handle_mouse_button_event(button, state);
     }
 
-    fn immediate_submit<F>(
-        gpu: &Device,
-        imm_data: &ImmediateSubmitData,
-        graphics_queue: &QueueData,
-        func: F,
-    ) where
-        F: FnOnce(&CommandBuffer<Recording>),
-    {
-        imm_data.fence.reset();
-
-        let cmd = unsafe { CommandBuffer::<Submitted>::wrap(imm_data.command_buffer) };
-        let cmd = cmd.reset(gpu);
-        let cmd = cmd.begin(gpu, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-
-        func(&cmd);
-
-        let cmd = cmd.end(gpu);
-
-        let cmd_info = &[vk::CommandBufferSubmitInfo::default()
-            .command_buffer(cmd.handle())
-            .device_mask(0)];
-
-        let submit = &[vk::SubmitInfo2::default().command_buffer_infos(cmd_info)];
-
-        unsafe { gpu.queue_submit2(graphics_queue.queue, submit, imm_data.fence.handle()) }
-            .unwrap();
-
-        cmd.into_submitted(); // type-level marker: buffer is now pending, no Vulkan call
-
-        assert!(
-            imm_data.fence.wait(1_000_000_000),
-            "immediate submit fence timed out"
-        );
-    }
-
     fn create_immediate_submit_data(
         context: &VkContext,
         graphics_queue: &QueueData,
@@ -356,12 +321,12 @@ impl VulkanRenderer {
         let command_buffer =
             unsafe { context.device.allocate_command_buffers(&commandbuffer_info) }.unwrap()[0];
 
-        ImmediateSubmitData {
-            command_buffer,
+        ImmediateSubmitData::new(
             command_pool,
-            fence: Fence::new_signaled(&context.device),
-            device: context.device.clone(),
-        }
+            command_buffer,
+            Fence::new_signaled(&context.device),
+            context.device.clone(),
+        )
     }
 
     fn create_framedata(
@@ -704,7 +669,7 @@ impl VulkanRenderer {
         };
         unsafe { gpu_alloc.unmap_memory(&mut staging.allocation) };
 
-        Self::immediate_submit(&context.device, imm_data, graphics_queue, |cmd| {
+        imm_data.submit(&context.device, graphics_queue, |cmd| {
             let vertex_copy = &[vk::BufferCopy::default()
                 .dst_offset(0)
                 .src_offset(0)
@@ -772,110 +737,5 @@ impl Drop for VulkanRenderer {
             ManuallyDrop::drop(&mut self.context); // device + instance destroyed last
         }
         log::trace!("End: Dropping renderer");
-    }
-}
-
-impl AllocatedImage {
-    pub(crate) fn create_from_data(
-        gpu_alloc: &Arc<vk_mem::Allocator>,
-        context: &VkContext,
-        imm_data: &ImmediateSubmitData,
-        graphics_queue: &QueueData,
-        data: &[u32],
-        image_resolution: (u32, u32),
-        format: vk::Format,
-        usage: vk::ImageUsageFlags,
-        aspect_flags: vk::ImageAspectFlags,
-        mip_mapped: bool,
-    ) -> AllocatedImage {
-        let extent = vk::Extent3D {
-            width: image_resolution.0,
-            height: image_resolution.1,
-            depth: 1,
-        };
-
-        let data_size = size_of_val(data);
-
-        let mut upload_buffer = AllocatedBuffer::create(
-            gpu_alloc,
-            data_size as u64,
-            vk::BufferUsageFlags::TRANSFER_SRC,
-            vk_mem::MemoryUsage::AutoPreferDevice,
-            Some(
-                vk_mem::AllocationCreateFlags::MAPPED
-                    | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
-            ),
-        );
-
-        let new_image = AllocatedImage::create(
-            context,
-            gpu_alloc,
-            image_resolution,
-            format,
-            usage,
-            aspect_flags,
-            mip_mapped,
-        );
-
-        let dst_data = unsafe { gpu_alloc.map_memory(&mut upload_buffer.allocation) }.unwrap();
-        unsafe { std::ptr::copy_nonoverlapping(data.as_ptr() as *const u8, dst_data, data_size) };
-        unsafe { gpu_alloc.unmap_memory(&mut upload_buffer.allocation) };
-
-        VulkanRenderer::immediate_submit(&context.device, imm_data, graphics_queue, |cmd| {
-            VulkanRenderer::transition_image(
-                &context.device,
-                cmd.handle(),
-                new_image.image,
-                vk::ImageLayout::UNDEFINED,
-                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            );
-
-            let copy_region = vk::BufferImageCopy::default()
-                .buffer_offset(0)
-                .buffer_row_length(0)
-                .buffer_image_height(0)
-                .image_subresource(vk::ImageSubresourceLayers {
-                    aspect_mask: aspect_flags,
-                    mip_level: 0,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                })
-                .image_extent(extent);
-
-            unsafe {
-                context.device.cmd_copy_buffer_to_image(
-                    cmd.handle(),
-                    upload_buffer.buffer,
-                    new_image.image,
-                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                    &[copy_region],
-                )
-            }
-
-            VulkanRenderer::transition_image(
-                &context.device,
-                cmd.handle(),
-                new_image.image,
-                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            );
-        });
-
-        new_image
-    }
-}
-
-pub struct ImmediateSubmitData {
-    command_pool: vk::CommandPool,
-    command_buffer: vk::CommandBuffer,
-    fence: Fence,
-    device: Device,
-}
-
-impl Drop for ImmediateSubmitData {
-    fn drop(&mut self) {
-        unsafe {
-            self.device.destroy_command_pool(self.command_pool, None);
-        }
     }
 }
