@@ -3,39 +3,24 @@ use crate::renderer::{ComputeEffect, FRAME_OVERLAP, FrameData, QueueData};
 use crate::swapchain::SwapchainProperties;
 use ash::Device;
 use ash::vk::{CommandBuffer, Extent2D};
-use egui::{ClippedPrimitive, TextureId};
+use egui::{ClippedPrimitive, Context, TextureId};
 use egui_ash_renderer::Renderer;
 use std::sync::Arc;
 use vk_mem::Allocator;
-use winit::window::Window;
 
 pub(crate) struct UiContext {
     renderer: Option<Renderer>,
-    pub state: Option<egui_winit::State>,
+    pub ctx: Context,
     scale_factor: f32,
     textures_to_free: Option<Vec<TextureId>>,
 }
 
 impl UiContext {
     pub(crate) fn initialize(
-        window: &Window,
         device: &Device,
         allocator: &Arc<Allocator>,
         swapchain_properties: SwapchainProperties,
     ) -> Self {
-        let gui_context = egui::Context::default();
-        gui_context.set_pixels_per_point(window.scale_factor() as f32);
-
-        let viewport_id = gui_context.viewport_id();
-        let gui_state = egui_winit::State::new(
-            gui_context,
-            viewport_id,
-            &window,
-            Some(window.scale_factor() as f32 * 1.5),
-            Some(winit::window::Theme::Dark),
-            None,
-        );
-
         let egui_renderer = Renderer::with_vk_mem_allocator(
             allocator.clone(),
             device.clone(),
@@ -52,8 +37,8 @@ impl UiContext {
 
         UiContext {
             renderer: Some(egui_renderer),
-            state: Some(gui_state),
-            scale_factor: window.scale_factor() as f32,
+            ctx: Context::default(),
+            scale_factor: 1.0,
             textures_to_free: None,
         }
     }
@@ -61,7 +46,7 @@ impl UiContext {
 
 pub(crate) fn before_frame(
     ui: &mut UiContext,
-    window: &Window,
+    raw_input: egui::RawInput,
     graphics_queue: &QueueData,
     frame: &FrameData,
     mut active_data: (
@@ -72,20 +57,16 @@ pub(crate) fn before_frame(
         &mut f32,
         (u32, u32),
     ),
-) -> Vec<ClippedPrimitive> {
-    let gui_state = ui
-        .state
-        .as_mut()
-        .expect("UI pre-draw call with gui_state: 'None");
+) -> (Vec<ClippedPrimitive>, egui::PlatformOutput) {
     let renderer = ui
         .renderer
         .as_mut()
         .expect("UI pre-draw call with renderer: 'None'");
 
-    let input = gui_state.take_egui_input(window);
-    let ctx = gui_state.egui_ctx().clone();
+    let ctx = ui.ctx.clone();
 
-    ctx.begin_pass(input);
+    ctx.begin_pass(raw_input);
+    ui.scale_factor = ctx.pixels_per_point();
     egui::Window::new("Shader control")
         .resizable(false)
         .show(&ctx, |ui| {
@@ -156,8 +137,6 @@ pub(crate) fn before_frame(
         ..
     } = ctx.end_pass();
 
-    gui_state.handle_platform_output(window, platform_output);
-
     let primitives = ctx.tessellate(shapes, pixels_per_point);
 
     if !textures_delta.free.is_empty() {
@@ -173,7 +152,8 @@ pub(crate) fn before_frame(
             )
             .unwrap();
     }
-    primitives
+
+    (primitives, platform_output)
 }
 
 pub(crate) fn render(

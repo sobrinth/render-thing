@@ -7,5 +7,7 @@ publish.workspace = true
 
 [dependencies]
 engine.workspace = true
+egui.workspace = true
+egui-winit.workspace = true
 winit.workspace = true
 env_logger.workspace = true

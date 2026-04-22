@@ -1,7 +1,8 @@
 use engine::Engine;
+use engine::input::{self as einput};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::{ElementState, MouseScrollDelta, StartCause, WindowEvent};
+use winit::event::{MouseScrollDelta, StartCause, WindowEvent};
 use winit::event_loop::ControlFlow::Poll;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
@@ -24,14 +25,11 @@ fn main() {
 struct Application {
     window: Option<Window>,
     engine: Option<Engine>,
+    ui: Option<egui_winit::State>,
 }
 
 impl ApplicationHandler for Application {
-    fn new_events(&mut self, _: &ActiveEventLoop, _: StartCause) {
-        if let Some(_app) = self.engine.as_mut() {
-            // app.wheel_delta = None;
-        }
-    }
+    fn new_events(&mut self, _: &ActiveEventLoop, _: StartCause) {}
 
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window = event_loop
@@ -42,7 +40,20 @@ impl ApplicationHandler for Application {
             )
             .unwrap();
 
-        self.engine = Some(Engine::initialize(&window));
+        let window_size = (window.inner_size().width, window.inner_size().height);
+        let engine = Engine::initialize(&window, window_size);
+
+        let ui = egui_winit::State::new(
+            engine.egui_context(),
+            egui::ViewportId::ROOT,
+            &window,
+            Some(window.scale_factor() as f32),
+            Some(winit::window::Theme::Dark),
+            None,
+        );
+
+        self.engine = Some(engine);
+        self.ui = Some(ui);
         self.window = Some(window);
     }
 
@@ -52,56 +63,60 @@ impl ApplicationHandler for Application {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
+        let window = self.window.as_ref().unwrap();
+        let ui = self.ui.as_mut().unwrap();
         let engine = self.engine.as_mut().unwrap();
 
-        engine.on_window_event(self.window.as_ref().unwrap(), &event);
+        let _ = ui.on_window_event(window, &event);
 
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
             }
             WindowEvent::Resized(size) => {
-                let app = self.engine.as_mut().unwrap();
-                app.resize(size.into());
+                engine.resize(size.into());
             }
             WindowEvent::MouseInput { button, state, .. } => {
-                let app = self.engine.as_mut().unwrap();
-                app.on_mouse_button_event(button, state);
+                let button = match button {
+                    winit::event::MouseButton::Left => einput::MouseButton::Left,
+                    winit::event::MouseButton::Right => einput::MouseButton::Right,
+                    winit::event::MouseButton::Middle => einput::MouseButton::Middle,
+                    _ => einput::MouseButton::Other,
+                };
+                let state = match state {
+                    winit::event::ElementState::Pressed => einput::ElementState::Pressed,
+                    winit::event::ElementState::Released => einput::ElementState::Released,
+                };
+                engine.on_mouse_button_event(button, state);
             }
             WindowEvent::CursorMoved { position, .. } => {
-                let app = self.engine.as_mut().unwrap();
-
-                let position: (i32, i32) = position.into();
-                app.on_mouse_event(position);
-                // app.cursor_delta = Some([
-                //     app.cursor_position[0] - position.0,
-                //     app.cursor_position[1] - position.1,
-                // ]);
-                // app.cursor_position = [position.0, position.1];
+                engine.on_mouse_event(position.into());
             }
-            WindowEvent::KeyboardInput { event, .. } => {
-                let app = self.engine.as_mut().unwrap();
-                if (event.state == ElementState::Pressed || event.state == ElementState::Released)
-                    && !event.repeat
-                {
-                    let key = event.key_without_modifiers();
-                    app.on_key_press((event.state, key.clone()));
-                }
+            WindowEvent::KeyboardInput { event, .. } if !event.repeat => {
+                let state = match event.state {
+                    winit::event::ElementState::Pressed => einput::ElementState::Pressed,
+                    winit::event::ElementState::Released => einput::ElementState::Released,
+                };
+                let key = match event.key_without_modifiers() {
+                    winit::keyboard::Key::Character(c) => einput::Key::Character(c.to_string()),
+                    winit::keyboard::Key::Named(n) => einput::Key::Named(match n {
+                        winit::keyboard::NamedKey::Space => einput::NamedKey::Space,
+                        winit::keyboard::NamedKey::Shift => einput::NamedKey::Shift,
+                        _ => einput::NamedKey::Other,
+                    }),
+                    _ => einput::Key::Other,
+                };
+                engine.on_key_press((state, key));
             }
             WindowEvent::MouseWheel {
                 delta: MouseScrollDelta::LineDelta(_, _v_lines),
                 ..
-            } => {
-                // self.vulkan.as_mut().unwrap().wheel_delta = Some(v_lines);
-            }
+            } => {}
             WindowEvent::RedrawRequested => {
-                let app = self.engine.as_mut().unwrap();
-                let window = self.window.as_ref().unwrap();
-
+                let raw_input = ui.take_egui_input(window);
                 window.pre_present_notify();
-
-                app.draw(window);
-
+                let platform_output = engine.draw(raw_input);
+                ui.handle_platform_output(window, platform_output);
                 std::thread::sleep(std::time::Duration::from_millis(1000 / 60)); // not really 60 fps
                 window.request_redraw();
             }
