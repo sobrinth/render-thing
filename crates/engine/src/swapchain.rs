@@ -208,17 +208,12 @@ impl SwapchainSupportDetails {
             .unwrap_or(&available_formats[0])
     }
 
-    /// Choose the swapchain present mode.
-    ///
-    /// Will favor MAILBOX (aka. Triple buffering) otherwise FIFO.
-    /// If none is present it will fall back to IMMEDIATE.
     fn choose_swapchain_present_mode(
         available_present_modes: &[vk::PresentModeKHR],
     ) -> vk::PresentModeKHR {
-        if available_present_modes.contains(&vk::PresentModeKHR::MAILBOX) {
-            vk::PresentModeKHR::MAILBOX
-        } else if available_present_modes.contains(&vk::PresentModeKHR::FIFO) {
-            vk::PresentModeKHR::FIFO
+        // FIFO is guaranteed by the spec and acts as vsync, removing the need for a frame-sleep.
+        if available_present_modes.contains(&vk::PresentModeKHR::FIFO) {
+            vk::PresentModeKHR::FIFO // TODO: switch back to MAILBOX once a proper frame-rate limiter is in place
         } else {
             vk::PresentModeKHR::IMMEDIATE
         }
