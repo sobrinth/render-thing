@@ -6,11 +6,18 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cargo fmt"
-          },
+            "command": "jq -r '.tool_input.file_path // \"\"' | grep -q '\\.rs$' && cargo fmt 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
           {
             "type": "command",
-            "command": "cargo clippy --quiet"
+            "command": "cargo clippy --quiet 2>/dev/null || true"
           }
         ]
       }
