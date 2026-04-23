@@ -5,7 +5,7 @@ use crate::primitives::{GPUDrawPushConstants, GPUSceneData};
 use crate::renderer::{FRAME_OVERLAP, VulkanRenderer};
 use crate::resources::AllocatedBuffer;
 use crate::sync::{Fence, Semaphore};
-use crate::ui;
+use crate::ui::{self, UiState};
 use ash::{Device, vk};
 use glm::Mat4;
 
@@ -80,14 +80,14 @@ impl VulkanRenderer {
             raw_input,
             &res.graphics_queue,
             &res.frames[frame_index],
-            (
-                &mut res.background_effects[active_effect_idx],
-                &mut res.active_background_effect,
-                &mut res.active_mesh,
-                &mut res.meshes,
-                &mut res.render_scale,
-                render_size,
-            ),
+            UiState {
+                effect: &mut res.background_effects[active_effect_idx],
+                effect_index: &mut res.active_background_effect,
+                mesh_index: &mut res.active_mesh,
+                meshes: &mut res.meshes,
+                render_scale: &mut res.render_scale,
+                effective_resolution: render_size,
+            },
         );
 
         // Reset and begin command buffer for the frame

@@ -11,6 +11,15 @@ use egui_ash_renderer::Renderer;
 use std::sync::Arc;
 use vk_mem::Allocator;
 
+pub(crate) struct UiState<'a> {
+    pub(crate) effect: &'a mut ComputeEffect,
+    pub(crate) effect_index: &'a mut usize,
+    pub(crate) mesh_index: &'a mut usize,
+    pub(crate) meshes: &'a mut Option<Vec<MeshAsset>>,
+    pub(crate) render_scale: &'a mut f32,
+    pub(crate) effective_resolution: (u32, u32),
+}
+
 pub(crate) struct UiContext {
     renderer: Option<Renderer>,
     pub ctx: Context,
@@ -52,14 +61,7 @@ pub(crate) fn before_frame(
     raw_input: egui::RawInput,
     graphics_queue: &QueueData,
     frame: &FrameData,
-    mut active_data: (
-        &mut ComputeEffect,
-        &mut usize,
-        &mut usize,
-        &mut Option<Vec<MeshAsset>>,
-        &mut f32,
-        (u32, u32),
-    ),
+    mut state: UiState<'_>,
 ) -> (Vec<ClippedPrimitive>, egui::PlatformOutput) {
     let renderer = ui
         .renderer
@@ -75,29 +77,32 @@ pub(crate) fn before_frame(
         .show(&ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label("Render scale :");
-                ui.add(egui::Slider::new(active_data.4, 0.1..=1.0));
+                ui.add(egui::Slider::new(state.render_scale, 0.1..=1.0));
             });
             ui.horizontal(|ui| {
                 ui.label("Effective resolution: ");
-                ui.label(format!("{:.0}x{:.0}", active_data.5.0, active_data.5.1));
+                ui.label(format!(
+                    "{:.0}x{:.0}",
+                    state.effective_resolution.0, state.effective_resolution.1
+                ));
             });
             ui.add(egui::Separator::default().spacing(12.0));
             ui.horizontal(|ui| {
                 ui.label("Selected background: ");
-                ui.label(active_data.0.name);
+                ui.label(state.effect.name);
             });
             ui.horizontal(|ui| {
                 ui.label("Effect index:");
-                ui.add(egui::Slider::new(active_data.1, 0..=2));
+                ui.add(egui::Slider::new(state.effect_index, 0..=2));
             });
-            if let Some(meshes) = &mut active_data.3 {
+            if let Some(meshes) = &mut state.meshes {
                 ui.horizontal(|ui| {
                     ui.label("Selected mesh: ");
-                    ui.label(meshes[*active_data.2].name.as_str());
+                    ui.label(meshes[*state.mesh_index].name.as_str());
                 });
                 ui.horizontal(|ui| {
                     ui.label("Mesh index:");
-                    ui.add(egui::Slider::new(active_data.2, 0..=meshes.len() - 1))
+                    ui.add(egui::Slider::new(state.mesh_index, 0..=meshes.len() - 1))
                 });
             };
             ui.add(egui::Separator::default().spacing(12.0));
@@ -105,28 +110,28 @@ pub(crate) fn before_frame(
             ui.add_space(10.0);
             ui.horizontal(|ui| {
                 ui.label("Data1: ");
-                active_data.0.data.data1.iter_mut().for_each(|v| {
+                state.effect.data.data1.iter_mut().for_each(|v| {
                     ui.add(egui::DragValue::new(v).range(0.0..=1.0).speed(0.005));
                 })
             });
             ui.add_space(10.0);
             ui.horizontal(|ui| {
                 ui.label("Data2: ");
-                active_data.0.data.data2.iter_mut().for_each(|v| {
+                state.effect.data.data2.iter_mut().for_each(|v| {
                     ui.add(egui::DragValue::new(v).range(0.0..=1.0).speed(0.005));
                 })
             });
             ui.add_space(10.0);
             ui.horizontal(|ui| {
                 ui.label("Data3: ");
-                active_data.0.data.data3.iter_mut().for_each(|v| {
+                state.effect.data.data3.iter_mut().for_each(|v| {
                     ui.add(egui::DragValue::new(v).range(0.0..=1.0).speed(0.005));
                 })
             });
             ui.add_space(10.0);
             ui.horizontal(|ui| {
                 ui.label("Data4: ");
-                active_data.0.data.data4.iter_mut().for_each(|v| {
+                state.effect.data.data4.iter_mut().for_each(|v| {
                     ui.add(egui::DragValue::new(v).range(0.0..=1.0).speed(0.005));
                 })
             })
