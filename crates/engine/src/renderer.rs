@@ -283,24 +283,27 @@ impl VulkanRenderer {
     }
 
     pub(crate) fn on_key_event(&mut self, key_event: (ElementState, Key)) {
-        // TODO: UI should intercept if focused input and stuff
-        self.resources.main_camera.handle_key_event(key_event);
+        if !self.resources.ui_context.ctx.wants_keyboard_input() {
+            self.resources.main_camera.handle_key_event(key_event);
+        }
     }
 
     pub(crate) fn on_mouse_event(&mut self, new_pos: (i32, i32)) {
-        // TODO: UI should intercept if mouse is over it
         let old_pos = self.resources.mouse_pos;
-        self.resources
-            .main_camera
-            .handle_mouse_event(old_pos, new_pos);
+        if !self.resources.ui_context.ctx.wants_pointer_input() {
+            self.resources
+                .main_camera
+                .handle_mouse_event(old_pos, new_pos);
+        }
         self.resources.mouse_pos = new_pos;
     }
 
     pub(crate) fn on_mouse_button_event(&mut self, button: MouseButton, state: ElementState) {
-        // TODO: UI should intercept if mouse is over it
-        self.resources
-            .main_camera
-            .handle_mouse_button_event(button, state);
+        if !self.resources.ui_context.ctx.wants_pointer_input() {
+            self.resources
+                .main_camera
+                .handle_mouse_button_event(button, state);
+        }
     }
 
     fn create_immediate_submit_data(
