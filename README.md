@@ -6,6 +6,8 @@ Starting off with getting a Vulkan renderer going and looking how to adapt that 
 
 Let's see where this will lead...
 
+Started off with `vulkan-tutorial.com` but then switched over to using dynamic rendering introduced in VK1.3
+
 ## Credits
 
 Based on the good old [Vulkan Tutorial][1] by Alexander Overvoorde and specifically [this Rust implementation][2] by Adrien Ben
