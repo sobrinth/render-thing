@@ -66,6 +66,14 @@ impl Drop for AllocatedBuffer {
     }
 }
 
+pub(crate) struct ImageCreateInfo {
+    pub(crate) resolution: (u32, u32),
+    pub(crate) format: vk::Format,
+    pub(crate) usage: vk::ImageUsageFlags,
+    pub(crate) aspect_flags: vk::ImageAspectFlags,
+    pub(crate) mip_mapped: bool,
+}
+
 pub(crate) struct AllocatedImage {
     pub(crate) image: vk::Image,
     pub(crate) view: vk::ImageView,
@@ -161,15 +169,11 @@ impl AllocatedImage {
         imm_data: &ImmediateSubmitData,
         graphics_queue: &QueueData,
         data: &[u32],
-        image_resolution: (u32, u32),
-        format: vk::Format,
-        usage: vk::ImageUsageFlags,
-        aspect_flags: vk::ImageAspectFlags,
-        mip_mapped: bool,
+        info: ImageCreateInfo,
     ) -> AllocatedImage {
         let extent = vk::Extent3D {
-            width: image_resolution.0,
-            height: image_resolution.1,
+            width: info.resolution.0,
+            height: info.resolution.1,
             depth: 1,
         };
 
@@ -189,11 +193,11 @@ impl AllocatedImage {
         let new_image = AllocatedImage::create(
             context,
             gpu_alloc,
-            image_resolution,
-            format,
-            usage,
-            aspect_flags,
-            mip_mapped,
+            info.resolution,
+            info.format,
+            info.usage,
+            info.aspect_flags,
+            info.mip_mapped,
         );
 
         let dst_data = unsafe { gpu_alloc.map_memory(&mut upload_buffer.allocation) }.unwrap();
@@ -214,7 +218,7 @@ impl AllocatedImage {
                 .buffer_row_length(0)
                 .buffer_image_height(0)
                 .image_subresource(vk::ImageSubresourceLayers {
-                    aspect_mask: aspect_flags,
+                    aspect_mask: info.aspect_flags,
                     mip_level: 0,
                     base_array_layer: 0,
                     layer_count: 1,

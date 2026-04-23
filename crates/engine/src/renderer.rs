@@ -12,7 +12,9 @@ use crate::pipeline::{
     ComputeEffect, ComputePushConstants, Pipeline, PipelineBuilder, PipelineLayout,
 };
 use crate::primitives::{GPUDrawPushConstants, GPUMeshBuffers, GPUSceneData, Vertex};
-use crate::resources::{AllocatedBuffer, AllocatedImage, Sampler, upload_mesh_buffers};
+use crate::resources::{
+    AllocatedBuffer, AllocatedImage, ImageCreateInfo, Sampler, upload_mesh_buffers,
+};
 use crate::swapchain::Swapchain;
 use crate::sync::{Fence, Semaphore};
 use crate::ui::UiContext;
@@ -162,11 +164,13 @@ impl VulkanRenderer {
             &immediate_submit,
             &graphics_queue,
             &[WHITE],
-            (1, 1),
-            vk::Format::R8G8B8A8_UNORM,
-            vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
-            vk::ImageAspectFlags::COLOR,
-            false,
+            ImageCreateInfo {
+                resolution: (1, 1),
+                format: vk::Format::R8G8B8A8_UNORM,
+                usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+                aspect_flags: vk::ImageAspectFlags::COLOR,
+                mip_mapped: false,
+            },
         );
 
         let grey_image = AllocatedImage::create_from_data(
@@ -175,11 +179,13 @@ impl VulkanRenderer {
             &immediate_submit,
             &graphics_queue,
             &[GREY],
-            (1, 1),
-            vk::Format::R8G8B8A8_UNORM,
-            vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
-            vk::ImageAspectFlags::COLOR,
-            false,
+            ImageCreateInfo {
+                resolution: (1, 1),
+                format: vk::Format::R8G8B8A8_UNORM,
+                usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+                aspect_flags: vk::ImageAspectFlags::COLOR,
+                mip_mapped: false,
+            },
         );
 
         let black_image = AllocatedImage::create_from_data(
@@ -188,11 +194,13 @@ impl VulkanRenderer {
             &immediate_submit,
             &graphics_queue,
             &[BLACK],
-            (1, 1),
-            vk::Format::R8G8B8A8_UNORM,
-            vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
-            vk::ImageAspectFlags::COLOR,
-            false,
+            ImageCreateInfo {
+                resolution: (1, 1),
+                format: vk::Format::R8G8B8A8_UNORM,
+                usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+                aspect_flags: vk::ImageAspectFlags::COLOR,
+                mip_mapped: false,
+            },
         );
 
         let mut checkerboard_data = [0u32; 16 * 16];
@@ -212,11 +220,13 @@ impl VulkanRenderer {
             &immediate_submit,
             &graphics_queue,
             &checkerboard_data,
-            (16, 16),
-            vk::Format::R8G8B8A8_UNORM,
-            vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
-            vk::ImageAspectFlags::COLOR,
-            false,
+            ImageCreateInfo {
+                resolution: (16, 16),
+                format: vk::Format::R8G8B8A8_UNORM,
+                usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+                aspect_flags: vk::ImageAspectFlags::COLOR,
+                mip_mapped: false,
+            },
         );
 
         //sampler here??
