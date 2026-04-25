@@ -1,13 +1,12 @@
 use crate::command_buffer::{CommandBuffer, Submitted, transition_image};
 use crate::descriptor::{DescriptorWriter, GrowableAllocator};
 use crate::pipeline::ComputePushConstants;
-use crate::primitives::{GPUDrawPushConstants, GPUSceneData};
+use crate::primitives::GPUSceneData;
 use crate::renderer::{FRAME_OVERLAP, VulkanRenderer};
 use crate::resources::AllocatedBuffer;
 use crate::sync::{Fence, Semaphore};
 use crate::ui::{self, UiState};
 use ash::{Device, vk};
-use glm::Mat4;
 
 impl VulkanRenderer {
     pub(crate) fn draw(&mut self, raw_input: egui::RawInput) -> egui::PlatformOutput {
@@ -362,37 +361,7 @@ impl VulkanRenderer {
 
         unsafe {
             self.context.device.cmd_begin_rendering(cmd, &render_info);
-            self.context.device.cmd_bind_pipeline(
-                cmd,
-                vk::PipelineBindPoint::GRAPHICS,
-                self.resources.mesh_pipeline.pipeline,
-            );
-        }
-
-        // Bind descriptor set for drawing
-        let single_image_layout = self.resources.single_image_layout.layout;
-        let image_set = self.resources.frames[frame_index]
-            .descriptors
-            .allocate(&self.context.device, single_image_layout);
-        let mut descriptor_writer = DescriptorWriter::new();
-        descriptor_writer.write_image(
-            0,
-            self.resources.checkerboard_image.view,
-            self.resources.default_sampler_nearest.sampler,
-            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-        );
-        descriptor_writer.update_set(&self.context.device, image_set);
-
-        unsafe {
-            self.context.device.cmd_bind_descriptor_sets(
-                cmd,
-                vk::PipelineBindPoint::GRAPHICS,
-                self.resources.mesh_pipeline.layout,
-                0,
-                &[image_set],
-                &[],
-            )
+            // TODO(Task 11): bind metal_rough_material pipeline here
         }
 
         // dynamic viewport and scissor
@@ -416,65 +385,7 @@ impl VulkanRenderer {
 
         self.resources.main_camera.update();
 
-        // Draw monkey head from meshes
-        if let Some(meshes) = &self.resources.meshes {
-            let mesh = &meshes[self.resources.active_mesh];
-
-            // let view = glm::translate(&Mat4::identity(), &glm::vec3(0.0, 0.0, -5.0));
-            let view = self.resources.main_camera.get_view_matrix();
-
-            /*
-               Use perspective_zo to get a projection matrix that is correct for vulkan
-               C++ code often sets GLM_FORCE_DEPTH_ZERO_TO_ONE to make the normal glm::perspective work
-               https://computergraphics.stackexchange.com/questions/12448/vulkan-perspective-matrix-vs-opengl-perspective-matrix
-
-               This code uses 0 as the far plane and 1 as the near plane, so the values are switched (depth clear is set to 0.0f32)
-            */
-            let mut proj = glm::perspective_rh_zo(
-                extent.width as f32 / extent.height as f32,
-                70f32.to_radians(),
-                10000f32,
-                0.1f32,
-            );
-
-            let model = glm::scale(&Mat4::identity(), &glm::vec3(2.0, 2.0, 2.0));
-            let model = glm::rotate_y(&model, 10f32.to_radians());
-
-            proj[(1, 1)] *= -1.0; // Flip y axis due to GL <-> Vulkan difference in y-axis
-
-            let push_constants = GPUDrawPushConstants {
-                world_matrix: (proj * view * model).data.0,
-                vertex_buffer: mesh.mesh_buffers.vertex_buffer_address,
-            };
-
-            unsafe {
-                self.context.device.cmd_push_constants(
-                    cmd,
-                    self.resources.mesh_pipeline.layout,
-                    vk::ShaderStageFlags::VERTEX,
-                    0,
-                    std::slice::from_raw_parts(
-                        (&push_constants as *const GPUDrawPushConstants).cast::<u8>(),
-                        size_of::<GPUDrawPushConstants>(),
-                    ),
-                );
-                self.context.device.cmd_bind_index_buffer(
-                    cmd,
-                    mesh.mesh_buffers.index_buffer.buffer,
-                    0,
-                    vk::IndexType::UINT32,
-                );
-
-                self.context.device.cmd_draw_indexed(
-                    cmd,
-                    mesh.surfaces[0].count,
-                    1,
-                    mesh.surfaces[0].start_index,
-                    0,
-                    0,
-                );
-            }
-        }
+        // TODO(Task 11): draw_geometry mesh rendering rewrite goes here
 
         // dynamic temporal data
         let scene_mem_ptr = self.resources.frames[frame_index]
