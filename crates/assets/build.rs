@@ -1,6 +1,5 @@
 use std::{
     env::var,
-    ffi::OsStr,
     fs,
     io::Result,
     path::{Path, PathBuf},
@@ -20,7 +19,10 @@ fn main() {
     println!("cargo::rerun-if-changed=../../assets/shaders/colored_triangle.vert");
     println!("cargo::rerun-if-changed=../../assets/shaders/colored_triangle.frag");
     println!("cargo::rerun-if-changed=../../assets/shaders/colored_triangle_mesh.frag");
-    println!("cargo::rerun-if-changed=../../assets/shaders/tex_image.frag")
+    println!("cargo::rerun-if-changed=../../assets/shaders/tex_image.frag");
+    println!("cargo::rerun-if-changed=../../assets/shaders/input_structures.glsl");
+    println!("cargo::rerun-if-changed=../../assets/shaders/mesh.vert");
+    println!("cargo::rerun-if-changed=../../assets/shaders/mesh.frag");
 }
 
 fn should_skip_shader_compilation() -> bool {
@@ -38,7 +40,11 @@ fn compile_shaders() {
         .unwrap()
         .map(Result::unwrap)
         .filter(|dir| dir.file_type().unwrap().is_file())
-        .filter(|dir| dir.path().extension() != Some(OsStr::new("spv")))
+        .filter(|dir| {
+            let path = dir.path();
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            matches!(ext, "vert" | "frag" | "comp")
+        })
         .for_each(|dir| {
             let path = dir.path();
             let name = path.file_name().unwrap().to_str().unwrap();
@@ -48,6 +54,7 @@ fn compile_shaders() {
             let result = Command::new("glslangValidator")
                 .current_dir(&shader_dir_path)
                 .arg("-V")
+                .arg("-I.")
                 .arg(&path)
                 .arg("-o")
                 .arg(output_name)
