@@ -25,26 +25,14 @@ fn main() {
     event_loop.run_app(&mut app).unwrap();
 }
 
+#[derive(Default)]
 struct Application {
     window: Option<Window>,
     engine: Option<Engine>,
     ui: Option<egui_winit::State>,
     camera: Option<Camera>,
     mouse_pos: (i32, i32),
-    scene: Option<engine::Scene>,
-}
-
-impl Default for Application {
-    fn default() -> Self {
-        Self {
-            window: None,
-            engine: None,
-            ui: None,
-            camera: None,
-            mouse_pos: (0, 0),
-            scene: None,
-        }
-    }
+    scene: Option<engine::GltfScene>,
 }
 
 impl ApplicationHandler for Application {
@@ -158,9 +146,12 @@ impl ApplicationHandler for Application {
                     proj_matrix: proj,
                     position: camera.position,
                 };
-                let empty = engine::Scene::empty();
-                let scene = self.scene.as_ref().unwrap_or(&empty);
-                let platform_output = engine.draw(camera_view, scene, raw_input);
+                let draws: &[engine::DrawCall] = self
+                    .scene
+                    .as_ref()
+                    .map(|s| s.draws.as_slice())
+                    .unwrap_or(&[]);
+                let platform_output = engine.draw(camera_view, draws, raw_input);
                 ui.handle_platform_output(window, platform_output);
                 window.request_redraw();
             }

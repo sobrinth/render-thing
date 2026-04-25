@@ -7,13 +7,13 @@ use std::mem::size_of;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum MaterialPass {
+pub enum MaterialPass {
     MainColor,
     Transparent,
 }
 
 #[repr(C)]
-pub(crate) struct MaterialConstants {
+pub struct MaterialConstants {
     pub color_factors: [f32; 4],
     pub metal_rough_factors: [f32; 4],
     _padding: [[f32; 4]; 14],

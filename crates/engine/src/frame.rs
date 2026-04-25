@@ -1,10 +1,11 @@
 use crate::command_buffer::{CommandBuffer, Submitted, transition_image};
 use crate::descriptor::{DescriptorWriter, GrowableAllocator};
+use crate::material::MaterialInstance;
+use crate::meshes::Bounds;
 use crate::pipeline::ComputePushConstants;
 use crate::primitives::{GPUDrawPushConstants, GPUSceneData};
 use crate::renderer::{FRAME_OVERLAP, VulkanRenderer};
 use crate::resources::AllocatedBuffer;
-use crate::scene::{DrawContext, RenderObject};
 use crate::stats::{DrawStats, FrameStats};
 use crate::sync::{Fence, Semaphore};
 use crate::ui::{self, UiState};
@@ -13,11 +14,64 @@ use nalgebra_glm as glm;
 use std::sync::Arc;
 use std::time::Instant;
 
+#[derive(Default)]
+pub(crate) struct DrawContext {
+    pub opaque_surfaces: Vec<RenderObject>,
+    pub transparent_surfaces: Vec<RenderObject>,
+    pub culled_count: u32,
+}
+
+pub(crate) struct RenderObject {
+    pub index_count: u32,
+    pub first_index: u32,
+    pub index_buffer: vk::Buffer,
+    pub material: Arc<MaterialInstance>,
+    pub transform: glm::Mat4,
+    pub vertex_buffer_address: vk::DeviceAddress,
+    pub bounds: Bounds,
+}
+
+/// Returns false if all 8 AABB corners project outside the same frustum half-space.
+pub(crate) fn is_visible(obj: &RenderObject, view_proj: &glm::Mat4) -> bool {
+    let mvp = view_proj * obj.transform;
+    let o = obj.bounds.origin;
+    let e = obj.bounds.extents;
+
+    let corners = [
+        glm::vec4(o.x + e.x, o.y + e.y, o.z + e.z, 1.0),
+        glm::vec4(o.x + e.x, o.y + e.y, o.z - e.z, 1.0),
+        glm::vec4(o.x + e.x, o.y - e.y, o.z + e.z, 1.0),
+        glm::vec4(o.x + e.x, o.y - e.y, o.z - e.z, 1.0),
+        glm::vec4(o.x - e.x, o.y + e.y, o.z + e.z, 1.0),
+        glm::vec4(o.x - e.x, o.y + e.y, o.z - e.z, 1.0),
+        glm::vec4(o.x - e.x, o.y - e.y, o.z + e.z, 1.0),
+        glm::vec4(o.x - e.x, o.y - e.y, o.z - e.z, 1.0),
+    ];
+
+    let clip: Vec<glm::Vec4> = corners.iter().map(|c| mvp * c).collect();
+
+    let planes: [fn(&glm::Vec4) -> bool; 6] = [
+        |c| c.x > c.w,
+        |c| c.x < -c.w,
+        |c| c.y > c.w,
+        |c| c.y < -c.w,
+        |c| c.z > c.w,
+        |c| c.z < 0.0,
+    ];
+
+    for outside in planes {
+        if clip.iter().all(outside) {
+            return false;
+        }
+    }
+    true
+}
+
 impl VulkanRenderer {
     pub(crate) fn draw(
         &mut self,
         camera: crate::CameraView,
-        scene: &crate::Scene,
+        draws: &[crate::DrawCall],
         raw_input: egui::RawInput,
     ) -> egui::PlatformOutput {
         let frame_start = Instant::now();
@@ -105,7 +159,7 @@ impl VulkanRenderer {
         );
 
         let t0 = Instant::now();
-        let draw_ctx = self.update_scene(&camera, scene);
+        let draw_ctx = self.update_scene(&camera, draws);
         let update_time_ms = t0.elapsed().as_secs_f32() * 1000.0;
 
         // Reset and begin command buffer for the frame
@@ -367,17 +421,47 @@ impl VulkanRenderer {
         }
     }
 
-    fn update_scene(&mut self, camera: &crate::CameraView, scene: &crate::Scene) -> DrawContext {
-        let mut ctx = DrawContext::default();
-
-        for node in &scene.0 {
-            node.draw(&glm::Mat4::identity(), &mut ctx);
-        }
-
+    fn update_scene(
+        &mut self,
+        camera: &crate::CameraView,
+        draws: &[crate::DrawCall],
+    ) -> DrawContext {
         self.resources.scene_data.view = camera.view_matrix.data.0;
         self.resources.scene_data.proj = camera.proj_matrix.data.0;
         self.resources.scene_data.view_proj = (camera.proj_matrix * camera.view_matrix).data.0;
 
+        let view_proj =
+            glm::Mat4::from_column_slice(self.resources.scene_data.view_proj.as_flattened());
+
+        let mut ctx = DrawContext::default();
+        let submitted = draws.len() as u32;
+        for draw_call in draws {
+            let mesh = &self.resources.mesh_registry[draw_call.mesh.0 as usize];
+            let mat = Arc::clone(
+                &self.resources.material_registry[draw_call.material.0 as usize].instance,
+            );
+
+            let obj = RenderObject {
+                index_count: mesh.index_count,
+                first_index: 0,
+                index_buffer: mesh.buffers.index_buffer.buffer,
+                material: mat,
+                transform: draw_call.transform,
+                vertex_buffer_address: mesh.buffers.vertex_buffer_address,
+                bounds: mesh.bounds,
+            };
+
+            if is_visible(&obj, &view_proj) {
+                match obj.material.pass_type {
+                    crate::material::MaterialPass::MainColor => ctx.opaque_surfaces.push(obj),
+                    crate::material::MaterialPass::Transparent => {
+                        ctx.transparent_surfaces.push(obj)
+                    }
+                }
+            }
+        }
+        let visible = (ctx.opaque_surfaces.len() + ctx.transparent_surfaces.len()) as u32;
+        ctx.culled_count = submitted.saturating_sub(visible);
         ctx
     }
 
@@ -466,17 +550,8 @@ impl VulkanRenderer {
         );
         writer.update_set(&self.context.device, scene_set);
 
-        // Build view-proj matrix for frustum culling
-        let scene_data = &self.resources.scene_data;
-        // view_proj is stored as [[f32;4];4] (column-major), convert to glm::Mat4
-        let vp = glm::Mat4::from_column_slice(scene_data.view_proj.as_flattened());
-
-        // Cull opaque surfaces
-        let mut opaque_indices: Vec<usize> = (0..ctx.opaque_surfaces.len())
-            .filter(|&i| crate::scene::is_visible(&ctx.opaque_surfaces[i], &vp))
-            .collect();
-
-        // Sort by material pointer then index buffer to minimise state changes
+        // Sort opaque surfaces by material pointer then index buffer to minimise state changes
+        let mut opaque_indices: Vec<usize> = (0..ctx.opaque_surfaces.len()).collect();
         opaque_indices.sort_unstable_by(|&a, &b| {
             let oa = &ctx.opaque_surfaces[a];
             let ob = &ctx.opaque_surfaces[b];
@@ -487,7 +562,7 @@ impl VulkanRenderer {
         });
 
         stats.opaque_count = opaque_indices.len() as u32;
-        stats.culled_count = ctx.opaque_surfaces.len() as u32 - stats.opaque_count;
+        stats.culled_count = ctx.culled_count;
 
         // Opaque pass — full state tracking
         let mut last_pipeline = vk::Pipeline::null();
