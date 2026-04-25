@@ -12,7 +12,7 @@ pub enum MouseButton {
     Other,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NamedKey {
     Space,
     Shift,
@@ -21,7 +21,7 @@ pub enum NamedKey {
     Other,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Key {
     Character(String),
     Named(NamedKey),

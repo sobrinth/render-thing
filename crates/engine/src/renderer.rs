@@ -8,7 +8,7 @@ use crate::frame::FrameData;
 use crate::input::{ElementState, Key, NamedKey};
 use crate::material::GltfMetallicRoughness;
 use crate::pipeline::{ComputeEffect, ComputePushConstants, Pipeline, PipelineLayout};
-use crate::primitives::{GPUMeshBuffers, GPUSceneData, Vertex};
+use crate::primitives::{GPUSceneData, Vertex};
 use crate::resources::{
     AllocatedBuffer, AllocatedImage, ImageCreateInfo, Sampler, upload_mesh_buffers,
 };
@@ -18,12 +18,29 @@ use crate::sync::{Fence, Semaphore};
 use crate::ui::UiContext;
 use ash::{Device, vk};
 use itertools::Itertools;
+use nalgebra_glm as glm;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::mem::ManuallyDrop;
 use std::path::Path;
 use std::sync::Arc;
 
 pub(crate) const FRAME_OVERLAP: u32 = 2;
+
+pub(crate) struct MeshEntry {
+    pub buffers: crate::primitives::GPUMeshBuffers,
+    pub bounds: crate::meshes::Bounds,
+    pub index_count: u32,
+}
+
+pub(crate) struct TextureEntry {
+    pub image: std::sync::Arc<crate::resources::AllocatedImage>,
+    pub sampler: crate::resources::Sampler,
+}
+
+pub(crate) struct MaterialEntry {
+    pub instance: std::sync::Arc<crate::material::MaterialInstance>,
+    pub _data_buffer: crate::resources::AllocatedBuffer,
+}
 
 pub(crate) struct RendererResources {
     pub(crate) frame_number: u32,
@@ -57,6 +74,14 @@ pub(crate) struct RendererResources {
     pub(crate) stats: StatsHistory,
     pub(crate) show_stats: bool,
     pub(crate) show_controls: bool,
+    pub(crate) mesh_registry: Vec<MeshEntry>,
+    pub(crate) texture_registry: Vec<TextureEntry>,
+    pub(crate) material_registry: Vec<MaterialEntry>,
+    pub(crate) material_descriptor_allocator: descriptor::GrowableAllocator,
+    pub(crate) default_white_texture: crate::TextureHandle,
+    pub(crate) default_grey_texture: crate::TextureHandle,
+    pub(crate) default_black_texture: crate::TextureHandle,
+    pub(crate) default_checkerboard_texture: crate::TextureHandle,
 }
 
 pub(crate) struct VulkanRenderer {
@@ -234,7 +259,22 @@ impl VulkanRenderer {
         let linear_handle = unsafe { context.device.create_sampler(&sampler, None) }.unwrap();
         let default_sampler_linear = Sampler::new(linear_handle, context.device.clone());
 
-        let renderer = Self {
+        let material_descriptor_allocator = descriptor::GrowableAllocator::init(
+            &context.device,
+            1000,
+            &[
+                descriptor::PoolSizeRatio {
+                    descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+                    ratio: 1.0,
+                },
+                descriptor::PoolSizeRatio {
+                    descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                    ratio: 2.0,
+                },
+            ],
+        );
+
+        let mut renderer = Self {
             resources: ManuallyDrop::new(RendererResources {
                 frame_number: 0,
                 window_size,
@@ -272,9 +312,47 @@ impl VulkanRenderer {
                 stats: StatsHistory::default(),
                 show_stats: false,
                 show_controls: true,
+                mesh_registry: Vec::new(),
+                texture_registry: Vec::new(),
+                material_registry: Vec::new(),
+                material_descriptor_allocator,
+                default_white_texture: crate::TextureHandle(0),
+                default_grey_texture: crate::TextureHandle(1),
+                default_black_texture: crate::TextureHandle(2),
+                default_checkerboard_texture: crate::TextureHandle(3),
             }),
             context: ManuallyDrop::new(context),
         };
+
+        // Register default textures into the registry so handles 0-3 are valid.
+        // Clone arcs and device before taking &mut renderer.
+        let white_img = Arc::clone(&renderer.resources.white_image);
+        let grey_img = Arc::clone(&renderer.resources.grey_image);
+        let black_img = Arc::clone(&renderer.resources.black_image);
+        let cb_img = Arc::clone(&renderer.resources.checkerboard_image);
+        let device = renderer.context.device.clone();
+
+        let make_sampler = |filter: vk::Filter| -> Sampler {
+            let info = vk::SamplerCreateInfo::default()
+                .mag_filter(filter)
+                .min_filter(filter);
+            let vk_s = unsafe { device.create_sampler(&info, None) }.unwrap();
+            Sampler::new(vk_s, device.clone())
+        };
+
+        let white_sampler = make_sampler(vk::Filter::LINEAR);
+        let grey_sampler = make_sampler(vk::Filter::LINEAR);
+        let black_sampler = make_sampler(vk::Filter::LINEAR);
+        let cb_sampler = make_sampler(vk::Filter::NEAREST);
+
+        let wh = renderer.register_texture(white_img, white_sampler);
+        let gr = renderer.register_texture(grey_img, grey_sampler);
+        let bl = renderer.register_texture(black_img, black_sampler);
+        let cb = renderer.register_texture(cb_img, cb_sampler);
+        renderer.resources.default_white_texture = wh;
+        renderer.resources.default_grey_texture = gr;
+        renderer.resources.default_black_texture = bl;
+        renderer.resources.default_checkerboard_texture = cb;
 
         renderer
     }
@@ -291,9 +369,165 @@ impl VulkanRenderer {
             }
             if matches!(key_event, (ElementState::Pressed, Key::Named(NamedKey::F3))) {
                 self.resources.show_stats = !self.resources.show_stats;
-                return;
             }
         }
+    }
+
+    pub(crate) fn register_texture(
+        &mut self,
+        image: Arc<AllocatedImage>,
+        sampler: Sampler,
+    ) -> crate::TextureHandle {
+        let idx = self.resources.texture_registry.len() as u32;
+        self.resources
+            .texture_registry
+            .push(TextureEntry { image, sampler });
+        crate::TextureHandle(idx)
+    }
+
+    pub(crate) fn upload_mesh(
+        &mut self,
+        indices: &[u32],
+        vertices: &[Vertex],
+    ) -> crate::MeshHandle {
+        use crate::meshes::Bounds;
+        let buffers = upload_mesh_buffers(
+            &self.resources.gpu_alloc,
+            &self.context,
+            &self.resources.immediate_submit,
+            &self.resources.graphics_queue,
+            indices,
+            vertices,
+        );
+        let mut min = glm::vec3(f32::MAX, f32::MAX, f32::MAX);
+        let mut max = glm::vec3(f32::MIN, f32::MIN, f32::MIN);
+        for v in vertices {
+            min.x = min.x.min(v.position[0]);
+            min.y = min.y.min(v.position[1]);
+            min.z = min.z.min(v.position[2]);
+            max.x = max.x.max(v.position[0]);
+            max.y = max.y.max(v.position[1]);
+            max.z = max.z.max(v.position[2]);
+        }
+        let origin = (min + max) * 0.5;
+        let extents = (max - min) * 0.5;
+        let sphere_radius = extents.norm();
+        let bounds = Bounds {
+            origin,
+            extents,
+            sphere_radius,
+        };
+        let index_count = indices.len() as u32;
+        let idx = self.resources.mesh_registry.len() as u32;
+        self.resources.mesh_registry.push(MeshEntry {
+            buffers,
+            bounds,
+            index_count,
+        });
+        crate::MeshHandle(idx)
+    }
+
+    pub(crate) fn upload_texture(
+        &mut self,
+        data: &[u8],
+        width: u32,
+        height: u32,
+        sampler_type: crate::SamplerType,
+    ) -> crate::TextureHandle {
+        let image = AllocatedImage::create_from_bytes(
+            &self.resources.gpu_alloc,
+            &self.context,
+            &self.resources.immediate_submit,
+            &self.resources.graphics_queue,
+            data,
+            ImageCreateInfo {
+                resolution: (width, height),
+                format: vk::Format::R8G8B8A8_SRGB,
+                usage: vk::ImageUsageFlags::SAMPLED
+                    | vk::ImageUsageFlags::TRANSFER_DST
+                    | vk::ImageUsageFlags::TRANSFER_SRC,
+                aspect_flags: vk::ImageAspectFlags::COLOR,
+                mip_mapped: false,
+            },
+        );
+        let filter = match sampler_type {
+            crate::SamplerType::Linear => vk::Filter::LINEAR,
+            crate::SamplerType::Nearest => vk::Filter::NEAREST,
+        };
+        let sampler_info = vk::SamplerCreateInfo::default()
+            .mag_filter(filter)
+            .min_filter(filter);
+        let vk_sampler =
+            unsafe { self.context.device.create_sampler(&sampler_info, None) }.unwrap();
+        let sampler = Sampler::new(vk_sampler, self.context.device.clone());
+        self.register_texture(Arc::new(image), sampler)
+    }
+
+    pub(crate) fn create_material(
+        &mut self,
+        color: crate::TextureHandle,
+        metal_rough: crate::TextureHandle,
+        constants: crate::material::MaterialConstants,
+        pass: crate::material::MaterialPass,
+    ) -> crate::MaterialHandle {
+        use crate::material::MaterialResources;
+        use std::mem::size_of;
+
+        let data_buffer = AllocatedBuffer::create(
+            &self.resources.gpu_alloc,
+            size_of::<crate::material::MaterialConstants>() as u64,
+            vk::BufferUsageFlags::UNIFORM_BUFFER,
+            vk_mem::MemoryUsage::Auto,
+            Some(
+                vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE
+                    | vk_mem::AllocationCreateFlags::MAPPED,
+            ),
+        );
+
+        let dst = data_buffer.info.mapped_data;
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                (&constants as *const crate::material::MaterialConstants).cast::<u8>(),
+                dst.cast::<u8>(),
+                size_of::<crate::material::MaterialConstants>(),
+            )
+        };
+
+        let color_sampler = self.resources.texture_registry[color.0 as usize]
+            .sampler
+            .sampler;
+        let mr_sampler = self.resources.texture_registry[metal_rough.0 as usize]
+            .sampler
+            .sampler;
+        let color_image = Arc::clone(&self.resources.texture_registry[color.0 as usize].image);
+        let mr_image = Arc::clone(&self.resources.texture_registry[metal_rough.0 as usize].image);
+
+        let resources = MaterialResources {
+            color_image,
+            color_sampler,
+            metal_rough_image: mr_image,
+            metal_rough_sampler: mr_sampler,
+            data_buffer: &data_buffer,
+            data_buffer_offset: 0,
+        };
+
+        // Split disjoint field borrows through ManuallyDrop by going through &mut *self.resources.
+        let instance = {
+            let res = &mut *self.resources;
+            res.metal_rough_material.write_material(
+                &self.context.device,
+                pass,
+                &resources,
+                &mut res.material_descriptor_allocator,
+            )
+        };
+
+        let idx = self.resources.material_registry.len() as u32;
+        self.resources.material_registry.push(MaterialEntry {
+            instance: Arc::new(instance),
+            _data_buffer: data_buffer,
+        });
+        crate::MaterialHandle(idx)
     }
 
     fn create_immediate_submit_data(
@@ -523,17 +757,6 @@ impl VulkanRenderer {
         Pipeline::new(pipeline, vk::PipelineLayout::null(), context.device.clone())
     }
 
-    pub(crate) fn upload_mesh(&self, indices: &[u32], vertices: &[Vertex]) -> GPUMeshBuffers {
-        upload_mesh_buffers(
-            &self.resources.gpu_alloc,
-            &self.context,
-            &self.resources.immediate_submit,
-            &self.resources.graphics_queue,
-            indices,
-            vertices,
-        )
-    }
-
     pub(crate) fn resize_swapchain(&mut self) -> bool {
         self.wait_gpu_idle();
         if self.resources.window_size.0 == 0 || self.resources.window_size.1 == 0 {
@@ -567,6 +790,9 @@ impl Drop for VulkanRenderer {
         log::trace!("Start: Dropping renderer");
         unsafe {
             self.context.device.device_wait_idle().unwrap();
+            self.resources
+                .material_descriptor_allocator
+                .destroy_pools(&self.context.device);
             ManuallyDrop::drop(&mut self.resources);
             ManuallyDrop::drop(&mut self.context); // device + instance destroyed last
         }
