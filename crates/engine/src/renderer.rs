@@ -7,11 +7,12 @@ use crate::descriptor::{
 };
 use crate::frame::FrameData;
 use crate::input::{ElementState, Key, MouseButton};
-use crate::meshes::{MeshAsset, load_gltf_meshes};
-use crate::pipeline::{
-    ComputeEffect, ComputePushConstants, Pipeline, PipelineBuilder, PipelineLayout,
+use crate::material::{
+    GltfMetallicRoughness, MaterialConstants, MaterialInstance, MaterialPass, MaterialResources,
 };
-use crate::primitives::{GPUDrawPushConstants, GPUMeshBuffers, GPUSceneData, Vertex};
+use crate::meshes::{MeshAsset, load_gltf_meshes};
+use crate::pipeline::{ComputeEffect, ComputePushConstants, Pipeline, PipelineLayout};
+use crate::primitives::{GPUMeshBuffers, GPUSceneData, Vertex};
 use crate::resources::{
     AllocatedBuffer, AllocatedImage, ImageCreateInfo, Sampler, upload_mesh_buffers,
 };
@@ -49,18 +50,20 @@ pub(crate) struct RendererResources {
     pub(crate) effect_pipeline_layout: PipelineLayout,
     pub(crate) background_effects: Vec<ComputeEffect>,
     pub(crate) active_background_effect: usize,
-    pub(crate) mesh_pipeline: Pipeline,
     pub(crate) scene_data: GPUSceneData,
     pub(crate) scene_data_layout: DescriptorSetLayout,
     pub(crate) meshes: Option<Vec<MeshAsset>>,
     pub(crate) active_mesh: usize,
     pub(crate) default_sampler_nearest: Sampler,
     pub(crate) default_sampler_linear: Sampler,
-    pub(crate) white_image: AllocatedImage,
-    pub(crate) grey_image: AllocatedImage,
-    pub(crate) black_image: AllocatedImage,
-    pub(crate) checkerboard_image: AllocatedImage,
-    pub(crate) single_image_layout: DescriptorSetLayout,
+    pub(crate) white_image: Arc<AllocatedImage>,
+    pub(crate) grey_image: Arc<AllocatedImage>,
+    pub(crate) black_image: Arc<AllocatedImage>,
+    pub(crate) checkerboard_image: Arc<AllocatedImage>,
+    pub(crate) material_descriptor_allocator: descriptor::GrowableAllocator,
+    pub(crate) metal_rough_material: GltfMetallicRoughness,
+    pub(crate) default_material: Arc<MaterialInstance>,
+    pub(crate) default_material_buffer: AllocatedBuffer,
 }
 
 pub(crate) struct VulkanRenderer {
@@ -110,6 +113,28 @@ impl VulkanRenderer {
 
         let scene_data_layout = Self::init_scene_data(&context);
 
+        let metal_rough_material = crate::material::GltfMetallicRoughness::build_pipelines(
+            &context,
+            draw_image.format,
+            depth_image.format,
+            &scene_data_layout.layout,
+        );
+
+        let mut material_descriptor_allocator = descriptor::GrowableAllocator::init(
+            &context.device,
+            10,
+            &[
+                PoolSizeRatio {
+                    descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+                    ratio: 1.0,
+                },
+                PoolSizeRatio {
+                    descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                    ratio: 2.0,
+                },
+            ],
+        );
+
         let gradient_shader_module =
             Self::create_shader_module(&context.device, "assets/shaders/gradient.comp.spv");
 
@@ -140,25 +165,13 @@ impl VulkanRenderer {
                 .destroy_shader_module(gradient_color_shader_module, None);
         };
 
-        let mut dsl_builder = LayoutBuilder::new();
-        dsl_builder.add_binding(0, vk::DescriptorType::COMBINED_IMAGE_SAMPLER);
-        let single_image_layout =
-            dsl_builder.build(&context.device, vk::ShaderStageFlags::FRAGMENT, None);
-
-        let mesh_pipeline = Self::initialize_mesh_pipeline(
-            &context,
-            &draw_image,
-            &depth_image,
-            &single_image_layout.layout,
-        );
-
         // default data
         const WHITE: u32 = u32::from_le_bytes([255, 255, 255, 255]);
         const GREY: u32 = u32::from_le_bytes([128, 128, 128, 255]);
         const MAGENTA: u32 = u32::from_le_bytes([255, 0, 255, 255]);
         const BLACK: u32 = u32::from_le_bytes([0, 0, 0, 0]);
 
-        let white_image = AllocatedImage::create_from_data(
+        let white_image = Arc::new(AllocatedImage::create_from_data(
             &gpu_alloc,
             &context,
             &immediate_submit,
@@ -171,9 +184,9 @@ impl VulkanRenderer {
                 aspect_flags: vk::ImageAspectFlags::COLOR,
                 mip_mapped: false,
             },
-        );
+        ));
 
-        let grey_image = AllocatedImage::create_from_data(
+        let grey_image = Arc::new(AllocatedImage::create_from_data(
             &gpu_alloc,
             &context,
             &immediate_submit,
@@ -186,9 +199,9 @@ impl VulkanRenderer {
                 aspect_flags: vk::ImageAspectFlags::COLOR,
                 mip_mapped: false,
             },
-        );
+        ));
 
-        let black_image = AllocatedImage::create_from_data(
+        let black_image = Arc::new(AllocatedImage::create_from_data(
             &gpu_alloc,
             &context,
             &immediate_submit,
@@ -201,7 +214,7 @@ impl VulkanRenderer {
                 aspect_flags: vk::ImageAspectFlags::COLOR,
                 mip_mapped: false,
             },
-        );
+        ));
 
         let mut checkerboard_data = [0u32; 16 * 16];
         for x in 0..16 {
@@ -214,7 +227,7 @@ impl VulkanRenderer {
             }
         }
 
-        let checkerboard_image = AllocatedImage::create_from_data(
+        let checkerboard_image = Arc::new(AllocatedImage::create_from_data(
             &gpu_alloc,
             &context,
             &immediate_submit,
@@ -227,9 +240,8 @@ impl VulkanRenderer {
                 aspect_flags: vk::ImageAspectFlags::COLOR,
                 mip_mapped: false,
             },
-        );
+        ));
 
-        //sampler here??
         let sampler = vk::SamplerCreateInfo::default()
             .mag_filter(vk::Filter::NEAREST)
             .min_filter(vk::Filter::NEAREST);
@@ -244,6 +256,39 @@ impl VulkanRenderer {
         let linear_handle = unsafe { context.device.create_sampler(&sampler, None) }.unwrap();
         let default_sampler_linear = Sampler::new(linear_handle, context.device.clone());
         let main_camera = Camera::new();
+
+        let default_material_buffer = AllocatedBuffer::create(
+            &gpu_alloc,
+            std::mem::size_of::<MaterialConstants>() as u64,
+            vk::BufferUsageFlags::UNIFORM_BUFFER,
+            vk_mem::MemoryUsage::Auto,
+            Some(
+                vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE
+                    | vk_mem::AllocationCreateFlags::MAPPED,
+            ),
+        );
+        let constants = MaterialConstants::default();
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                (&constants as *const MaterialConstants).cast::<u8>(),
+                default_material_buffer.info.mapped_data.cast::<u8>(),
+                std::mem::size_of::<MaterialConstants>(),
+            )
+        };
+        let default_material_resources = MaterialResources {
+            color_image: Arc::clone(&white_image),
+            color_sampler: linear_handle,
+            metal_rough_image: Arc::clone(&grey_image),
+            metal_rough_sampler: linear_handle,
+            data_buffer: &default_material_buffer,
+            data_buffer_offset: 0,
+        };
+        let default_material = Arc::new(metal_rough_material.write_material(
+            &context.device,
+            MaterialPass::MainColor,
+            &default_material_resources,
+            &mut material_descriptor_allocator,
+        ));
 
         let mut renderer = Self {
             resources: ManuallyDrop::new(RendererResources {
@@ -268,7 +313,6 @@ impl VulkanRenderer {
                 effect_pipeline_layout,
                 background_effects: effects,
                 active_background_effect: 0,
-                mesh_pipeline,
                 scene_data: GPUSceneData::default(),
                 scene_data_layout,
                 meshes: None,
@@ -279,7 +323,10 @@ impl VulkanRenderer {
                 grey_image,
                 black_image,
                 checkerboard_image,
-                single_image_layout,
+                material_descriptor_allocator,
+                metal_rough_material,
+                default_material,
+                default_material_buffer,
             }),
             context: ManuallyDrop::new(context),
         };
@@ -541,67 +588,6 @@ impl VulkanRenderer {
         // Layout is shared across all compute effects and owned by effect_pipeline_layout;
         // passing null here so Pipeline::drop skips layout destruction (no-op per Vulkan spec).
         Pipeline::new(pipeline, vk::PipelineLayout::null(), context.device.clone())
-    }
-
-    fn initialize_mesh_pipeline(
-        context: &VkContext,
-        draw_image: &AllocatedImage,
-        depth_image: &AllocatedImage,
-        image_dsl: &vk::DescriptorSetLayout,
-    ) -> Pipeline {
-        let frag_module =
-            Self::create_shader_module(&context.device, "assets/shaders/tex_image.frag.spv");
-        let vert_module = Self::create_shader_module(
-            &context.device,
-            "assets/shaders/colored_triangle_mesh.vert.spv",
-        );
-
-        let buffer_range = &[vk::PushConstantRange::default()
-            .offset(0)
-            .size(size_of::<GPUDrawPushConstants>() as u32)
-            .stage_flags(vk::ShaderStageFlags::VERTEX)];
-
-        let idsl = &[*image_dsl];
-
-        let layout_info = vk::PipelineLayoutCreateInfo::default()
-            .push_constant_ranges(buffer_range)
-            .set_layouts(idsl);
-
-        let pipeline_layout =
-            unsafe { context.device.create_pipeline_layout(&layout_info, None) }.unwrap();
-
-        let mut builder = PipelineBuilder::init();
-
-        // use layout
-        builder.pipeline_layout = pipeline_layout;
-        // set shader modules
-        builder.set_shaders(vert_module, frag_module);
-        // Draw triangles
-        builder.set_input_topology(vk::PrimitiveTopology::TRIANGLE_LIST);
-        // Fill triangles
-        builder.set_polygon_mode(vk::PolygonMode::FILL);
-        builder.set_cull_mode(vk::CullModeFlags::BACK, vk::FrontFace::COUNTER_CLOCKWISE);
-        // no multisampling
-        builder.set_multisampling_none();
-        // no blending
-        builder.disable_blending();
-        // builder.enable_blending_additive();
-        // no depth testing
-        // builder.disable_depth_test();
-        builder.enable_depth_test(true, vk::CompareOp::GREATER_OR_EQUAL);
-
-        // connect the image format from draw image
-        builder.set_color_attachment_format(draw_image.format);
-        builder.set_depth_format(depth_image.format);
-
-        let pipeline = builder.build(&context.device);
-
-        // clean up modules
-        unsafe {
-            context.device.destroy_shader_module(vert_module, None);
-            context.device.destroy_shader_module(frag_module, None);
-        };
-        Pipeline::new(pipeline, pipeline_layout, context.device.clone())
     }
 
     pub(crate) fn upload_mesh(&self, indices: &[u32], vertices: &[Vertex]) -> GPUMeshBuffers {
