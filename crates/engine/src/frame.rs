@@ -1,12 +1,14 @@
 use crate::command_buffer::{CommandBuffer, Submitted, transition_image};
 use crate::descriptor::{DescriptorWriter, GrowableAllocator};
 use crate::pipeline::ComputePushConstants;
-use crate::primitives::GPUSceneData;
+use crate::primitives::{GPUDrawPushConstants, GPUSceneData};
 use crate::renderer::{FRAME_OVERLAP, VulkanRenderer};
 use crate::resources::AllocatedBuffer;
+use crate::scene::{DrawContext, RenderObject};
 use crate::sync::{Fence, Semaphore};
 use crate::ui::{self, UiState};
 use ash::{Device, vk};
+use nalgebra_glm as glm;
 
 impl VulkanRenderer {
     pub(crate) fn draw(&mut self, raw_input: egui::RawInput) -> egui::PlatformOutput {
@@ -82,12 +84,12 @@ impl VulkanRenderer {
             UiState {
                 effect: &mut res.background_effects[active_effect_idx],
                 effect_index: &mut res.active_background_effect,
-                mesh_index: &mut res.active_mesh,
-                meshes: &mut res.meshes,
                 render_scale: &mut res.render_scale,
                 effective_resolution: render_size,
             },
         );
+
+        let draw_ctx = self.update_scene(draw_extent);
 
         // Reset and begin command buffer for the frame
         // SAFETY: render_fence was waited on and reset above; no other wrapper exists for this handle.
@@ -126,7 +128,7 @@ impl VulkanRenderer {
             vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
         );
 
-        self.draw_geometry(frame_index, cmd.handle(), draw_extent);
+        self.draw_geometry(frame_index, cmd.handle(), draw_extent, &draw_ctx);
 
         // transition the draw image and the swapchain image into their correct transfer layouts.
         transition_image(
@@ -330,12 +332,44 @@ impl VulkanRenderer {
         }
     }
 
-    fn draw_geometry(&mut self, frame_index: usize, cmd: vk::CommandBuffer, extent: vk::Extent2D) {
-        // begin a render pass with the draw image
+    fn update_scene(&mut self, extent: vk::Extent2D) -> DrawContext {
+        let mut ctx = DrawContext::default();
+
+        for node in &self.resources.scene_nodes {
+            node.draw(&glm::Mat4::identity(), &mut ctx);
+        }
+
+        self.resources.main_camera.update();
+        let view = self.resources.main_camera.get_view_matrix();
+        let mut proj = glm::perspective_rh_zo(
+            extent.width as f32 / extent.height as f32,
+            70f32.to_radians(),
+            10000f32,
+            0.1f32,
+        );
+        proj[(1, 1)] *= -1.0;
+
+        self.resources.scene_data.view = view.data.0;
+        self.resources.scene_data.proj = proj.data.0;
+        self.resources.scene_data.view_proj = (proj * view).data.0;
+        self.resources.scene_data.ambient_color = [0.1, 0.1, 0.1, 1.0];
+        self.resources.scene_data.sunlight_direction = [0.0, 1.0, 0.5, 1.0];
+        self.resources.scene_data.sunlight_color = [1.0, 1.0, 1.0, 1.0];
+
+        ctx
+    }
+
+    fn draw_geometry(
+        &mut self,
+        frame_index: usize,
+        cmd: vk::CommandBuffer,
+        extent: vk::Extent2D,
+        ctx: &DrawContext,
+    ) {
         let color_attachment = vk::RenderingAttachmentInfo::default()
             .image_view(self.resources.draw_image.view)
             .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-            .load_op(vk::AttachmentLoadOp::LOAD) // maybe clear?
+            .load_op(vk::AttachmentLoadOp::LOAD)
             .store_op(vk::AttachmentStoreOp::STORE);
 
         let depth_attachment = vk::RenderingAttachmentInfo::default()
@@ -345,7 +379,7 @@ impl VulkanRenderer {
             .store_op(vk::AttachmentStoreOp::STORE)
             .clear_value(vk::ClearValue {
                 depth_stencil: vk::ClearDepthStencilValue {
-                    depth: 0f32,
+                    depth: 0.0,
                     stencil: 0,
                 },
             });
@@ -359,53 +393,44 @@ impl VulkanRenderer {
             .color_attachments(core::slice::from_ref(&color_attachment))
             .depth_attachment(&depth_attachment);
 
-        unsafe {
-            self.context.device.cmd_begin_rendering(cmd, &render_info);
-            // TODO(Task 11): bind metal_rough_material pipeline here
-        }
+        unsafe { self.context.device.cmd_begin_rendering(cmd, &render_info) }
 
-        // dynamic viewport and scissor
         let viewport = vk::Viewport {
-            x: 0f32,
-            y: 0f32,
+            x: 0.0,
+            y: 0.0,
             width: extent.width as f32,
             height: extent.height as f32,
             min_depth: 0.0,
             max_depth: 1.0,
         };
+        unsafe {
+            self.context.device.cmd_set_viewport(cmd, 0, &[viewport]);
+            self.context.device.cmd_set_scissor(
+                cmd,
+                0,
+                &[vk::Rect2D {
+                    offset: vk::Offset2D { x: 0, y: 0 },
+                    extent,
+                }],
+            );
+        }
 
-        unsafe { self.context.device.cmd_set_viewport(cmd, 0, &[viewport]) }
-
-        let scissor = vk::Rect2D {
-            offset: vk::Offset2D { x: 0, y: 0 },
-            extent,
-        };
-
-        unsafe { self.context.device.cmd_set_scissor(cmd, 0, &[scissor]) }
-
-        self.resources.main_camera.update();
-
-        // TODO(Task 11): draw_geometry mesh rendering rewrite goes here
-
-        // dynamic temporal data
+        // Write scene data into per-frame UBO and allocate + update set 0
         let scene_mem_ptr = self.resources.frames[frame_index]
             .scene_buffer
             .info
             .mapped_data;
-
         unsafe {
             std::ptr::copy_nonoverlapping(
-                (&self.resources.scene_data as *const GPUSceneData) as *const u8,
-                scene_mem_ptr as *mut u8,
+                (&self.resources.scene_data as *const GPUSceneData).cast::<u8>(),
+                scene_mem_ptr.cast::<u8>(),
                 size_of::<GPUSceneData>(),
             )
         }
-
         let scene_data_layout = self.resources.scene_data_layout.layout;
-        let desc_set = self.resources.frames[frame_index]
+        let scene_set = self.resources.frames[frame_index]
             .descriptors
             .allocate(&self.context.device, scene_data_layout);
-
         let mut writer = DescriptorWriter::new();
         writer.write_buffer(
             0,
@@ -414,11 +439,89 @@ impl VulkanRenderer {
             0,
             vk::DescriptorType::UNIFORM_BUFFER,
         );
-        writer.update_set(&self.context.device, desc_set);
+        writer.update_set(&self.context.device, scene_set);
 
-        unsafe {
-            self.context.device.cmd_end_rendering(cmd);
+        // Closure draws a single RenderObject: binds descriptors, index buffer, push constants, draws.
+        // device passed as a parameter to avoid borrow conflict with self.context.device in the loops below.
+        let draw_object = |cmd: vk::CommandBuffer,
+                           device: &ash::Device,
+                           layout: vk::PipelineLayout,
+                           scene_set: vk::DescriptorSet,
+                           obj: &RenderObject| {
+            unsafe {
+                device.cmd_bind_descriptor_sets(
+                    cmd,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    layout,
+                    0,
+                    &[scene_set, obj.material.material_set],
+                    &[],
+                );
+                device.cmd_bind_index_buffer(cmd, obj.index_buffer, 0, vk::IndexType::UINT32);
+                let push = GPUDrawPushConstants {
+                    world_matrix: obj.transform.data.0,
+                    vertex_buffer: obj.vertex_buffer_address,
+                };
+                device.cmd_push_constants(
+                    cmd,
+                    layout,
+                    vk::ShaderStageFlags::VERTEX,
+                    0,
+                    std::slice::from_raw_parts(
+                        (&push as *const GPUDrawPushConstants).cast::<u8>(),
+                        size_of::<GPUDrawPushConstants>(),
+                    ),
+                );
+                device.cmd_draw_indexed(cmd, obj.index_count, 1, obj.first_index, 0, 0);
+            }
+        };
+
+        // Opaque pass — only rebind pipeline when it changes
+        let mut last_pipeline = vk::Pipeline::null();
+        for obj in &ctx.opaque_surfaces {
+            let pipeline = obj.material.pipeline.pipeline;
+            let layout = obj.material.pipeline.layout;
+            if pipeline != last_pipeline {
+                unsafe {
+                    self.context.device.cmd_bind_pipeline(
+                        cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        pipeline,
+                    );
+                }
+                last_pipeline = pipeline;
+            }
+            draw_object(cmd, &self.context.device, layout, scene_set, obj);
         }
+
+        // Transparent pass — naive back-to-front sort by squared distance from camera
+        let cam_pos = self.resources.main_camera.position;
+        let mut transparent: Vec<&RenderObject> = ctx.transparent_surfaces.iter().collect();
+        transparent.sort_by(|a, b| {
+            let t = |m: &glm::Mat4| glm::Vec3::from([m[(0, 3)], m[(1, 3)], m[(2, 3)]]);
+            let da = (t(&a.transform) - cam_pos).norm_squared();
+            let db = (t(&b.transform) - cam_pos).norm_squared();
+            db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        last_pipeline = vk::Pipeline::null();
+        for obj in transparent {
+            let pipeline = obj.material.pipeline.pipeline;
+            let layout = obj.material.pipeline.layout;
+            if pipeline != last_pipeline {
+                unsafe {
+                    self.context.device.cmd_bind_pipeline(
+                        cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        pipeline,
+                    );
+                }
+                last_pipeline = pipeline;
+            }
+            draw_object(cmd, &self.context.device, layout, scene_set, obj);
+        }
+
+        unsafe { self.context.device.cmd_end_rendering(cmd) }
     }
 
     fn copy_image_to_image(
