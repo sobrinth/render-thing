@@ -164,7 +164,7 @@ pub fn load_gltf_meshes<P: AsRef<Path>>(
         }
 
         // display the vertex normals
-        const OVERRIDE_COLORS: bool = true;
+        const OVERRIDE_COLORS: bool = false;
         if OVERRIDE_COLORS {
             for v in &mut vertices {
                 v.color = [v.normal[0], v.normal[1], v.normal[2], 1.0];

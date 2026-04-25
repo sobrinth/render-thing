@@ -30,10 +30,10 @@ impl Camera {
         match key_event.1 {
             Key::Character(c) => match key_event.0 {
                 ElementState::Pressed => match c.as_str() {
-                    "w" => self.velocity.z = -1f32,
-                    "s" => self.velocity.z = 1f32,
-                    "a" => self.velocity.x = -1f32,
-                    "d" => self.velocity.x = 1f32,
+                    "w" => self.velocity.z = -0.5f32,
+                    "s" => self.velocity.z = 0.5f32,
+                    "a" => self.velocity.x = -0.5f32,
+                    "d" => self.velocity.x = 0.5f32,
                     _ => {}
                 },
                 ElementState::Released => match c.as_str() {
@@ -46,8 +46,8 @@ impl Camera {
             },
             Key::Named(n) => match key_event.0 {
                 ElementState::Pressed => match n {
-                    NamedKey::Space => self.velocity.y = 1f32,
-                    NamedKey::Shift => self.velocity.y = -1f32,
+                    NamedKey::Space => self.velocity.y = 0.5f32,
+                    NamedKey::Shift => self.velocity.y = -0.5f32,
                     NamedKey::Other => {}
                 },
                 ElementState::Released => match n {

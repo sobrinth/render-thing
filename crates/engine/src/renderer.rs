@@ -652,6 +652,9 @@ impl Drop for VulkanRenderer {
         log::trace!("Start: Dropping renderer");
         unsafe {
             self.context.device.device_wait_idle().unwrap();
+            self.resources
+                .material_descriptor_allocator
+                .destroy_pools(&self.context.device);
             ManuallyDrop::drop(&mut self.resources);
             ManuallyDrop::drop(&mut self.context); // device + instance destroyed last
         }
