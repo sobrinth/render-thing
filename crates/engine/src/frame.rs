@@ -7,8 +7,9 @@ use crate::resources::AllocatedBuffer;
 use crate::scene::{DrawContext, RenderObject};
 use crate::sync::{Fence, Semaphore};
 use crate::ui::{self, UiState};
-use ash::{Device, vk};
+use ash::{Device, vk, vk::Handle};
 use nalgebra_glm as glm;
+use std::sync::Arc;
 
 impl VulkanRenderer {
     pub(crate) fn draw(&mut self, raw_input: egui::RawInput) -> egui::PlatformOutput {
@@ -441,28 +442,90 @@ impl VulkanRenderer {
         );
         writer.update_set(&self.context.device, scene_set);
 
-        // Closure draws a single RenderObject: binds descriptors, index buffer, push constants, draws.
-        // device passed as a parameter to avoid borrow conflict with self.context.device in the loops below.
-        let draw_object = |cmd: vk::CommandBuffer,
-                           device: &ash::Device,
-                           layout: vk::PipelineLayout,
-                           scene_set: vk::DescriptorSet,
-                           obj: &RenderObject| {
+        // Build view-proj matrix for frustum culling
+        let scene_data = &self.resources.scene_data;
+        // view_proj is stored as [[f32;4];4] (column-major), convert to glm::Mat4
+        let vp = glm::Mat4::from_column_slice(scene_data.view_proj.as_flattened());
+
+        // Cull opaque surfaces
+        let mut opaque_indices: Vec<usize> = (0..ctx.opaque_surfaces.len())
+            .filter(|&i| crate::scene::is_visible(&ctx.opaque_surfaces[i], &vp))
+            .collect();
+
+        // Sort by material pointer then index buffer to minimise state changes
+        opaque_indices.sort_unstable_by(|&a, &b| {
+            let oa = &ctx.opaque_surfaces[a];
+            let ob = &ctx.opaque_surfaces[b];
+            let ma = Arc::as_ptr(&oa.material) as usize;
+            let mb = Arc::as_ptr(&ob.material) as usize;
+            ma.cmp(&mb)
+                .then(oa.index_buffer.as_raw().cmp(&ob.index_buffer.as_raw()))
+        });
+
+        // Opaque pass — full state tracking
+        let mut last_pipeline = vk::Pipeline::null();
+        let mut last_material: *const crate::material::MaterialInstance = std::ptr::null();
+        let mut last_index_buffer = vk::Buffer::null();
+        // All materials share compatible set 0/1 layouts (GltfMetallicRoughness)
+
+        for &i in &opaque_indices {
+            let obj = &ctx.opaque_surfaces[i];
+            let pipeline = obj.material.pipeline.pipeline;
+            let layout = obj.material.pipeline.layout;
+            let mat_ptr = Arc::as_ptr(&obj.material);
+
+            if pipeline != last_pipeline {
+                unsafe {
+                    self.context.device.cmd_bind_pipeline(
+                        cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        pipeline,
+                    );
+                    self.context.device.cmd_set_viewport(cmd, 0, &[viewport]);
+                    self.context.device.cmd_set_scissor(
+                        cmd,
+                        0,
+                        &[vk::Rect2D {
+                            offset: vk::Offset2D { x: 0, y: 0 },
+                            extent,
+                        }],
+                    );
+                }
+                last_pipeline = pipeline;
+            }
+
+            if mat_ptr != last_material {
+                unsafe {
+                    self.context.device.cmd_bind_descriptor_sets(
+                        cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        layout,
+                        0,
+                        &[scene_set, obj.material.material_set],
+                        &[],
+                    );
+                }
+                last_material = mat_ptr;
+            }
+
+            if obj.index_buffer != last_index_buffer {
+                unsafe {
+                    self.context.device.cmd_bind_index_buffer(
+                        cmd,
+                        obj.index_buffer,
+                        0,
+                        vk::IndexType::UINT32,
+                    );
+                }
+                last_index_buffer = obj.index_buffer;
+            }
+
             unsafe {
-                device.cmd_bind_descriptor_sets(
-                    cmd,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    layout,
-                    0,
-                    &[scene_set, obj.material.material_set],
-                    &[],
-                );
-                device.cmd_bind_index_buffer(cmd, obj.index_buffer, 0, vk::IndexType::UINT32);
                 let push = GPUDrawPushConstants {
                     world_matrix: obj.transform.data.0,
                     vertex_buffer: obj.vertex_buffer_address,
                 };
-                device.cmd_push_constants(
+                self.context.device.cmd_push_constants(
                     cmd,
                     layout,
                     vk::ShaderStageFlags::VERTEX,
@@ -472,26 +535,15 @@ impl VulkanRenderer {
                         size_of::<GPUDrawPushConstants>(),
                     ),
                 );
-                device.cmd_draw_indexed(cmd, obj.index_count, 1, obj.first_index, 0, 0);
+                self.context.device.cmd_draw_indexed(
+                    cmd,
+                    obj.index_count,
+                    1,
+                    obj.first_index,
+                    0,
+                    0,
+                );
             }
-        };
-
-        // Opaque pass — only rebind pipeline when it changes
-        let mut last_pipeline = vk::Pipeline::null();
-        for obj in &ctx.opaque_surfaces {
-            let pipeline = obj.material.pipeline.pipeline;
-            let layout = obj.material.pipeline.layout;
-            if pipeline != last_pipeline {
-                unsafe {
-                    self.context.device.cmd_bind_pipeline(
-                        cmd,
-                        vk::PipelineBindPoint::GRAPHICS,
-                        pipeline,
-                    );
-                }
-                last_pipeline = pipeline;
-            }
-            draw_object(cmd, &self.context.device, layout, scene_set, obj);
         }
 
         // Transparent pass — naive back-to-front sort by squared distance from camera
@@ -518,7 +570,44 @@ impl VulkanRenderer {
                 }
                 last_pipeline = pipeline;
             }
-            draw_object(cmd, &self.context.device, layout, scene_set, obj);
+            unsafe {
+                self.context.device.cmd_bind_descriptor_sets(
+                    cmd,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    layout,
+                    0,
+                    &[scene_set, obj.material.material_set],
+                    &[],
+                );
+                self.context.device.cmd_bind_index_buffer(
+                    cmd,
+                    obj.index_buffer,
+                    0,
+                    vk::IndexType::UINT32,
+                );
+                let push = GPUDrawPushConstants {
+                    world_matrix: obj.transform.data.0,
+                    vertex_buffer: obj.vertex_buffer_address,
+                };
+                self.context.device.cmd_push_constants(
+                    cmd,
+                    layout,
+                    vk::ShaderStageFlags::VERTEX,
+                    0,
+                    std::slice::from_raw_parts(
+                        (&push as *const GPUDrawPushConstants).cast::<u8>(),
+                        size_of::<GPUDrawPushConstants>(),
+                    ),
+                );
+                self.context.device.cmd_draw_indexed(
+                    cmd,
+                    obj.index_count,
+                    1,
+                    obj.first_index,
+                    0,
+                    0,
+                );
+            }
         }
 
         unsafe { self.context.device.cmd_end_rendering(cmd) }
