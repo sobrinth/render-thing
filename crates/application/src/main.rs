@@ -102,6 +102,7 @@ impl ApplicationHandler for Application {
                     winit::keyboard::Key::Named(n) => einput::Key::Named(match n {
                         winit::keyboard::NamedKey::Space => einput::NamedKey::Space,
                         winit::keyboard::NamedKey::Shift => einput::NamedKey::Shift,
+                        winit::keyboard::NamedKey::F3 => einput::NamedKey::F3,
                         _ => einput::NamedKey::Other,
                     }),
                     _ => einput::Key::Other,

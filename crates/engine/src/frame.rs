@@ -5,14 +5,17 @@ use crate::primitives::{GPUDrawPushConstants, GPUSceneData};
 use crate::renderer::{FRAME_OVERLAP, VulkanRenderer};
 use crate::resources::AllocatedBuffer;
 use crate::scene::{DrawContext, RenderObject};
+use crate::stats::{DrawStats, FrameStats};
 use crate::sync::{Fence, Semaphore};
 use crate::ui::{self, UiState};
 use ash::{Device, vk, vk::Handle};
 use nalgebra_glm as glm;
 use std::sync::Arc;
+use std::time::Instant;
 
 impl VulkanRenderer {
     pub(crate) fn draw(&mut self, raw_input: egui::RawInput) -> egui::PlatformOutput {
+        let frame_start = Instant::now();
         if self.resources.resize_requested {
             let minimized = Self::resize_swapchain(self);
             if minimized {
@@ -87,10 +90,14 @@ impl VulkanRenderer {
                 effect_index: &mut res.active_background_effect,
                 render_scale: &mut res.render_scale,
                 effective_resolution: render_size,
+                stats: &res.stats,
+                show_stats: &mut res.show_stats,
             },
         );
 
+        let t0 = Instant::now();
         let draw_ctx = self.update_scene(draw_extent);
+        let update_time_ms = t0.elapsed().as_secs_f32() * 1000.0;
 
         // Reset and begin command buffer for the frame
         // SAFETY: render_fence was waited on and reset above; no other wrapper exists for this handle.
@@ -129,7 +136,9 @@ impl VulkanRenderer {
             vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
         );
 
-        self.draw_geometry(frame_index, cmd.handle(), draw_extent, &draw_ctx);
+        let t0 = Instant::now();
+        let draw_stats = self.draw_geometry(frame_index, cmd.handle(), draw_extent, &draw_ctx);
+        let draw_time_ms = t0.elapsed().as_secs_f32() * 1000.0;
 
         // transition the draw image and the swapchain image into their correct transfer layouts.
         transition_image(
@@ -278,6 +287,16 @@ impl VulkanRenderer {
 
         ui::after_frame(&mut self.resources.ui_context);
 
+        self.resources.stats.push(FrameStats {
+            frametime_ms: frame_start.elapsed().as_secs_f32() * 1000.0,
+            draw_time_ms,
+            update_time_ms,
+            draw_call_count: draw_stats.draw_call_count,
+            triangle_count: draw_stats.triangle_count,
+            culled_count: draw_stats.culled_count,
+            opaque_count: draw_stats.opaque_count,
+            transparent_count: draw_stats.transparent_count,
+        });
         // increase the number of frames drawn
         self.resources.frame_number += 1;
 
@@ -366,7 +385,7 @@ impl VulkanRenderer {
         cmd: vk::CommandBuffer,
         extent: vk::Extent2D,
         ctx: &DrawContext,
-    ) {
+    ) -> DrawStats {
         let color_attachment = vk::RenderingAttachmentInfo::default()
             .image_view(self.resources.draw_image.view)
             .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
@@ -395,6 +414,8 @@ impl VulkanRenderer {
             .depth_attachment(&depth_attachment);
 
         unsafe { self.context.device.cmd_begin_rendering(cmd, &render_info) }
+
+        let mut stats = DrawStats::default();
 
         let viewport = vk::Viewport {
             x: 0.0,
@@ -461,6 +482,9 @@ impl VulkanRenderer {
             ma.cmp(&mb)
                 .then(oa.index_buffer.as_raw().cmp(&ob.index_buffer.as_raw()))
         });
+
+        stats.opaque_count = opaque_indices.len() as u32;
+        stats.culled_count = ctx.opaque_surfaces.len() as u32 - stats.opaque_count;
 
         // Opaque pass — full state tracking
         let mut last_pipeline = vk::Pipeline::null();
@@ -544,6 +568,8 @@ impl VulkanRenderer {
                     0,
                 );
             }
+            stats.draw_call_count += 1;
+            stats.triangle_count += obj.index_count / 3;
         }
 
         // Transparent pass — naive back-to-front sort by squared distance from camera
@@ -555,6 +581,8 @@ impl VulkanRenderer {
             let db = (t(&b.transform) - cam_pos).norm_squared();
             db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
         });
+
+        stats.transparent_count = transparent.len() as u32;
 
         last_pipeline = vk::Pipeline::null();
         for obj in transparent {
@@ -608,9 +636,12 @@ impl VulkanRenderer {
                     0,
                 );
             }
+            stats.draw_call_count += 1;
+            stats.triangle_count += obj.index_count / 3;
         }
 
         unsafe { self.context.device.cmd_end_rendering(cmd) }
+        stats
     }
 
     fn copy_image_to_image(
