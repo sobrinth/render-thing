@@ -2,6 +2,7 @@ use crate::context::QueueData;
 use crate::frame::FrameData;
 use crate::pipeline::ComputeEffect;
 use crate::renderer::FRAME_OVERLAP;
+use crate::stats::StatsHistory;
 use crate::swapchain::SwapchainProperties;
 use ash::Device;
 use ash::vk::{CommandBuffer, Extent2D};
@@ -15,6 +16,8 @@ pub(crate) struct UiState<'a> {
     pub(crate) effect_index: &'a mut usize,
     pub(crate) render_scale: &'a mut f32,
     pub(crate) effective_resolution: (u32, u32),
+    pub(crate) stats: &'a StatsHistory,
+    pub(crate) show_stats: &'a mut bool,
 }
 
 pub(crate) struct UiContext {
@@ -123,6 +126,83 @@ pub(crate) fn before_frame(
                 })
             })
         });
+
+    if *state.show_stats {
+        let cur = &state.stats.current;
+        let avg = &state.stats.average;
+        let fps_cur = if cur.frametime_ms > 0.0 {
+            1000.0 / cur.frametime_ms
+        } else {
+            0.0
+        };
+        let fps_avg = if avg.frametime_ms > 0.0 {
+            1000.0 / avg.frametime_ms
+        } else {
+            0.0
+        };
+
+        egui::Window::new("Debug (F3)")
+            .resizable(false)
+            .open(state.show_stats)
+            .anchor(egui::Align2::RIGHT_TOP, [-10.0, 10.0])
+            .show(&ctx, |ui| {
+                let mono = |s: String| egui::Label::new(egui::RichText::new(s).monospace());
+                egui::Grid::new("stats_grid")
+                    .num_columns(3)
+                    .spacing([20.0, 4.0])
+                    .show(ui, |ui| {
+                        ui.label("");
+                        ui.label("Current");
+                        ui.label("Avg (64f)");
+                        ui.end_row();
+
+                        ui.label("FPS");
+                        ui.add(mono(format!("{:>6.1}", fps_cur)));
+                        ui.add(mono(format!("{:>6.1}", fps_avg)));
+                        ui.end_row();
+
+                        ui.label("Frame");
+                        ui.add(mono(format!("{:>6.2} ms", cur.frametime_ms)));
+                        ui.add(mono(format!("{:>6.2} ms", avg.frametime_ms)));
+                        ui.end_row();
+
+                        ui.label("Draw");
+                        ui.add(mono(format!("{:>6.2} ms", cur.draw_time_ms)));
+                        ui.add(mono(format!("{:>6.2} ms", avg.draw_time_ms)));
+                        ui.end_row();
+
+                        ui.label("Update");
+                        ui.add(mono(format!("{:>6.2} ms", cur.update_time_ms)));
+                        ui.add(mono(format!("{:>6.2} ms", avg.update_time_ms)));
+                        ui.end_row();
+
+                        ui.label("Draw calls");
+                        ui.add(mono(format!("{:>6}", cur.draw_call_count)));
+                        ui.add(mono(format!("{:>6}", avg.draw_call_count)));
+                        ui.end_row();
+
+                        ui.label("Triangles");
+                        ui.add(mono(format!("{:>6}", cur.triangle_count)));
+                        ui.add(mono(format!("{:>6}", avg.triangle_count)));
+                        ui.end_row();
+
+                        ui.label("Opaque");
+                        ui.add(mono(format!("{:>6}", cur.opaque_count)));
+                        ui.label("—");
+                        ui.end_row();
+
+                        ui.label("Transparent");
+                        ui.add(mono(format!("{:>6}", cur.transparent_count)));
+                        ui.label("—");
+                        ui.end_row();
+
+                        ui.label("Culled");
+                        ui.add(mono(format!("{:>6}", cur.culled_count)));
+                        ui.label("—");
+                        ui.end_row();
+                    });
+            });
+    }
 
     let egui::FullOutput {
         platform_output,

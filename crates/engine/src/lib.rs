@@ -20,6 +20,7 @@ mod meshes;
 mod pipeline;
 mod primitives;
 mod scene;
+mod stats;
 mod swapchain;
 mod sync;
 mod ui;

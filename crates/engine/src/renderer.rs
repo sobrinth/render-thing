@@ -7,7 +7,7 @@ use crate::descriptor::{
 };
 use crate::frame::FrameData;
 use crate::gltf_scene::Gltf;
-use crate::input::{ElementState, Key, MouseButton};
+use crate::input::{ElementState, Key, MouseButton, NamedKey};
 use crate::material::GltfMetallicRoughness;
 use crate::pipeline::{ComputeEffect, ComputePushConstants, Pipeline, PipelineLayout};
 use crate::primitives::{GPUMeshBuffers, GPUSceneData, Vertex};
@@ -15,6 +15,7 @@ use crate::resources::{
     AllocatedBuffer, AllocatedImage, ImageCreateInfo, Sampler, upload_mesh_buffers,
 };
 use crate::scene::Renderable;
+use crate::stats::StatsHistory;
 use crate::swapchain::Swapchain;
 use crate::sync::{Fence, Semaphore};
 use crate::ui::UiContext;
@@ -59,6 +60,8 @@ pub(crate) struct RendererResources {
     pub(crate) black_image: Arc<AllocatedImage>,
     pub(crate) checkerboard_image: Arc<AllocatedImage>,
     pub(crate) metal_rough_material: GltfMetallicRoughness,
+    pub(crate) stats: StatsHistory,
+    pub(crate) show_stats: bool,
 }
 
 pub(crate) struct VulkanRenderer {
@@ -270,6 +273,8 @@ impl VulkanRenderer {
                 black_image,
                 checkerboard_image,
                 metal_rough_material,
+                stats: StatsHistory::default(),
+                show_stats: false,
             }),
             context: ManuallyDrop::new(context),
         };
@@ -286,6 +291,10 @@ impl VulkanRenderer {
 
     pub(crate) fn on_key_event(&mut self, key_event: (ElementState, Key)) {
         if !self.resources.ui_context.ctx.wants_keyboard_input() {
+            if matches!(key_event, (ElementState::Pressed, Key::Named(NamedKey::F3))) {
+                self.resources.show_stats = !self.resources.show_stats;
+                return;
+            }
             self.resources.main_camera.handle_key_event(key_event);
         }
     }
