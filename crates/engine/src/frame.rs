@@ -373,7 +373,7 @@ impl VulkanRenderer {
         self.resources.scene_data.proj = proj.data.0;
         self.resources.scene_data.view_proj = (proj * view).data.0;
         self.resources.scene_data.ambient_color = [0.1, 0.1, 0.1, 1.0];
-        self.resources.scene_data.sunlight_direction = [0.0, 1.0, 0.5, 1.0];
+        self.resources.scene_data.sunlight_direction = [0.667, 0.667, 0.333, 1.0];
         self.resources.scene_data.sunlight_color = [1.0, 1.0, 1.0, 1.0];
 
         ctx

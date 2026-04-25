@@ -30,5 +30,5 @@ void main() {
     gl_Position = sceneData.viewproj * PushConstants.render_matrix * vec4(v.position, 1.0f);
     outColor = v.color.xyz;
     outUV = vec2(v.uv_x, v.uv_y);
-    outNormal = v.normal;
+    outNormal = normalize(mat3(transpose(inverse(mat3(PushConstants.render_matrix)))) * v.normal);
 }

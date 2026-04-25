@@ -110,9 +110,23 @@ impl Gltf {
             .collect();
 
         // ── 2. Images ────────────────────────────────────────────────────────────
+        // Pre-scan: glTF mandates baseColorTexture (and emissiveTexture) are sRGB-encoded;
+        // all other texture types (metallic-roughness, normal, occlusion) are linear.
+        let mut srgb_image_indices = std::collections::HashSet::new();
+        for mat in document.materials() {
+            let pbr = mat.pbr_metallic_roughness();
+            if let Some(t) = pbr.base_color_texture() {
+                srgb_image_indices.insert(t.texture().source().index());
+            }
+            if let Some(t) = mat.emissive_texture() {
+                srgb_image_indices.insert(t.texture().source().index());
+            }
+        }
+
         let images: Vec<Arc<AllocatedImage>> = raw_images
             .iter()
-            .map(|img_data| {
+            .enumerate()
+            .map(|(img_index, img_data)| {
                 // Expand all 8-bit sub-RGBA formats to R8G8B8A8 before upload.
                 let rgba: Vec<u8> = match img_data.format {
                     gltf::image::Format::R8 => img_data
@@ -140,7 +154,11 @@ impl Gltf {
                     &rgba,
                     ImageCreateInfo {
                         resolution: (img_data.width, img_data.height),
-                        format: vk::Format::R8G8B8A8_UNORM,
+                        format: if srgb_image_indices.contains(&img_index) {
+                            vk::Format::R8G8B8A8_SRGB
+                        } else {
+                            vk::Format::R8G8B8A8_UNORM
+                        },
                         usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
                         aspect_flags: vk::ImageAspectFlags::COLOR,
                         mip_mapped: false,
@@ -320,7 +338,7 @@ impl Gltf {
                 let reader = primitive.reader(|buf| Some(&buffers[buf.index()]));
 
                 match reader.read_indices() {
-                    Some(ri) => indices.extend(ri.into_u32()),
+                    Some(ri) => indices.extend(ri.into_u32().map(|i| i + initial_vtx as u32)),
                     None => continue,
                 }
 
