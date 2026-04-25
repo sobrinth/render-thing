@@ -119,4 +119,3 @@ pub(crate) fn is_visible(obj: &RenderObject, view_proj: &glm::Mat4) -> bool {
     }
     true
 }
-

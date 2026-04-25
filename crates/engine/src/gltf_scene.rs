@@ -83,6 +83,15 @@ impl Gltf {
         let (document, buffers, raw_images) = gltf::import(&path)
             .map_err(|e| log::error!("Failed to load GLTF '{}': {e}", path.as_ref().display()))
             .ok()?;
+        log::info!(
+            "GLTF '{}': {} meshes, {} materials, {} images, {} nodes, {} scenes",
+            path.as_ref().display(),
+            document.meshes().count(),
+            document.materials().count(),
+            raw_images.len(),
+            document.nodes().count(),
+            document.scenes().count(),
+        );
 
         // ── 1. Samplers ──────────────────────────────────────────────────────────
         let samplers: Vec<Sampler> = document
@@ -104,8 +113,18 @@ impl Gltf {
         let images: Vec<Arc<AllocatedImage>> = raw_images
             .iter()
             .map(|img_data| {
-                // Ensure R8G8B8A8: convert R8G8B8 → R8G8B8A8 if needed
+                // Expand all 8-bit sub-RGBA formats to R8G8B8A8 before upload.
                 let rgba: Vec<u8> = match img_data.format {
+                    gltf::image::Format::R8 => img_data
+                        .pixels
+                        .iter()
+                        .flat_map(|&r| [r, r, r, 255u8])
+                        .collect(),
+                    gltf::image::Format::R8G8 => img_data
+                        .pixels
+                        .chunks_exact(2)
+                        .flat_map(|c| [c[0], c[1], 0u8, 255u8])
+                        .collect(),
                     gltf::image::Format::R8G8B8 => img_data
                         .pixels
                         .chunks_exact(3)
@@ -430,12 +449,38 @@ impl Gltf {
             node_builders[gltf_node.index()] = Some(builder);
         }
 
-        // Pass 2: wire children into parents
-        // take() removes child from vec (leaves None), then we push into parent
+        // Pass 2: wire children into parents in post-order.
+        // Naively iterating by index is wrong: a parent may be take()n by its own
+        // parent before we get to wire the parent's children, silently dropping them.
+        // Post-order guarantees every node's subtree is fully wired before its parent
+        // claims it.
+        let mut adj: Vec<Vec<usize>> = vec![Vec::new(); node_count];
+        let mut is_child = vec![false; node_count];
         for gltf_node in document.nodes() {
-            let parent_idx = gltf_node.index();
-            let child_indices: Vec<usize> = gltf_node.children().map(|c| c.index()).collect();
-            for child_idx in child_indices {
+            for child in gltf_node.children() {
+                adj[gltf_node.index()].push(child.index());
+                is_child[child.index()] = true;
+            }
+        }
+        let mut post_order: Vec<usize> = Vec::with_capacity(node_count);
+        for root in 0..node_count {
+            if !is_child[root] {
+                let mut stack: Vec<(usize, bool)> = vec![(root, false)];
+                while let Some((idx, visited)) = stack.pop() {
+                    if visited {
+                        post_order.push(idx);
+                    } else {
+                        stack.push((idx, true));
+                        for &child in adj[idx].iter().rev() {
+                            stack.push((child, false));
+                        }
+                    }
+                }
+            }
+        }
+        for &parent_idx in &post_order {
+            let child_idxs = adj[parent_idx].clone();
+            for child_idx in child_idxs {
                 let child = node_builders[child_idx].take();
                 if let (Some(child_b), Some(parent_b)) = (child, node_builders[parent_idx].as_mut())
                 {
@@ -449,6 +494,12 @@ impl Gltf {
             .into_iter()
             .filter_map(|n| n.map(NodeBuilder::into_renderable))
             .collect();
+        log::info!(
+            "GLTF '{}': {} top-level nodes, {} meshes loaded",
+            path.as_ref().display(),
+            top_nodes.len(),
+            meshes.len(),
+        );
 
         Some(Gltf {
             meshes,
@@ -462,4 +513,3 @@ impl Gltf {
         })
     }
 }
-

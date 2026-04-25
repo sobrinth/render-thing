@@ -29,4 +29,3 @@ pub(crate) fn node_to_mat4(node: &gltf::Node) -> glm::Mat4 {
         m[2][2], m[2][3], m[3][0], m[3][1], m[3][2], m[3][3],
     ])
 }
-
