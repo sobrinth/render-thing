@@ -62,6 +62,7 @@ pub(crate) struct RendererResources {
     pub(crate) metal_rough_material: GltfMetallicRoughness,
     pub(crate) stats: StatsHistory,
     pub(crate) show_stats: bool,
+    pub(crate) show_controls: bool,
 }
 
 pub(crate) struct VulkanRenderer {
@@ -263,7 +264,12 @@ impl VulkanRenderer {
                 effect_pipeline_layout,
                 background_effects: effects,
                 active_background_effect: 0,
-                scene_data: GPUSceneData::default(),
+                scene_data: GPUSceneData {
+                    ambient_color: [0.5, 0.5, 0.5, 1.0],
+                    sunlight_direction: [0.667, 0.667, 0.333, 1.0],
+                    sunlight_color: [1.0, 1.0, 1.0, 2.5],
+                    ..Default::default()
+                },
                 scene_data_layout,
                 scene_nodes: Vec::new(),
                 default_sampler_nearest,
@@ -275,6 +281,7 @@ impl VulkanRenderer {
                 metal_rough_material,
                 stats: StatsHistory::default(),
                 show_stats: false,
+                show_controls: true,
             }),
             context: ManuallyDrop::new(context),
         };
@@ -291,6 +298,10 @@ impl VulkanRenderer {
 
     pub(crate) fn on_key_event(&mut self, key_event: (ElementState, Key)) {
         if !self.resources.ui_context.ctx.wants_keyboard_input() {
+            if matches!(key_event, (ElementState::Pressed, Key::Named(NamedKey::F2))) {
+                self.resources.show_controls = !self.resources.show_controls;
+                return;
+            }
             if matches!(key_event, (ElementState::Pressed, Key::Named(NamedKey::F3))) {
                 self.resources.show_stats = !self.resources.show_stats;
                 return;

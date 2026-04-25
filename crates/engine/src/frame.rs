@@ -92,6 +92,10 @@ impl VulkanRenderer {
                 effective_resolution: render_size,
                 stats: &res.stats,
                 show_stats: &mut res.show_stats,
+                show_controls: &mut res.show_controls,
+                ambient_color: &mut res.scene_data.ambient_color,
+                sunlight_direction: &mut res.scene_data.sunlight_direction,
+                sunlight_color: &mut res.scene_data.sunlight_color,
             },
         );
 
@@ -372,9 +376,6 @@ impl VulkanRenderer {
         self.resources.scene_data.view = view.data.0;
         self.resources.scene_data.proj = proj.data.0;
         self.resources.scene_data.view_proj = (proj * view).data.0;
-        self.resources.scene_data.ambient_color = [0.5, 0.5, 0.5, 1.0];
-        self.resources.scene_data.sunlight_direction = [0.667, 0.667, 0.333, 1.0];
-        self.resources.scene_data.sunlight_color = [1.0, 1.0, 1.0, 2.5];
 
         ctx
     }

@@ -18,6 +18,10 @@ pub(crate) struct UiState<'a> {
     pub(crate) effective_resolution: (u32, u32),
     pub(crate) stats: &'a StatsHistory,
     pub(crate) show_stats: &'a mut bool,
+    pub(crate) show_controls: &'a mut bool,
+    pub(crate) ambient_color: &'a mut [f32; 4],
+    pub(crate) sunlight_direction: &'a mut [f32; 4],
+    pub(crate) sunlight_color: &'a mut [f32; 4],
 }
 
 pub(crate) struct UiContext {
@@ -72,60 +76,86 @@ pub(crate) fn before_frame(
 
     ctx.begin_pass(raw_input);
     ui.scale_factor = ctx.pixels_per_point();
-    egui::Window::new("Shader control")
-        .resizable(false)
-        .show(&ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.label("Render scale :");
-                ui.add(egui::Slider::new(state.render_scale, 0.1..=1.0));
+    if *state.show_controls {
+        egui::Window::new("Shader control (F2)")
+            .resizable(false)
+            .open(state.show_controls)
+            .show(&ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Render scale :");
+                    ui.add(egui::Slider::new(state.render_scale, 0.1..=1.0));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Effective resolution: ");
+                    ui.label(format!(
+                        "{:.0}x{:.0}",
+                        state.effective_resolution.0, state.effective_resolution.1
+                    ));
+                });
+                ui.add(egui::Separator::default().spacing(12.0));
+                ui.horizontal(|ui| {
+                    ui.label("Selected background: ");
+                    ui.label(state.effect.name);
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Effect index:");
+                    ui.add(egui::Slider::new(state.effect_index, 0..=2));
+                });
+                ui.add(egui::Separator::default().spacing(12.0));
+                ui.heading("Lighting");
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    ui.label("Ambient color: ");
+                    state.ambient_color.iter_mut().for_each(|v| {
+                        ui.add(egui::DragValue::new(v).range(0.0..=2.0).speed(0.005));
+                    });
+                });
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    ui.label("Sun direction: ");
+                    state.sunlight_direction.iter_mut().take(3).for_each(|v| {
+                        ui.add(egui::DragValue::new(v).range(-1.0..=1.0).speed(0.005));
+                    });
+                });
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    ui.label("Sun color: ");
+                    state.sunlight_color.iter_mut().for_each(|v| {
+                        ui.add(egui::DragValue::new(v).range(0.0..=5.0).speed(0.01));
+                    });
+                });
+                ui.add(egui::Separator::default().spacing(12.0));
+                ui.heading("Push constants");
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    ui.label("Data1: ");
+                    state.effect.data.data1.iter_mut().for_each(|v| {
+                        ui.add(egui::DragValue::new(v).range(0.0..=1.0).speed(0.005));
+                    })
+                });
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    ui.label("Data2: ");
+                    state.effect.data.data2.iter_mut().for_each(|v| {
+                        ui.add(egui::DragValue::new(v).range(0.0..=1.0).speed(0.005));
+                    })
+                });
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    ui.label("Data3: ");
+                    state.effect.data.data3.iter_mut().for_each(|v| {
+                        ui.add(egui::DragValue::new(v).range(0.0..=1.0).speed(0.005));
+                    })
+                });
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    ui.label("Data4: ");
+                    state.effect.data.data4.iter_mut().for_each(|v| {
+                        ui.add(egui::DragValue::new(v).range(0.0..=1.0).speed(0.005));
+                    })
+                });
             });
-            ui.horizontal(|ui| {
-                ui.label("Effective resolution: ");
-                ui.label(format!(
-                    "{:.0}x{:.0}",
-                    state.effective_resolution.0, state.effective_resolution.1
-                ));
-            });
-            ui.add(egui::Separator::default().spacing(12.0));
-            ui.horizontal(|ui| {
-                ui.label("Selected background: ");
-                ui.label(state.effect.name);
-            });
-            ui.horizontal(|ui| {
-                ui.label("Effect index:");
-                ui.add(egui::Slider::new(state.effect_index, 0..=2));
-            });
-            ui.add(egui::Separator::default().spacing(12.0));
-            ui.heading("Push constants");
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                ui.label("Data1: ");
-                state.effect.data.data1.iter_mut().for_each(|v| {
-                    ui.add(egui::DragValue::new(v).range(0.0..=1.0).speed(0.005));
-                })
-            });
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                ui.label("Data2: ");
-                state.effect.data.data2.iter_mut().for_each(|v| {
-                    ui.add(egui::DragValue::new(v).range(0.0..=1.0).speed(0.005));
-                })
-            });
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                ui.label("Data3: ");
-                state.effect.data.data3.iter_mut().for_each(|v| {
-                    ui.add(egui::DragValue::new(v).range(0.0..=1.0).speed(0.005));
-                })
-            });
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                ui.label("Data4: ");
-                state.effect.data.data4.iter_mut().for_each(|v| {
-                    ui.add(egui::DragValue::new(v).range(0.0..=1.0).speed(0.005));
-                })
-            })
-        });
+    }
 
     if *state.show_stats {
         let cur = &state.stats.current;
