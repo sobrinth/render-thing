@@ -14,7 +14,11 @@ use std::sync::Arc;
 use std::time::Instant;
 
 impl VulkanRenderer {
-    pub(crate) fn draw(&mut self, raw_input: egui::RawInput) -> egui::PlatformOutput {
+    pub(crate) fn draw(
+        &mut self,
+        camera: crate::CameraView,
+        raw_input: egui::RawInput,
+    ) -> egui::PlatformOutput {
         let frame_start = Instant::now();
         if self.resources.resize_requested {
             let minimized = Self::resize_swapchain(self);
@@ -100,7 +104,7 @@ impl VulkanRenderer {
         );
 
         let t0 = Instant::now();
-        let draw_ctx = self.update_scene(draw_extent);
+        let draw_ctx = self.update_scene(&camera);
         let update_time_ms = t0.elapsed().as_secs_f32() * 1000.0;
 
         // Reset and begin command buffer for the frame
@@ -141,7 +145,13 @@ impl VulkanRenderer {
         );
 
         let t0 = Instant::now();
-        let draw_stats = self.draw_geometry(frame_index, cmd.handle(), draw_extent, &draw_ctx);
+        let draw_stats = self.draw_geometry(
+            frame_index,
+            cmd.handle(),
+            draw_extent,
+            &draw_ctx,
+            camera.position,
+        );
         let draw_time_ms = t0.elapsed().as_secs_f32() * 1000.0;
 
         // transition the draw image and the swapchain image into their correct transfer layouts.
@@ -356,26 +366,16 @@ impl VulkanRenderer {
         }
     }
 
-    fn update_scene(&mut self, extent: vk::Extent2D) -> DrawContext {
+    fn update_scene(&mut self, camera: &crate::CameraView) -> DrawContext {
         let mut ctx = DrawContext::default();
 
         for node in &self.resources.scene_nodes {
             node.draw(&glm::Mat4::identity(), &mut ctx);
         }
 
-        self.resources.main_camera.update();
-        let view = self.resources.main_camera.get_view_matrix();
-        let mut proj = glm::perspective_rh_zo(
-            extent.width as f32 / extent.height as f32,
-            70f32.to_radians(),
-            10000f32,
-            0.1f32,
-        );
-        proj[(1, 1)] *= -1.0;
-
-        self.resources.scene_data.view = view.data.0;
-        self.resources.scene_data.proj = proj.data.0;
-        self.resources.scene_data.view_proj = (proj * view).data.0;
+        self.resources.scene_data.view = camera.view_matrix.data.0;
+        self.resources.scene_data.proj = camera.proj_matrix.data.0;
+        self.resources.scene_data.view_proj = (camera.proj_matrix * camera.view_matrix).data.0;
 
         ctx
     }
@@ -386,6 +386,7 @@ impl VulkanRenderer {
         cmd: vk::CommandBuffer,
         extent: vk::Extent2D,
         ctx: &DrawContext,
+        cam_pos: glm::Vec3,
     ) -> DrawStats {
         let color_attachment = vk::RenderingAttachmentInfo::default()
             .image_view(self.resources.draw_image.view)
@@ -574,7 +575,6 @@ impl VulkanRenderer {
         }
 
         // Transparent pass — naive back-to-front sort by squared distance from camera
-        let cam_pos = self.resources.main_camera.position;
         let mut transparent: Vec<&RenderObject> = ctx.transparent_surfaces.iter().collect();
         transparent.sort_by(|a, b| {
             let t = |m: &glm::Mat4| glm::Vec3::from([m[(0, 3)], m[(1, 3)], m[(2, 3)]]);

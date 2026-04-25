@@ -1,6 +1,10 @@
-use engine::Engine;
 use engine::input::{self as einput};
+use engine::{CameraView, Engine};
+use nalgebra_glm as glm;
 use winit::application::ApplicationHandler;
+
+mod camera;
+use camera::Camera;
 use winit::dpi::PhysicalSize;
 use winit::event::{MouseScrollDelta, StartCause, WindowEvent};
 use winit::event_loop::ControlFlow::Poll;
@@ -21,11 +25,24 @@ fn main() {
     event_loop.run_app(&mut app).unwrap();
 }
 
-#[derive(Default)]
 struct Application {
     window: Option<Window>,
     engine: Option<Engine>,
     ui: Option<egui_winit::State>,
+    camera: Option<Camera>,
+    mouse_pos: (i32, i32),
+}
+
+impl Default for Application {
+    fn default() -> Self {
+        Self {
+            window: None,
+            engine: None,
+            ui: None,
+            camera: None,
+            mouse_pos: (0, 0),
+        }
+    }
 }
 
 impl ApplicationHandler for Application {
@@ -55,6 +72,7 @@ impl ApplicationHandler for Application {
         self.engine = Some(engine);
         self.ui = Some(ui);
         self.window = Some(window);
+        self.camera = Some(Camera::new());
     }
 
     fn window_event(
@@ -66,6 +84,7 @@ impl ApplicationHandler for Application {
         let window = self.window.as_ref().unwrap();
         let ui = self.ui.as_mut().unwrap();
         let engine = self.engine.as_mut().unwrap();
+        let camera = self.camera.as_mut().unwrap();
 
         let _ = ui.on_window_event(window, &event);
 
@@ -87,10 +106,16 @@ impl ApplicationHandler for Application {
                     winit::event::ElementState::Pressed => einput::ElementState::Pressed,
                     winit::event::ElementState::Released => einput::ElementState::Released,
                 };
-                engine.on_mouse_button_event(button, state);
+                if !engine.egui_context().wants_pointer_input() {
+                    camera.handle_mouse_button_event(button, state);
+                }
             }
             WindowEvent::CursorMoved { position, .. } => {
-                engine.on_mouse_event(position.into());
+                let new_pos: (i32, i32) = position.into();
+                if !engine.egui_context().wants_pointer_input() {
+                    camera.handle_mouse_event(self.mouse_pos, new_pos);
+                }
+                self.mouse_pos = new_pos;
             }
             WindowEvent::KeyboardInput { event, .. } if !event.repeat => {
                 let state = match event.state {
@@ -108,7 +133,10 @@ impl ApplicationHandler for Application {
                     }),
                     _ => einput::Key::Other,
                 };
-                engine.on_key_press((state, key));
+                engine.on_key_press((state, key.clone()));
+                if !engine.egui_context().wants_keyboard_input() {
+                    camera.handle_key_event((state, key));
+                }
             }
             WindowEvent::MouseWheel {
                 delta: MouseScrollDelta::LineDelta(_, _v_lines),
@@ -117,7 +145,17 @@ impl ApplicationHandler for Application {
             WindowEvent::RedrawRequested => {
                 let raw_input = ui.take_egui_input(window);
                 window.pre_present_notify();
-                let platform_output = engine.draw(raw_input);
+                camera.update();
+                let view = camera.get_view_matrix();
+                let aspect = window.inner_size().width as f32 / window.inner_size().height as f32;
+                let mut proj = glm::perspective_rh_zo(aspect, 70f32.to_radians(), 10000f32, 0.1f32);
+                proj[(1, 1)] *= -1.0;
+                let camera_view = CameraView {
+                    view_matrix: view,
+                    proj_matrix: proj,
+                    position: camera.position,
+                };
+                let platform_output = engine.draw(camera_view, raw_input);
                 ui.handle_platform_output(window, platform_output);
                 window.request_redraw();
             }

@@ -2065,6 +2065,7 @@ dependencies = [
  "egui-winit",
  "engine",
  "env_logger",
+ "nalgebra-glm",
  "winit",
 ]
 
