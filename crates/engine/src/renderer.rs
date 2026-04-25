@@ -273,7 +273,7 @@ impl VulkanRenderer {
             }),
             context: ManuallyDrop::new(context),
         };
-        if let Some(gltf_scene) = Gltf::load(&renderer, "assets/models/basicmesh.glb") {
+        if let Some(gltf_scene) = Gltf::load(&renderer, "assets/models/downloaded/abbey.glb") {
             renderer.resources.scene_nodes.push(Box::new(gltf_scene));
         }
 
