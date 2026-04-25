@@ -5,7 +5,7 @@ use std::collections::HashSet;
 
 const EYE_HEIGHT: f32 = 1.7;
 pub const MOVE_SPEED: f32 = 5.0;
-pub const JUMP_VELOCITY: f32 = 6.0;
+pub const JUMP_VELOCITY: f32 = 8.0;
 const GRAVITY: f32 = -20.0;
 const PLAYER_HALF_WIDTH: f32 = 0.4;
 const PLAYER_HEIGHT: f32 = 1.8;

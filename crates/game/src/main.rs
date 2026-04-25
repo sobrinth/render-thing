@@ -3,8 +3,8 @@ mod physics;
 mod player;
 
 use engine::input::{self as einput, ElementState};
-use engine::{CameraView, Engine};
-use level::Level;
+use engine::{CameraView, Engine, MaterialConstants, MaterialPass};
+use level::{Level, build_box};
 use nalgebra_glm as glm;
 use player::Player;
 use std::collections::HashSet;
@@ -81,14 +81,12 @@ impl ApplicationHandler for GameApp {
     }
 
     fn device_event(&mut self, _: &ActiveEventLoop, _: DeviceId, event: DeviceEvent) {
-        if let DeviceEvent::MouseMotion { delta } = event {
-            if self.cursor_captured {
-                if let Some(player) = &mut self.player {
-                    player.yaw += delta.0 as f32 * LOOK_SENSITIVITY;
-                    player.pitch -= delta.1 as f32 * LOOK_SENSITIVITY;
-                    player.pitch = player.pitch.clamp(-89f32.to_radians(), 89f32.to_radians());
-                }
-            }
+        if let DeviceEvent::MouseMotion { delta } = event
+            && self.cursor_captured &&
+            let Some(player) = &mut self.player {
+            player.yaw += delta.0 as f32 * LOOK_SENSITIVITY;
+            player.pitch -= delta.1 as f32 * LOOK_SENSITIVITY;
+            player.pitch = player.pitch.clamp(-89f32.to_radians(), 89f32.to_radians());
         }
     }
 
@@ -154,15 +152,13 @@ impl ApplicationHandler for GameApp {
                 button: winit::event::MouseButton::Left,
                 state: winit::event::ElementState::Pressed,
                 ..
-            } => {
+            } if !self.cursor_captured => {
                 // Recapture cursor when clicking the window after Escape
-                if !self.cursor_captured {
-                    let _ = window
-                        .set_cursor_grab(CursorGrabMode::Locked)
-                        .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
-                    window.set_cursor_visible(false);
-                    self.cursor_captured = true;
-                }
+                let _ = window
+                    .set_cursor_grab(CursorGrabMode::Locked)
+                    .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
+                window.set_cursor_visible(false);
+                self.cursor_captured = true;
             }
 
             WindowEvent::RedrawRequested => self.render(),
@@ -215,14 +211,234 @@ impl GameApp {
 
         // Render
         let raw_input = ui.take_egui_input(window);
-        let draws = level.all_draws();
-        let platform_output = engine.draw(camera, &draws, raw_input);
         window.pre_present_notify();
+        let platform_output = engine.draw(camera, level.all_draws(), raw_input);
         ui.handle_platform_output(window, platform_output);
         window.request_redraw();
     }
 }
 
-fn build_level(_engine: &mut Engine) -> Level {
-    Level::new(None, vec![], vec![], vec![])
+fn build_level(engine: &mut Engine) -> Level {
+    // Unit cube: 24 vertices (4 unique per face), 12 triangles, correct per-face normals
+    let cube_vertices = vec![
+        // -Z face (normal [0, 0, -1])
+        engine::Vertex {
+            position: [-0.5, -0.5, -0.5],
+            normal: [0.0, 0.0, -1.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+            uv_x: 0.0,
+            uv_y: 1.0,
+        },
+        engine::Vertex {
+            position: [0.5, -0.5, -0.5],
+            normal: [0.0, 0.0, -1.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+            uv_x: 1.0,
+            uv_y: 1.0,
+        },
+        engine::Vertex {
+            position: [0.5, 0.5, -0.5],
+            normal: [0.0, 0.0, -1.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+            uv_x: 1.0,
+            uv_y: 0.0,
+        },
+        engine::Vertex {
+            position: [-0.5, 0.5, -0.5],
+            normal: [0.0, 0.0, -1.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+            uv_x: 0.0,
+            uv_y: 0.0,
+        },
+        // +Z face (normal [0, 0, 1])
+        engine::Vertex {
+            position: [0.5, -0.5, 0.5],
+            normal: [0.0, 0.0, 1.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+            uv_x: 0.0,
+            uv_y: 1.0,
+        },
+        engine::Vertex {
+            position: [-0.5, -0.5, 0.5],
+            normal: [0.0, 0.0, 1.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+            uv_x: 1.0,
+            uv_y: 1.0,
+        },
+        engine::Vertex {
+            position: [-0.5, 0.5, 0.5],
+            normal: [0.0, 0.0, 1.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+            uv_x: 1.0,
+            uv_y: 0.0,
+        },
+        engine::Vertex {
+            position: [0.5, 0.5, 0.5],
+            normal: [0.0, 0.0, 1.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+            uv_x: 0.0,
+            uv_y: 0.0,
+        },
+        // -X face (normal [-1, 0, 0])
+        engine::Vertex {
+            position: [-0.5, -0.5, 0.5],
+            normal: [-1.0, 0.0, 0.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+            uv_x: 0.0,
+            uv_y: 1.0,
+        },
+        engine::Vertex {
+            position: [-0.5, -0.5, -0.5],
+            normal: [-1.0, 0.0, 0.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+            uv_x: 1.0,
+            uv_y: 1.0,
+        },
+        engine::Vertex {
+            position: [-0.5, 0.5, -0.5],
+            normal: [-1.0, 0.0, 0.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+            uv_x: 1.0,
+            uv_y: 0.0,
+        },
+        engine::Vertex {
+            position: [-0.5, 0.5, 0.5],
+            normal: [-1.0, 0.0, 0.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+            uv_x: 0.0,
+            uv_y: 0.0,
+        },
+        // +X face (normal [1, 0, 0])
+        engine::Vertex {
+            position: [0.5, -0.5, -0.5],
+            normal: [1.0, 0.0, 0.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+            uv_x: 0.0,
+            uv_y: 1.0,
+        },
+        engine::Vertex {
+            position: [0.5, -0.5, 0.5],
+            normal: [1.0, 0.0, 0.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+            uv_x: 1.0,
+            uv_y: 1.0,
+        },
+        engine::Vertex {
+            position: [0.5, 0.5, 0.5],
+            normal: [1.0, 0.0, 0.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+            uv_x: 1.0,
+            uv_y: 0.0,
+        },
+        engine::Vertex {
+            position: [0.5, 0.5, -0.5],
+            normal: [1.0, 0.0, 0.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+            uv_x: 0.0,
+            uv_y: 0.0,
+        },
+        // -Y face (normal [0, -1, 0])
+        engine::Vertex {
+            position: [-0.5, -0.5, 0.5],
+            normal: [0.0, -1.0, 0.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+            uv_x: 0.0,
+            uv_y: 1.0,
+        },
+        engine::Vertex {
+            position: [0.5, -0.5, 0.5],
+            normal: [0.0, -1.0, 0.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+            uv_x: 1.0,
+            uv_y: 1.0,
+        },
+        engine::Vertex {
+            position: [0.5, -0.5, -0.5],
+            normal: [0.0, -1.0, 0.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+            uv_x: 1.0,
+            uv_y: 0.0,
+        },
+        engine::Vertex {
+            position: [-0.5, -0.5, -0.5],
+            normal: [0.0, -1.0, 0.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+            uv_x: 0.0,
+            uv_y: 0.0,
+        },
+        // +Y face (normal [0, 1, 0])
+        engine::Vertex {
+            position: [-0.5, 0.5, -0.5],
+            normal: [0.0, 1.0, 0.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+            uv_x: 0.0,
+            uv_y: 1.0,
+        },
+        engine::Vertex {
+            position: [0.5, 0.5, -0.5],
+            normal: [0.0, 1.0, 0.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+            uv_x: 1.0,
+            uv_y: 1.0,
+        },
+        engine::Vertex {
+            position: [0.5, 0.5, 0.5],
+            normal: [0.0, 1.0, 0.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+            uv_x: 1.0,
+            uv_y: 0.0,
+        },
+        engine::Vertex {
+            position: [-0.5, 0.5, 0.5],
+            normal: [0.0, 1.0, 0.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+            uv_x: 0.0,
+            uv_y: 0.0,
+        },
+    ];
+    let cube_indices: Vec<u32> = vec![
+        0, 1, 2, 0, 2, 3, // -Z
+        4, 5, 6, 4, 6, 7, // +Z
+        8, 9, 10, 8, 10, 11, // -X
+        12, 13, 14, 12, 14, 15, // +X
+        16, 17, 18, 16, 18, 19, // -Y
+        20, 21, 22, 20, 22, 23, // +Y
+    ];
+    let box_mesh = engine.upload_mesh(&cube_indices, &cube_vertices);
+
+    let white = engine.white_texture();
+    // TODO: This is not really working correctly yet
+    let material = engine.create_material(
+        white,
+        white,
+        MaterialConstants {
+            color_factors: [1.0, 1.0, 0.0, 1.0],
+            ..Default::default()
+        },
+        MaterialPass::MainColor,
+    );
+
+    let mut proc_draws = Vec::new();
+    let mut proc_collision = Vec::new();
+
+    let mut add_box = |min: glm::Vec3, max: glm::Vec3| {
+        let (draw, aabb) = build_box(box_mesh, material, min, max);
+        proc_draws.push(draw);
+        proc_collision.push(aabb);
+    };
+
+    // Ground floor
+    add_box(glm::vec3(-50.0, -0.5, -50.0), glm::vec3(50.0, 0.0, 50.0));
+    // Platform 1
+    add_box(glm::vec3(-4.0, 1.0, -15.0), glm::vec3(4.0, 1.5, -10.0));
+    // Platform 2
+    add_box(glm::vec3(-3.0, 2.0, -21.0), glm::vec3(3.0, 2.5, -16.0));
+    // Platform 3
+    add_box(glm::vec3(-2.0, 3.5, -27.0), glm::vec3(2.0, 4.0, -22.0));
+
+    // Optional glTF scene for visual detail (visual only; collision proxies TODO)
+    let gltf_scene = engine.load_gltf("assets/models/downloaded/abbey.glb");
+    let gltf_collision = vec![];
+
+    Level::new(gltf_scene, gltf_collision, proc_draws, proc_collision)
 }
