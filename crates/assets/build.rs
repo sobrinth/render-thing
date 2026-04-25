@@ -11,15 +11,9 @@ fn main() {
         compile_shaders();
     }
     println!("cargo::rerun-if-changed=build.rs");
-    println!("cargo::rerun-if-changed=../../assets/shaders/shader.frag");
-    println!("cargo::rerun-if-changed=../../assets/shaders/shader.vert");
     println!("cargo::rerun-if-changed=../../assets/shaders/gradient.comp");
     println!("cargo::rerun-if-changed=../../assets/shaders/gradient_color.comp");
     println!("cargo::rerun-if-changed=../../assets/shaders/sky.comp");
-    println!("cargo::rerun-if-changed=../../assets/shaders/colored_triangle.vert");
-    println!("cargo::rerun-if-changed=../../assets/shaders/colored_triangle.frag");
-    println!("cargo::rerun-if-changed=../../assets/shaders/colored_triangle_mesh.frag");
-    println!("cargo::rerun-if-changed=../../assets/shaders/tex_image.frag");
     println!("cargo::rerun-if-changed=../../assets/shaders/input_structures.glsl");
     println!("cargo::rerun-if-changed=../../assets/shaders/mesh.vert");
     println!("cargo::rerun-if-changed=../../assets/shaders/mesh.frag");
