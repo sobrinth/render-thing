@@ -785,6 +785,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "game"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "egui-winit",
+ "engine",
+ "env_logger",
+ "nalgebra-glm",
+ "winit",
+]
+
+[[package]]
 name = "gethostname"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

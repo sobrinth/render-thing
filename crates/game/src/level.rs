@@ -3,8 +3,7 @@ use engine::{DrawCall, GltfScene, MaterialHandle, MeshHandle};
 use nalgebra_glm as glm;
 
 pub struct Level {
-    pub gltf_draws: Vec<DrawCall>,
-    pub proc_draws: Vec<DrawCall>,
+    pub draws: Vec<DrawCall>,
     pub collision_boxes: Vec<Aabb>,
 }
 
@@ -17,19 +16,15 @@ impl Level {
     ) -> Self {
         let gltf_draws = gltf_scene.map(|s| s.draws).unwrap_or_default();
         let collision_boxes = gltf_collision.into_iter().chain(proc_collision).collect();
+        let draws = gltf_draws.into_iter().chain(proc_draws).collect();
         Self {
-            gltf_draws,
-            proc_draws,
+            draws,
             collision_boxes,
         }
     }
 
-    pub fn all_draws(&self) -> Vec<DrawCall> {
-        self.gltf_draws
-            .iter()
-            .chain(self.proc_draws.iter())
-            .copied()
-            .collect()
+    pub fn all_draws(&self) -> &[DrawCall] {
+        &self.draws
     }
 }
 

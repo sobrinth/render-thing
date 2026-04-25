@@ -16,7 +16,7 @@ pub enum MaterialPass {
 pub struct MaterialConstants {
     pub color_factors: [f32; 4],
     pub metal_rough_factors: [f32; 4],
-    _padding: [[f32; 4]; 14],
+    pub _padding: [[f32; 4]; 14],
 }
 
 impl Default for MaterialConstants {
