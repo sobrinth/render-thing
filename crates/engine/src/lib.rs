@@ -10,6 +10,14 @@ pub struct CameraView {
     pub position: glm::Vec3,
 }
 
+pub struct Scene(pub(crate) Vec<Box<dyn crate::scene::Renderable>>);
+
+impl Scene {
+    pub fn empty() -> Self {
+        Scene(Vec::new())
+    }
+}
+
 mod frame;
 mod renderer;
 mod resources;
@@ -47,8 +55,17 @@ impl Engine {
         self.renderer.egui_context()
     }
 
-    pub fn draw(&mut self, camera: CameraView, raw_input: egui::RawInput) -> egui::PlatformOutput {
-        self.renderer.draw(camera, raw_input)
+    pub fn load_gltf(&mut self, path: &str) -> Option<Scene> {
+        crate::gltf_scene::Gltf::load(&self.renderer, path).map(|gltf| Scene(vec![Box::new(gltf)]))
+    }
+
+    pub fn draw(
+        &mut self,
+        camera: CameraView,
+        scene: &Scene,
+        raw_input: egui::RawInput,
+    ) -> egui::PlatformOutput {
+        self.renderer.draw(camera, scene, raw_input)
     }
 
     pub fn resize(&mut self, size: (u32, u32)) {
