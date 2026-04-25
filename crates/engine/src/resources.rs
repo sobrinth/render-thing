@@ -248,6 +248,92 @@ impl AllocatedImage {
     }
 }
 
+impl AllocatedImage {
+    /// Upload raw RGBA8 bytes (4 components per pixel, one byte each).
+    /// Use this for gltf::image::Data::pixels which are laid out [R,G,B,A,R,G,B,A,...].
+    pub(crate) fn create_from_bytes(
+        gpu_alloc: &Arc<vk_mem::Allocator>,
+        context: &VkContext,
+        imm_data: &ImmediateSubmitData,
+        graphics_queue: &QueueData,
+        data: &[u8],
+        info: ImageCreateInfo,
+    ) -> AllocatedImage {
+        let extent = vk::Extent3D {
+            width: info.resolution.0,
+            height: info.resolution.1,
+            depth: 1,
+        };
+
+        let mut upload_buffer = AllocatedBuffer::create(
+            gpu_alloc,
+            data.len() as u64,
+            vk::BufferUsageFlags::TRANSFER_SRC,
+            vk_mem::MemoryUsage::AutoPreferDevice,
+            Some(
+                vk_mem::AllocationCreateFlags::MAPPED
+                    | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
+            ),
+        );
+
+        let new_image = AllocatedImage::create(
+            context,
+            gpu_alloc,
+            info.resolution,
+            info.format,
+            info.usage,
+            info.aspect_flags,
+            info.mip_mapped,
+        );
+
+        let dst_data = unsafe { gpu_alloc.map_memory(&mut upload_buffer.allocation) }.unwrap();
+        unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), dst_data, data.len()) };
+        unsafe { gpu_alloc.unmap_memory(&mut upload_buffer.allocation) };
+
+        imm_data.submit(&context.device, graphics_queue, |cmd| {
+            transition_image(
+                &context.device,
+                cmd.handle(),
+                new_image.image,
+                vk::ImageLayout::UNDEFINED,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            );
+
+            let copy_region = vk::BufferImageCopy::default()
+                .buffer_offset(0)
+                .buffer_row_length(0)
+                .buffer_image_height(0)
+                .image_subresource(vk::ImageSubresourceLayers {
+                    aspect_mask: info.aspect_flags,
+                    mip_level: 0,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                })
+                .image_extent(extent);
+
+            unsafe {
+                context.device.cmd_copy_buffer_to_image(
+                    cmd.handle(),
+                    upload_buffer.buffer,
+                    new_image.image,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    &[copy_region],
+                )
+            }
+
+            transition_image(
+                &context.device,
+                cmd.handle(),
+                new_image.image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            );
+        });
+
+        new_image
+    }
+}
+
 pub(crate) struct Sampler {
     pub(crate) sampler: vk::Sampler,
     device: Device,

@@ -21,6 +21,7 @@ pub(crate) struct RenderObject {
     pub material: Arc<MaterialInstance>,
     pub transform: glm::Mat4,
     pub vertex_buffer_address: vk::DeviceAddress,
+    pub bounds: crate::meshes::Bounds,
 }
 
 pub(crate) struct Node {
@@ -48,6 +49,15 @@ pub(crate) struct MeshNode {
     pub surfaces: Vec<MeshSurface>,
 }
 
+impl Renderable for Node {
+    fn draw(&self, top_matrix: &glm::Mat4, ctx: &mut DrawContext) {
+        let world = top_matrix * self.local_transform;
+        for child in &self.children {
+            child.draw(&world, ctx);
+        }
+    }
+}
+
 impl Renderable for MeshNode {
     fn draw(&self, top_matrix: &glm::Mat4, ctx: &mut DrawContext) {
         let world_transform = top_matrix * self.node.local_transform;
@@ -60,6 +70,7 @@ impl Renderable for MeshNode {
                 material: Arc::clone(&surface.material),
                 transform: world_transform,
                 vertex_buffer_address: self.mesh.mesh_buffers.vertex_buffer_address,
+                bounds: surface.geo.bounds,
             };
             match surface.material.pass_type {
                 MaterialPass::MainColor => ctx.opaque_surfaces.push(obj),
@@ -72,3 +83,40 @@ impl Renderable for MeshNode {
         }
     }
 }
+
+/// Returns false if all 8 AABB corners project outside the same frustum half-space.
+pub(crate) fn is_visible(obj: &RenderObject, view_proj: &glm::Mat4) -> bool {
+    let mvp = view_proj * obj.transform;
+    let o = obj.bounds.origin;
+    let e = obj.bounds.extents;
+
+    let corners = [
+        glm::vec4(o.x + e.x, o.y + e.y, o.z + e.z, 1.0),
+        glm::vec4(o.x + e.x, o.y + e.y, o.z - e.z, 1.0),
+        glm::vec4(o.x + e.x, o.y - e.y, o.z + e.z, 1.0),
+        glm::vec4(o.x + e.x, o.y - e.y, o.z - e.z, 1.0),
+        glm::vec4(o.x - e.x, o.y + e.y, o.z + e.z, 1.0),
+        glm::vec4(o.x - e.x, o.y + e.y, o.z - e.z, 1.0),
+        glm::vec4(o.x - e.x, o.y - e.y, o.z + e.z, 1.0),
+        glm::vec4(o.x - e.x, o.y - e.y, o.z - e.z, 1.0),
+    ];
+
+    let clip: Vec<glm::Vec4> = corners.iter().map(|c| mvp * c).collect();
+
+    let planes: [fn(&glm::Vec4) -> bool; 6] = [
+        |c| c.x > c.w,
+        |c| c.x < -c.w,
+        |c| c.y > c.w,
+        |c| c.y < -c.w,
+        |c| c.z > c.w,
+        |c| c.z < 0.0,
+    ];
+
+    for outside in planes {
+        if clip.iter().all(|c| outside(c)) {
+            return false;
+        }
+    }
+    true
+}
+
