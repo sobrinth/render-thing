@@ -1,4 +1,3 @@
-use crate::camera::Camera;
 use crate::command_buffer::ImmediateSubmitData;
 use crate::context::{QueueData, VkContext};
 use crate::descriptor;
@@ -7,7 +6,7 @@ use crate::descriptor::{
 };
 use crate::frame::FrameData;
 use crate::gltf_scene::Gltf;
-use crate::input::{ElementState, Key, MouseButton, NamedKey};
+use crate::input::{ElementState, Key, NamedKey};
 use crate::material::GltfMetallicRoughness;
 use crate::pipeline::{ComputeEffect, ComputePushConstants, Pipeline, PipelineLayout};
 use crate::primitives::{GPUMeshBuffers, GPUSceneData, Vertex};
@@ -34,8 +33,6 @@ pub(crate) struct RendererResources {
     pub(crate) render_scale: f32,
     pub(crate) render_size: (u32, u32),
     pub(crate) resize_requested: bool,
-    pub(crate) mouse_pos: (i32, i32),
-    pub(crate) main_camera: Camera,
     pub(crate) ui_context: UiContext,
     pub(crate) gpu_alloc: Arc<vk_mem::Allocator>,
     pub(crate) swapchain: Swapchain,
@@ -239,7 +236,6 @@ impl VulkanRenderer {
 
         let linear_handle = unsafe { context.device.create_sampler(&sampler, None) }.unwrap();
         let default_sampler_linear = Sampler::new(linear_handle, context.device.clone());
-        let main_camera = Camera::new();
 
         let mut renderer = Self {
             resources: ManuallyDrop::new(RendererResources {
@@ -248,8 +244,6 @@ impl VulkanRenderer {
                 render_scale: 1f32,
                 render_size: (0, 0),
                 resize_requested: false,
-                mouse_pos: (0, 0),
-                main_camera,
                 ui_context: ui,
                 gpu_alloc,
                 swapchain,
@@ -306,25 +300,6 @@ impl VulkanRenderer {
                 self.resources.show_stats = !self.resources.show_stats;
                 return;
             }
-            self.resources.main_camera.handle_key_event(key_event);
-        }
-    }
-
-    pub(crate) fn on_mouse_event(&mut self, new_pos: (i32, i32)) {
-        let old_pos = self.resources.mouse_pos;
-        if !self.resources.ui_context.ctx.wants_pointer_input() {
-            self.resources
-                .main_camera
-                .handle_mouse_event(old_pos, new_pos);
-        }
-        self.resources.mouse_pos = new_pos;
-    }
-
-    pub(crate) fn on_mouse_button_event(&mut self, button: MouseButton, state: ElementState) {
-        if !self.resources.ui_context.ctx.wants_pointer_input() {
-            self.resources
-                .main_camera
-                .handle_mouse_button_event(button, state);
         }
     }
 

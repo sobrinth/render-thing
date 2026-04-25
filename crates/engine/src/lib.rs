@@ -1,14 +1,19 @@
 #![allow(dead_code)]
-use crate::input::{ElementState, Key, MouseButton};
+use crate::input::{ElementState, Key};
 use crate::renderer::VulkanRenderer;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 extern crate nalgebra_glm as glm;
+
+pub struct CameraView {
+    pub view_matrix: glm::Mat4,
+    pub proj_matrix: glm::Mat4,
+    pub position: glm::Vec3,
+}
 
 mod frame;
 mod renderer;
 mod resources;
 
-mod camera;
 mod command_buffer;
 mod context;
 mod debug;
@@ -42,8 +47,8 @@ impl Engine {
         self.renderer.egui_context()
     }
 
-    pub fn draw(&mut self, raw_input: egui::RawInput) -> egui::PlatformOutput {
-        self.renderer.draw(raw_input)
+    pub fn draw(&mut self, camera: CameraView, raw_input: egui::RawInput) -> egui::PlatformOutput {
+        self.renderer.draw(camera, raw_input)
     }
 
     pub fn resize(&mut self, size: (u32, u32)) {
@@ -52,14 +57,6 @@ impl Engine {
 
     pub fn on_key_press(&mut self, key_event: (ElementState, Key)) {
         self.renderer.on_key_event(key_event);
-    }
-
-    pub fn on_mouse_event(&mut self, new_pos: (i32, i32)) {
-        self.renderer.on_mouse_event(new_pos);
-    }
-
-    pub fn on_mouse_button_event(&mut self, button: MouseButton, state: ElementState) {
-        self.renderer.on_mouse_button_event(button, state);
     }
 
     pub fn stop(&mut self) {
