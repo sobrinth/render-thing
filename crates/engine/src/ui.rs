@@ -1,6 +1,5 @@
 use crate::context::QueueData;
 use crate::frame::FrameData;
-use crate::meshes::MeshAsset;
 use crate::pipeline::ComputeEffect;
 use crate::renderer::FRAME_OVERLAP;
 use crate::swapchain::SwapchainProperties;
@@ -14,8 +13,6 @@ use vk_mem::Allocator;
 pub(crate) struct UiState<'a> {
     pub(crate) effect: &'a mut ComputeEffect,
     pub(crate) effect_index: &'a mut usize,
-    pub(crate) mesh_index: &'a mut usize,
-    pub(crate) meshes: &'a mut Option<Vec<MeshAsset>>,
     pub(crate) render_scale: &'a mut f32,
     pub(crate) effective_resolution: (u32, u32),
 }
@@ -61,7 +58,7 @@ pub(crate) fn before_frame(
     raw_input: egui::RawInput,
     graphics_queue: &QueueData,
     frame: &FrameData,
-    mut state: UiState<'_>,
+    state: UiState<'_>,
 ) -> (Vec<ClippedPrimitive>, egui::PlatformOutput) {
     let renderer = ui
         .renderer
@@ -95,16 +92,6 @@ pub(crate) fn before_frame(
                 ui.label("Effect index:");
                 ui.add(egui::Slider::new(state.effect_index, 0..=2));
             });
-            if let Some(meshes) = &mut state.meshes {
-                ui.horizontal(|ui| {
-                    ui.label("Selected mesh: ");
-                    ui.label(meshes[*state.mesh_index].name.as_str());
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Mesh index:");
-                    ui.add(egui::Slider::new(state.mesh_index, 0..=meshes.len() - 1))
-                });
-            };
             ui.add(egui::Separator::default().spacing(12.0));
             ui.heading("Push constants");
             ui.add_space(10.0);

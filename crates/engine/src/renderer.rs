@@ -10,17 +10,19 @@ use crate::input::{ElementState, Key, MouseButton};
 use crate::material::{
     GltfMetallicRoughness, MaterialConstants, MaterialInstance, MaterialPass, MaterialResources,
 };
-use crate::meshes::{MeshAsset, load_gltf_meshes};
+use crate::meshes::load_gltf_meshes;
 use crate::pipeline::{ComputeEffect, ComputePushConstants, Pipeline, PipelineLayout};
 use crate::primitives::{GPUMeshBuffers, GPUSceneData, Vertex};
 use crate::resources::{
     AllocatedBuffer, AllocatedImage, ImageCreateInfo, Sampler, upload_mesh_buffers,
 };
+use crate::scene::{MeshNode, MeshSurface, Node, Renderable};
 use crate::swapchain::Swapchain;
 use crate::sync::{Fence, Semaphore};
 use crate::ui::UiContext;
 use ash::{Device, vk};
 use itertools::Itertools;
+use nalgebra_glm as glm;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::mem::ManuallyDrop;
 use std::path::Path;
@@ -52,8 +54,7 @@ pub(crate) struct RendererResources {
     pub(crate) active_background_effect: usize,
     pub(crate) scene_data: GPUSceneData,
     pub(crate) scene_data_layout: DescriptorSetLayout,
-    pub(crate) meshes: Option<Vec<MeshAsset>>,
-    pub(crate) active_mesh: usize,
+    pub(crate) scene_nodes: Vec<Box<dyn Renderable>>,
     pub(crate) default_sampler_nearest: Sampler,
     pub(crate) default_sampler_linear: Sampler,
     pub(crate) white_image: Arc<AllocatedImage>,
@@ -315,8 +316,7 @@ impl VulkanRenderer {
                 active_background_effect: 0,
                 scene_data: GPUSceneData::default(),
                 scene_data_layout,
-                meshes: None,
-                active_mesh: 0,
+                scene_nodes: Vec::new(),
                 default_sampler_nearest,
                 default_sampler_linear,
                 white_image,
@@ -330,7 +330,25 @@ impl VulkanRenderer {
             }),
             context: ManuallyDrop::new(context),
         };
-        renderer.resources.meshes = load_gltf_meshes(&renderer, "assets/models/basicmesh.glb");
+        if let Some(mesh_assets) = load_gltf_meshes(&renderer, "assets/models/basicmesh.glb") {
+            for mesh in mesh_assets {
+                let default_mat = Arc::clone(&renderer.resources.default_material);
+                let surfaces = mesh
+                    .surfaces
+                    .iter()
+                    .map(|geo| MeshSurface {
+                        geo: *geo,
+                        material: Arc::clone(&default_mat),
+                    })
+                    .collect();
+                let node = MeshNode {
+                    node: Node::new(glm::Mat4::identity()),
+                    mesh,
+                    surfaces,
+                };
+                renderer.resources.scene_nodes.push(Box::new(node));
+            }
+        }
 
         renderer
     }
