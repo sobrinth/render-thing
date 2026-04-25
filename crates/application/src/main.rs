@@ -31,6 +31,7 @@ struct Application {
     ui: Option<egui_winit::State>,
     camera: Option<Camera>,
     mouse_pos: (i32, i32),
+    scene: Option<engine::Scene>,
 }
 
 impl Default for Application {
@@ -41,6 +42,7 @@ impl Default for Application {
             ui: None,
             camera: None,
             mouse_pos: (0, 0),
+            scene: None,
         }
     }
 }
@@ -58,7 +60,7 @@ impl ApplicationHandler for Application {
             .unwrap();
 
         let window_size = (window.inner_size().width, window.inner_size().height);
-        let engine = Engine::initialize(&window, window_size);
+        let mut engine = Engine::initialize(&window, window_size);
 
         let ui = egui_winit::State::new(
             engine.egui_context(),
@@ -69,6 +71,7 @@ impl ApplicationHandler for Application {
             None,
         );
 
+        self.scene = engine.load_gltf("assets/models/downloaded/abbey.glb");
         self.engine = Some(engine);
         self.ui = Some(ui);
         self.window = Some(window);
@@ -155,7 +158,9 @@ impl ApplicationHandler for Application {
                     proj_matrix: proj,
                     position: camera.position,
                 };
-                let platform_output = engine.draw(camera_view, raw_input);
+                let empty = engine::Scene::empty();
+                let scene = self.scene.as_ref().unwrap_or(&empty);
+                let platform_output = engine.draw(camera_view, scene, raw_input);
                 ui.handle_platform_output(window, platform_output);
                 window.request_redraw();
             }

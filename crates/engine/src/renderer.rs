@@ -5,7 +5,6 @@ use crate::descriptor::{
     DescriptorSetLayout, DescriptorWriter, GrowableAllocator, LayoutBuilder, PoolSizeRatio,
 };
 use crate::frame::FrameData;
-use crate::gltf_scene::Gltf;
 use crate::input::{ElementState, Key, NamedKey};
 use crate::material::GltfMetallicRoughness;
 use crate::pipeline::{ComputeEffect, ComputePushConstants, Pipeline, PipelineLayout};
@@ -13,7 +12,6 @@ use crate::primitives::{GPUMeshBuffers, GPUSceneData, Vertex};
 use crate::resources::{
     AllocatedBuffer, AllocatedImage, ImageCreateInfo, Sampler, upload_mesh_buffers,
 };
-use crate::scene::Renderable;
 use crate::stats::StatsHistory;
 use crate::swapchain::Swapchain;
 use crate::sync::{Fence, Semaphore};
@@ -49,7 +47,6 @@ pub(crate) struct RendererResources {
     pub(crate) active_background_effect: usize,
     pub(crate) scene_data: GPUSceneData,
     pub(crate) scene_data_layout: DescriptorSetLayout,
-    pub(crate) scene_nodes: Vec<Box<dyn Renderable>>,
     pub(crate) default_sampler_nearest: Sampler,
     pub(crate) default_sampler_linear: Sampler,
     pub(crate) white_image: Arc<AllocatedImage>,
@@ -237,7 +234,7 @@ impl VulkanRenderer {
         let linear_handle = unsafe { context.device.create_sampler(&sampler, None) }.unwrap();
         let default_sampler_linear = Sampler::new(linear_handle, context.device.clone());
 
-        let mut renderer = Self {
+        let renderer = Self {
             resources: ManuallyDrop::new(RendererResources {
                 frame_number: 0,
                 window_size,
@@ -265,7 +262,6 @@ impl VulkanRenderer {
                     ..Default::default()
                 },
                 scene_data_layout,
-                scene_nodes: Vec::new(),
                 default_sampler_nearest,
                 default_sampler_linear,
                 white_image,
@@ -279,9 +275,6 @@ impl VulkanRenderer {
             }),
             context: ManuallyDrop::new(context),
         };
-        if let Some(gltf_scene) = Gltf::load(&renderer, "assets/models/downloaded/abbey.glb") {
-            renderer.resources.scene_nodes.push(Box::new(gltf_scene));
-        }
 
         renderer
     }

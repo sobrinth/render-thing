@@ -17,6 +17,7 @@ impl VulkanRenderer {
     pub(crate) fn draw(
         &mut self,
         camera: crate::CameraView,
+        scene: &crate::Scene,
         raw_input: egui::RawInput,
     ) -> egui::PlatformOutput {
         let frame_start = Instant::now();
@@ -104,7 +105,7 @@ impl VulkanRenderer {
         );
 
         let t0 = Instant::now();
-        let draw_ctx = self.update_scene(&camera);
+        let draw_ctx = self.update_scene(&camera, scene);
         let update_time_ms = t0.elapsed().as_secs_f32() * 1000.0;
 
         // Reset and begin command buffer for the frame
@@ -366,10 +367,10 @@ impl VulkanRenderer {
         }
     }
 
-    fn update_scene(&mut self, camera: &crate::CameraView) -> DrawContext {
+    fn update_scene(&mut self, camera: &crate::CameraView, scene: &crate::Scene) -> DrawContext {
         let mut ctx = DrawContext::default();
 
-        for node in &self.resources.scene_nodes {
+        for node in &scene.0 {
             node.draw(&glm::Mat4::identity(), &mut ctx);
         }
 
