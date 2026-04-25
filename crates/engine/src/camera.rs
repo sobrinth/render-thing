@@ -48,14 +48,12 @@ impl Camera {
                 ElementState::Pressed => match n {
                     NamedKey::Space => self.velocity.y = 0.5f32,
                     NamedKey::Shift => self.velocity.y = -0.5f32,
-                    NamedKey::F3 => {}
-                    NamedKey::Other => {}
+                    NamedKey::F2 | NamedKey::F3 | NamedKey::Other => {}
                 },
                 ElementState::Released => match n {
                     NamedKey::Space => self.velocity.y = 0f32,
                     NamedKey::Shift => self.velocity.y = 0f32,
-                    NamedKey::F3 => {}
-                    NamedKey::Other => {}
+                    NamedKey::F2 | NamedKey::F3 | NamedKey::Other => {}
                 },
             },
             Key::Other => {}

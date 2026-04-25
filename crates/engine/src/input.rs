@@ -16,6 +16,7 @@ pub enum MouseButton {
 pub enum NamedKey {
     Space,
     Shift,
+    F2,
     F3,
     Other,
 }
