@@ -2,6 +2,7 @@ use crate::primitives::{GPUMeshBuffers, Vertex};
 use crate::renderer::VulkanRenderer;
 use nalgebra_glm as glm;
 use std::path::Path;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct GeoSurface {
@@ -59,7 +60,7 @@ fn collect_mesh_nodes<'a>(
 pub fn load_gltf_meshes<P: AsRef<Path>>(
     renderer: &VulkanRenderer,
     path: P,
-) -> Option<Vec<MeshAsset>> {
+) -> Option<Vec<Arc<MeshAsset>>> {
     log::debug!("Loading glTF mesh: {}", path.as_ref().display());
 
     let (document, buffers, _images) = gltf::import(&path)
@@ -180,6 +181,6 @@ pub fn load_gltf_meshes<P: AsRef<Path>>(
     if meshes.is_empty() {
         None
     } else {
-        Some(meshes)
+        Some(meshes.into_iter().map(Arc::new).collect())
     }
 }
