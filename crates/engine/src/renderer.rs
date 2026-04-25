@@ -6,23 +6,20 @@ use crate::descriptor::{
     DescriptorSetLayout, DescriptorWriter, GrowableAllocator, LayoutBuilder, PoolSizeRatio,
 };
 use crate::frame::FrameData;
+use crate::gltf_scene::Gltf;
 use crate::input::{ElementState, Key, MouseButton};
-use crate::material::{
-    GltfMetallicRoughness, MaterialConstants, MaterialInstance, MaterialPass, MaterialResources,
-};
-use crate::meshes::load_gltf_meshes;
+use crate::material::GltfMetallicRoughness;
 use crate::pipeline::{ComputeEffect, ComputePushConstants, Pipeline, PipelineLayout};
 use crate::primitives::{GPUMeshBuffers, GPUSceneData, Vertex};
 use crate::resources::{
     AllocatedBuffer, AllocatedImage, ImageCreateInfo, Sampler, upload_mesh_buffers,
 };
-use crate::scene::{MeshNode, MeshSurface, Node, Renderable};
+use crate::scene::Renderable;
 use crate::swapchain::Swapchain;
 use crate::sync::{Fence, Semaphore};
 use crate::ui::UiContext;
 use ash::{Device, vk};
 use itertools::Itertools;
-use nalgebra_glm as glm;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::mem::ManuallyDrop;
 use std::path::Path;
@@ -61,10 +58,7 @@ pub(crate) struct RendererResources {
     pub(crate) grey_image: Arc<AllocatedImage>,
     pub(crate) black_image: Arc<AllocatedImage>,
     pub(crate) checkerboard_image: Arc<AllocatedImage>,
-    pub(crate) material_descriptor_allocator: descriptor::GrowableAllocator,
     pub(crate) metal_rough_material: GltfMetallicRoughness,
-    pub(crate) default_material: Arc<MaterialInstance>,
-    pub(crate) default_material_buffer: AllocatedBuffer,
 }
 
 pub(crate) struct VulkanRenderer {
@@ -119,21 +113,6 @@ impl VulkanRenderer {
             draw_image.format,
             depth_image.format,
             &scene_data_layout.layout,
-        );
-
-        let mut material_descriptor_allocator = descriptor::GrowableAllocator::init(
-            &context.device,
-            10,
-            &[
-                PoolSizeRatio {
-                    descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
-                    ratio: 1.0,
-                },
-                PoolSizeRatio {
-                    descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                    ratio: 2.0,
-                },
-            ],
         );
 
         let gradient_shader_module =
@@ -258,39 +237,6 @@ impl VulkanRenderer {
         let default_sampler_linear = Sampler::new(linear_handle, context.device.clone());
         let main_camera = Camera::new();
 
-        let default_material_buffer = AllocatedBuffer::create(
-            &gpu_alloc,
-            std::mem::size_of::<MaterialConstants>() as u64,
-            vk::BufferUsageFlags::UNIFORM_BUFFER,
-            vk_mem::MemoryUsage::Auto,
-            Some(
-                vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE
-                    | vk_mem::AllocationCreateFlags::MAPPED,
-            ),
-        );
-        let constants = MaterialConstants::default();
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                (&constants as *const MaterialConstants).cast::<u8>(),
-                default_material_buffer.info.mapped_data.cast::<u8>(),
-                std::mem::size_of::<MaterialConstants>(),
-            )
-        };
-        let default_material_resources = MaterialResources {
-            color_image: Arc::clone(&white_image),
-            color_sampler: linear_handle,
-            metal_rough_image: Arc::clone(&grey_image),
-            metal_rough_sampler: linear_handle,
-            data_buffer: &default_material_buffer,
-            data_buffer_offset: 0,
-        };
-        let default_material = Arc::new(metal_rough_material.write_material(
-            &context.device,
-            MaterialPass::MainColor,
-            &default_material_resources,
-            &mut material_descriptor_allocator,
-        ));
-
         let mut renderer = Self {
             resources: ManuallyDrop::new(RendererResources {
                 frame_number: 0,
@@ -323,31 +269,12 @@ impl VulkanRenderer {
                 grey_image,
                 black_image,
                 checkerboard_image,
-                material_descriptor_allocator,
                 metal_rough_material,
-                default_material,
-                default_material_buffer,
             }),
             context: ManuallyDrop::new(context),
         };
-        if let Some(mesh_assets) = load_gltf_meshes(&renderer, "assets/models/basicmesh.glb") {
-            for mesh in mesh_assets {
-                let default_mat = Arc::clone(&renderer.resources.default_material);
-                let surfaces = mesh
-                    .surfaces
-                    .iter()
-                    .map(|geo| MeshSurface {
-                        geo: *geo,
-                        material: Arc::clone(&default_mat),
-                    })
-                    .collect();
-                let node = MeshNode {
-                    node: Node::new(glm::Mat4::identity()),
-                    mesh,
-                    surfaces,
-                };
-                renderer.resources.scene_nodes.push(Box::new(node));
-            }
+        if let Some(gltf_scene) = Gltf::load(&renderer, "assets/models/basicmesh.glb") {
+            renderer.resources.scene_nodes.push(Box::new(gltf_scene));
         }
 
         renderer
@@ -652,9 +579,6 @@ impl Drop for VulkanRenderer {
         log::trace!("Start: Dropping renderer");
         unsafe {
             self.context.device.device_wait_idle().unwrap();
-            self.resources
-                .material_descriptor_allocator
-                .destroy_pools(&self.context.device);
             ManuallyDrop::drop(&mut self.resources);
             ManuallyDrop::drop(&mut self.context); // device + instance destroyed last
         }

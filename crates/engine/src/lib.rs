@@ -13,6 +13,7 @@ mod command_buffer;
 mod context;
 mod debug;
 mod descriptor;
+mod gltf_scene;
 pub mod input;
 mod material;
 mod meshes;
