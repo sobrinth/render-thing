@@ -25,14 +25,28 @@ fn main() {
     event_loop.run_app(&mut app).unwrap();
 }
 
-#[derive(Default)]
 struct Application {
     window: Option<Window>,
     engine: Option<Engine>,
     ui: Option<egui_winit::State>,
     camera: Option<Camera>,
     mouse_pos: (i32, i32),
-    scene: Option<engine::GltfScene>,
+    scene: Option<scene::SceneGraph>,
+    scene_panel: scene::ScenePanel,
+}
+
+impl Default for Application {
+    fn default() -> Self {
+        Self {
+            window: None,
+            engine: None,
+            ui: None,
+            camera: None,
+            mouse_pos: (0, 0),
+            scene: None,
+            scene_panel: scene::ScenePanel::new(),
+        }
+    }
 }
 
 impl ApplicationHandler for Application {
@@ -64,7 +78,7 @@ impl ApplicationHandler for Application {
             None,
         );
 
-        self.scene = engine.load_gltf("assets/models/downloaded/abbey.glb");
+        self.scene = scene::load_gltf(&mut engine, "assets/models/downloaded/abbey.glb");
         self.engine = Some(engine);
         self.ui = Some(ui);
         self.window = Some(window);
@@ -152,12 +166,18 @@ impl ApplicationHandler for Application {
                     proj_matrix: proj,
                     position: camera.position,
                 };
-                let draws: &[engine::DrawCall] = self
+                let draws: Vec<engine::DrawCall> = self
                     .scene
                     .as_ref()
-                    .map(|s| s.draws.as_slice())
-                    .unwrap_or(&[]);
-                let platform_output = engine.draw(camera_view, draws, raw_input);
+                    .map(|s| s.flatten_visible())
+                    .unwrap_or_default();
+                let scene_panel = &mut self.scene_panel;
+                let scene_opt = &mut self.scene;
+                let platform_output = engine.draw(camera_view, &draws, raw_input, |ctx| {
+                    if let Some(scene) = scene_opt {
+                        scene_panel.show(ctx, scene);
+                    }
+                });
                 ui.handle_platform_output(window, platform_output);
                 window.request_redraw();
             }

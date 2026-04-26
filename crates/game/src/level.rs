@@ -1,48 +1,43 @@
 use crate::physics::Aabb;
-use engine::{DrawCall, GltfScene, MaterialHandle, MeshHandle};
+use engine::{MaterialHandle, MeshHandle};
 use nalgebra_glm as glm;
+use scene::SceneGraph;
+
+pub use scene::NodeId;
 
 pub struct Level {
-    pub draws: Vec<DrawCall>,
+    pub scene: SceneGraph,
     pub collision_boxes: Vec<Aabb>,
 }
 
 impl Level {
-    pub fn new(
-        gltf_scene: Option<GltfScene>,
-        gltf_collision: Vec<Aabb>,
-        proc_draws: Vec<DrawCall>,
-        proc_collision: Vec<Aabb>,
-    ) -> Self {
-        let gltf_draws = gltf_scene.map(|s| s.draws).unwrap_or_default();
-        let collision_boxes = gltf_collision.into_iter().chain(proc_collision).collect();
-        let draws = gltf_draws.into_iter().chain(proc_draws).collect();
+    pub fn new(scene: SceneGraph, collision_boxes: Vec<Aabb>) -> Self {
         Self {
-            draws,
+            scene,
             collision_boxes,
         }
     }
 
-    pub fn all_draws(&self) -> &[DrawCall] {
-        &self.draws
+    pub fn all_draws(&self) -> Vec<engine::DrawCall> {
+        self.scene.flatten_visible()
     }
 }
 
-/// Scales a unit cube to cover [min, max]. Returns the draw call and matching AABB.
 pub fn build_box(
+    scene: &mut SceneGraph,
+    parent: NodeId,
+    name: &str,
     box_mesh: MeshHandle,
     material: MaterialHandle,
     min: glm::Vec3,
     max: glm::Vec3,
-) -> (DrawCall, Aabb) {
+) -> (NodeId, Aabb) {
     let center = (min + max) * 0.5;
     let scale = max - min;
     let transform = glm::scale(&glm::translate(&glm::Mat4::identity(), &center), &scale);
-    let draw = DrawCall {
-        mesh: box_mesh,
-        material,
-        transform,
-    };
+    let node_id = scene.add_child(parent, name, transform);
+    scene.node_mut(node_id).mesh = Some(box_mesh);
+    scene.node_mut(node_id).material = Some(material);
     let aabb = Aabb { min, max };
-    (draw, aabb)
+    (node_id, aabb)
 }
