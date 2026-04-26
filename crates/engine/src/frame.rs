@@ -672,9 +672,13 @@ impl VulkanRenderer {
         stats.transparent_count = transparent.len() as u32;
 
         last_pipeline = vk::Pipeline::null();
+        last_material = std::ptr::null();
+        last_index_buffer = vk::Buffer::null();
         for obj in transparent {
             let pipeline = obj.material.pipeline.pipeline;
             let layout = obj.material.pipeline.layout;
+            let mat_ptr = Arc::as_ptr(&obj.material);
+
             if pipeline != last_pipeline {
                 unsafe {
                     self.context.device.cmd_bind_pipeline(
@@ -682,24 +686,46 @@ impl VulkanRenderer {
                         vk::PipelineBindPoint::GRAPHICS,
                         pipeline,
                     );
+                    self.context.device.cmd_set_viewport(cmd, 0, &[viewport]);
+                    self.context.device.cmd_set_scissor(
+                        cmd,
+                        0,
+                        &[vk::Rect2D {
+                            offset: vk::Offset2D { x: 0, y: 0 },
+                            extent,
+                        }],
+                    );
                 }
                 last_pipeline = pipeline;
             }
+
+            if mat_ptr != last_material {
+                unsafe {
+                    self.context.device.cmd_bind_descriptor_sets(
+                        cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        layout,
+                        0,
+                        &[scene_set, obj.material.material_set],
+                        &[],
+                    );
+                }
+                last_material = mat_ptr;
+            }
+
+            if obj.index_buffer != last_index_buffer {
+                unsafe {
+                    self.context.device.cmd_bind_index_buffer(
+                        cmd,
+                        obj.index_buffer,
+                        0,
+                        vk::IndexType::UINT32,
+                    );
+                }
+                last_index_buffer = obj.index_buffer;
+            }
+
             unsafe {
-                self.context.device.cmd_bind_descriptor_sets(
-                    cmd,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    layout,
-                    0,
-                    &[scene_set, obj.material.material_set],
-                    &[],
-                );
-                self.context.device.cmd_bind_index_buffer(
-                    cmd,
-                    obj.index_buffer,
-                    0,
-                    vk::IndexType::UINT32,
-                );
                 let push = GPUDrawPushConstants {
                     world_matrix: obj.transform.data.0,
                     vertex_buffer: obj.vertex_buffer_address,
