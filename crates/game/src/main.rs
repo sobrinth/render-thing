@@ -51,12 +51,6 @@ impl ApplicationHandler for GameApp {
             )
             .unwrap();
 
-        // Capture cursor for first-person look
-        let _ = window
-            .set_cursor_grab(CursorGrabMode::Locked)
-            .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
-        window.set_cursor_visible(false);
-
         let window_size = (window.inner_size().width, window.inner_size().height);
         let mut engine = Engine::initialize(&window, window_size);
 
@@ -77,13 +71,14 @@ impl ApplicationHandler for GameApp {
         self.player = Some(Player::new());
         self.level = Some(level);
         self.last_frame = Some(Instant::now());
-        self.cursor_captured = true;
+        self.cursor_captured = false;
     }
 
     fn device_event(&mut self, _: &ActiveEventLoop, _: DeviceId, event: DeviceEvent) {
         if let DeviceEvent::MouseMotion { delta } = event
-            && self.cursor_captured &&
-            let Some(player) = &mut self.player {
+            && self.cursor_captured
+            && let Some(player) = &mut self.player
+        {
             player.yaw += delta.0 as f32 * LOOK_SENSITIVITY;
             player.pitch -= delta.1 as f32 * LOOK_SENSITIVITY;
             player.pitch = player.pitch.clamp(-89f32.to_radians(), 89f32.to_radians());
@@ -152,8 +147,7 @@ impl ApplicationHandler for GameApp {
                 button: winit::event::MouseButton::Left,
                 state: winit::event::ElementState::Pressed,
                 ..
-            } if !self.cursor_captured => {
-                // Recapture cursor when clicking the window after Escape
+            } if !self.cursor_captured && !engine.egui_context().wants_pointer_input() => {
                 let _ = window
                     .set_cursor_grab(CursorGrabMode::Locked)
                     .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
@@ -406,11 +400,7 @@ fn build_level(engine: &mut Engine) -> Level {
     ];
     let box_mesh = engine.upload_mesh(&cube_indices, &cube_vertices);
 
-    let white = engine.white_texture();
-    // TODO: This is not really working correctly yet
-    let material = engine.create_material(
-        white,
-        white,
+    let material = engine.create_material_colored(
         MaterialConstants {
             color_factors: [1.0, 1.0, 0.0, 1.0],
             ..Default::default()
