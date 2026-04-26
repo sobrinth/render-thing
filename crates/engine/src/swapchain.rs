@@ -211,11 +211,11 @@ impl SwapchainSupportDetails {
     fn choose_swapchain_present_mode(
         available_present_modes: &[vk::PresentModeKHR],
     ) -> vk::PresentModeKHR {
-        // FIFO is guaranteed by the spec and acts as vsync, removing the need for a frame-sleep.
-        if available_present_modes.contains(&vk::PresentModeKHR::FIFO) {
-            vk::PresentModeKHR::FIFO // TODO: switch back to MAILBOX once a proper frame-rate limiter is in place
+        // MAILBOX gives lower latency than FIFO; FIFO is the guaranteed fallback.
+        if available_present_modes.contains(&vk::PresentModeKHR::MAILBOX) {
+            vk::PresentModeKHR::MAILBOX
         } else {
-            vk::PresentModeKHR::IMMEDIATE
+            vk::PresentModeKHR::FIFO
         }
     }
 
