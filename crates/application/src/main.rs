@@ -6,7 +6,7 @@ use winit::application::ApplicationHandler;
 mod camera;
 use camera::Camera;
 use winit::dpi::PhysicalSize;
-use winit::event::{MouseScrollDelta, StartCause, WindowEvent};
+use winit::event::{MouseScrollDelta, WindowEvent};
 use winit::event_loop::ControlFlow::Poll;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
@@ -36,8 +36,6 @@ struct Application {
 }
 
 impl ApplicationHandler for Application {
-    fn new_events(&mut self, _: &ActiveEventLoop, _: StartCause) {}
-
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window = event_loop
             .create_window(
