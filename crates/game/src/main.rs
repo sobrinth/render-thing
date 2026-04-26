@@ -16,8 +16,8 @@ use winit::event::{DeviceEvent, DeviceId, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{CursorGrabMode, Window, WindowId};
 
-const WIDTH: u32 = 1280;
-const HEIGHT: u32 = 720;
+const WIDTH: u32 = 1920;
+const HEIGHT: u32 = 1080;
 const LOOK_SENSITIVITY: f32 = 0.003;
 const PHYSICS_DT: f32 = 1.0 / 60.0;
 const TARGET_FRAME_TIME: std::time::Duration = std::time::Duration::from_micros(16_000); // ~60 fps
@@ -455,19 +455,28 @@ fn build_level(engine: &mut Engine) -> Level {
     let mut scene = SceneGraph::new();
     let mut collision_boxes = Vec::new();
 
-    let proc_root = scene.add_root("procedural", glm::Mat4::identity());
+    let floor_root = scene.add_root("floor", glm::Mat4::identity());
+
+    let (_, floor_aabb) = build_box(
+        &mut scene,
+        floor_root,
+        "floor-mesh",
+        box_mesh,
+        yellow_material,
+        glm::vec3(-50.0, -0.5, -50.0),
+        glm::vec3(50.0, 0.0, 50.0),
+    );
+    collision_boxes.push(floor_aabb);
+
+    let proc_root = scene.add_child(floor_root, "procedural", glm::Mat4::identity());
 
     {
-        let mut add_box = |name: &str, min: glm::Vec3, max: glm::Vec3, material: engine::MaterialHandle| {
-            let (_, aabb) = build_box(&mut scene, proc_root, name, box_mesh, material, min, max);
-            collision_boxes.push(aabb);
-        };
-        add_box(
-            "floor",
-            glm::vec3(-50.0, -0.5, -50.0),
-            glm::vec3(50.0, 0.0, 50.0),
-            yellow_material,
-        );
+        let mut add_box =
+            |name: &str, min: glm::Vec3, max: glm::Vec3, material: engine::MaterialHandle| {
+                let (_, aabb) =
+                    build_box(&mut scene, proc_root, name, box_mesh, material, min, max);
+                collision_boxes.push(aabb);
+            };
         add_box(
             "platform-1",
             glm::vec3(-4.0, 1.0, -15.0),
@@ -494,7 +503,7 @@ fn build_level(engine: &mut Engine) -> Level {
         &glm::vec3(0.0, 1.0, 0.0),
     );
     if let Some(gltf) = scene::load_gltf(engine, "assets/models/downloaded/sponza/Sponza.gltf") {
-        let sponza_root = scene.add_root("sponza", world);
+        let sponza_root = scene.add_child(floor_root, "sponza", world);
         scene.adopt(sponza_root, gltf);
     }
 
