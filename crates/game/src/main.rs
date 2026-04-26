@@ -3,10 +3,11 @@ mod physics;
 mod player;
 
 use engine::input::{self as einput, ElementState};
-use engine::{CameraView, Engine, MaterialConstants, MaterialHandle, MaterialPass};
+use engine::{CameraView, Engine, MaterialConstants, MaterialPass};
 use level::{Level, build_box};
 use nalgebra_glm as glm;
 use player::Player;
+use scene::SceneGraph;
 use std::collections::HashSet;
 use std::time::Instant;
 use winit::application::ApplicationHandler;
@@ -29,7 +30,6 @@ fn main() {
     event_loop.run_app(&mut app).unwrap();
 }
 
-#[derive(Default)]
 struct GameApp {
     window: Option<Window>,
     engine: Option<Engine>,
@@ -40,6 +40,24 @@ struct GameApp {
     last_frame: Option<Instant>,
     accumulator: f32,
     cursor_captured: bool,
+    scene_panel: scene::ScenePanel,
+}
+
+impl Default for GameApp {
+    fn default() -> Self {
+        Self {
+            window: None,
+            engine: None,
+            ui: None,
+            player: None,
+            level: None,
+            held_keys: HashSet::new(),
+            last_frame: None,
+            accumulator: 0.0,
+            cursor_captured: false,
+            scene_panel: scene::ScenePanel::new(),
+        }
+    }
 }
 
 impl ApplicationHandler for GameApp {
@@ -180,7 +198,6 @@ impl GameApp {
         let ui = self.ui.as_mut().unwrap();
         let engine = self.engine.as_mut().unwrap();
         let player = self.player.as_mut().unwrap();
-        let level = self.level.as_ref().unwrap();
 
         // Delta time — cap at 0.1 s to avoid spiral of death on long frames
         let now = Instant::now();
@@ -195,7 +212,9 @@ impl GameApp {
         self.accumulator += frame_dt;
         while self.accumulator >= PHYSICS_DT {
             player.update(PHYSICS_DT, &self.held_keys);
-            player.resolve_collision(&level.collision_boxes);
+            if let Some(level) = &self.level {
+                player.resolve_collision(&level.collision_boxes);
+            }
             self.accumulator -= PHYSICS_DT;
         }
 
@@ -212,7 +231,18 @@ impl GameApp {
         // Render
         let raw_input = ui.take_egui_input(window);
         window.pre_present_notify();
-        let platform_output = engine.draw(camera, level.all_draws(), raw_input);
+        let draws = self
+            .level
+            .as_ref()
+            .map(|l| l.all_draws())
+            .unwrap_or_default();
+        let scene_panel = &mut self.scene_panel;
+        let level = self.level.as_mut();
+        let platform_output = engine.draw(camera, &draws, raw_input, |ctx| {
+            if let Some(l) = level {
+                scene_panel.show(ctx, &mut l.scene);
+            }
+        });
         ui.handle_platform_output(window, platform_output);
 
         let elapsed = now.elapsed();
@@ -225,7 +255,6 @@ impl GameApp {
 }
 
 fn build_level(engine: &mut Engine) -> Level {
-    // Unit cube: 24 vertices (4 unique per face), 12 triangles, correct per-face normals
     let cube_vertices = vec![
         // -Z face (normal [0, 0, -1])
         engine::Vertex {
@@ -403,12 +432,8 @@ fn build_level(engine: &mut Engine) -> Level {
         },
     ];
     let cube_indices: Vec<u32> = vec![
-        0, 1, 2, 0, 2, 3, // -Z
-        4, 5, 6, 4, 6, 7, // +Z
-        8, 9, 10, 8, 10, 11, // -X
-        12, 13, 14, 12, 14, 15, // +X
-        16, 17, 18, 16, 18, 19, // -Y
-        20, 21, 22, 20, 22, 23, // +Y
+        0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7, 8, 9, 10, 8, 10, 11, 12, 13, 14, 12, 14, 15, 16, 17,
+        18, 16, 18, 19, 20, 21, 22, 20, 22, 23,
     ];
     let box_mesh = engine.upload_mesh(&cube_indices, &cube_vertices);
 
@@ -420,7 +445,6 @@ fn build_level(engine: &mut Engine) -> Level {
         },
         MaterialPass::MainColor,
     );
-
     let checkerboard_material = engine.create_material(
         engine.checkerboard_texture(),
         engine.metal_rough_texture(),
@@ -428,53 +452,51 @@ fn build_level(engine: &mut Engine) -> Level {
         MaterialPass::MainColor,
     );
 
-    let mut proc_draws = Vec::new();
-    let mut proc_collision = Vec::new();
+    let mut scene = SceneGraph::new();
+    let mut collision_boxes = Vec::new();
 
-    let mut add_box = |min: glm::Vec3, max: glm::Vec3, material: MaterialHandle| {
-        let (draw, aabb) = build_box(box_mesh, material, min, max);
-        proc_draws.push(draw);
-        proc_collision.push(aabb);
-    };
+    let proc_root = scene.add_root("procedural", glm::Mat4::identity());
 
-    // Ground floor
-    add_box(
-        glm::vec3(-50.0, -0.5, -50.0),
-        glm::vec3(50.0, 0.0, 50.0),
-        yellow_material,
+    {
+        let mut add_box = |name: &str, min: glm::Vec3, max: glm::Vec3, material: engine::MaterialHandle| {
+            let (_, aabb) = build_box(&mut scene, proc_root, name, box_mesh, material, min, max);
+            collision_boxes.push(aabb);
+        };
+        add_box(
+            "floor",
+            glm::vec3(-50.0, -0.5, -50.0),
+            glm::vec3(50.0, 0.0, 50.0),
+            yellow_material,
+        );
+        add_box(
+            "platform-1",
+            glm::vec3(-4.0, 1.0, -15.0),
+            glm::vec3(4.0, 1.5, -10.0),
+            checkerboard_material,
+        );
+        add_box(
+            "platform-2",
+            glm::vec3(-3.0, 2.0, -21.0),
+            glm::vec3(3.0, 2.5, -16.0),
+            yellow_material,
+        );
+        add_box(
+            "platform-3",
+            glm::vec3(-2.0, 3.5, -27.0),
+            glm::vec3(2.0, 4.0, -22.0),
+            checkerboard_material,
+        );
+    }
+
+    let world = glm::rotate(
+        &glm::translate(&glm::Mat4::identity(), &glm::vec3(-25.0, 0.5, 0.0)),
+        90.0f32.to_radians(),
+        &glm::vec3(0.0, 1.0, 0.0),
     );
-    // Platform 1
-    add_box(
-        glm::vec3(-4.0, 1.0, -15.0),
-        glm::vec3(4.0, 1.5, -10.0),
-        checkerboard_material,
-    );
-    // Platform 2
-    add_box(
-        glm::vec3(-3.0, 2.0, -21.0),
-        glm::vec3(3.0, 2.5, -16.0),
-        yellow_material,
-    );
-    // Platform 3
-    add_box(
-        glm::vec3(-2.0, 3.5, -27.0),
-        glm::vec3(2.0, 4.0, -22.0),
-        checkerboard_material,
-    );
+    if let Some(gltf) = scene::load_gltf(engine, "assets/models/downloaded/sponza/Sponza.gltf") {
+        let sponza_root = scene.add_root("sponza", world);
+        scene.adopt(sponza_root, gltf);
+    }
 
-    // Optional glTF scene for visual detail (visual only; collision proxies TODO)
-    let gltf_scene = engine.load_gltf("assets/models/downloaded/sponza/Sponza.gltf");
-    let gltf_collision = vec![];
-
-    let world = glm::translate(&glm::Mat4::identity(), &glm::vec3(-25.0, 0.5, 0.0));
-    let world = glm::rotate(&world, 90.0f32.to_radians(), &glm::vec3(0.0, 1.0, 0.0));
-
-    let gltf_scene = gltf_scene.map(|mut scene| {
-        for draw in &mut scene.draws {
-            draw.transform = world * draw.transform;
-        }
-        scene
-    });
-
-    Level::new(gltf_scene, gltf_collision, proc_draws, proc_collision)
+    Level::new(scene, collision_boxes)
 }

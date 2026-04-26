@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 engine.workspace = true
+scene = { workspace = true, features = ["egui"] }
 egui.workspace = true
 egui-winit.workspace = true
 winit.workspace = true
