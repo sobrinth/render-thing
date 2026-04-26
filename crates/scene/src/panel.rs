@@ -24,8 +24,8 @@ impl ScenePanel {
         }
         let max_size = ctx.content_rect().size() * 0.90;
         egui::Window::new("Scene")
-            .title_bar(false)
             .resizable([true, true])
+            .default_size([300.0, max_size.y])
             .max_size(max_size)
             .show(ctx, |ui| {
                 // Claim bottom space first so the scroll area gets what remains.
@@ -61,45 +61,29 @@ impl ScenePanel {
         let children: Vec<NodeId> = scene.children(id).to_vec();
         let is_selected = *selected == Some(id);
 
-        if children.is_empty() {
-            ui.horizontal(|ui| {
-                let mut visible = scene.node(id).visible;
-                if ui.checkbox(&mut visible, "").changed() {
-                    scene.node_mut(id).visible = visible;
-                }
-                let name = scene.node(id).name.clone();
-                if ui
-                    .add(egui::Button::selectable(is_selected, name))
-                    .clicked()
-                {
-                    *selected = Some(id);
-                }
-            });
-        } else {
-            egui::collapsing_header::CollapsingState::load_with_default_open(
-                ui.ctx(),
-                egui::Id::new(id.0),
-                true,
-            )
-            .show_header(ui, |ui| {
-                let mut visible = scene.node(id).visible;
-                if ui.checkbox(&mut visible, "").changed() {
-                    scene.node_mut(id).visible = visible;
-                }
-                let name = scene.node(id).name.clone();
-                if ui
-                    .add(egui::Button::selectable(is_selected, name))
-                    .clicked()
-                {
-                    *selected = Some(id);
-                }
-            })
-            .body(|ui| {
-                for child in children {
-                    Self::show_node(ui, scene, child, selected);
-                }
-            });
-        }
+        egui::collapsing_header::CollapsingState::load_with_default_open(
+            ui.ctx(),
+            egui::Id::new(id.0),
+            true,
+        )
+        .show_header(ui, |ui| {
+            let mut visible = scene.node(id).visible;
+            if ui.checkbox(&mut visible, "").changed() {
+                scene.node_mut(id).visible = visible;
+            }
+            let name = scene.node(id).name.clone();
+            if ui
+                .add(egui::Button::selectable(is_selected, name))
+                .clicked()
+            {
+                *selected = Some(id);
+            }
+        })
+        .body(|ui| {
+            for child in children {
+                Self::show_node(ui, scene, child, selected);
+            }
+        });
     }
 
     fn show_inspector(ui: &mut egui::Ui, scene: &SceneGraph, id: NodeId) {
