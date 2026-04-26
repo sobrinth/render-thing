@@ -18,6 +18,7 @@ pub enum NamedKey {
     Shift,
     F2,
     F3,
+    F4,
     Other,
 }
 

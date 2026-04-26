@@ -19,6 +19,7 @@ const WIDTH: u32 = 1280;
 const HEIGHT: u32 = 720;
 const LOOK_SENSITIVITY: f32 = 0.003;
 const PHYSICS_DT: f32 = 1.0 / 60.0;
+const TARGET_FRAME_TIME: std::time::Duration = std::time::Duration::from_micros(16_000); // ~60 fps
 
 fn main() {
     env_logger::init();
@@ -128,19 +129,17 @@ impl ApplicationHandler for GameApp {
                         winit::keyboard::NamedKey::Shift => einput::NamedKey::Shift,
                         winit::keyboard::NamedKey::F2 => einput::NamedKey::F2,
                         winit::keyboard::NamedKey::F3 => einput::NamedKey::F3,
+                        winit::keyboard::NamedKey::F4 => einput::NamedKey::F4,
                         _ => einput::NamedKey::Other,
                     }),
                     _ => einput::Key::Other,
                 };
-                engine.on_key_press((state, key.clone()));
-                match state {
-                    ElementState::Pressed => {
-                        self.held_keys.insert(key);
-                    }
-                    ElementState::Released => {
-                        self.held_keys.remove(&key);
-                    }
+                if state == ElementState::Pressed {
+                    self.held_keys.insert(key.clone());
+                } else {
+                    self.held_keys.remove(&key);
                 }
+                engine.on_key_press((state, key));
             }
 
             WindowEvent::MouseInput {
@@ -208,6 +207,12 @@ impl GameApp {
         window.pre_present_notify();
         let platform_output = engine.draw(camera, level.all_draws(), raw_input);
         ui.handle_platform_output(window, platform_output);
+
+        let elapsed = now.elapsed();
+        if elapsed < TARGET_FRAME_TIME {
+            std::thread::sleep(TARGET_FRAME_TIME - elapsed);
+        }
+
         window.request_redraw();
     }
 }
@@ -451,10 +456,10 @@ fn build_level(engine: &mut Engine) -> Level {
     );
 
     // Optional glTF scene for visual detail (visual only; collision proxies TODO)
-    let gltf_scene = engine.load_gltf("assets/models/downloaded/abbey.glb");
+    let gltf_scene = engine.load_gltf("assets/models/downloaded/sponza/Sponza.gltf");
     let gltf_collision = vec![];
 
-    let world = glm::translate(&glm::Mat4::identity(), &glm::vec3(-25.0, 0.0, 0.0));
+    let world = glm::translate(&glm::Mat4::identity(), &glm::vec3(-25.0, 0.5, 0.0));
     let world = glm::rotate(&world, 90.0f32.to_radians(), &glm::vec3(0.0, 1.0, 0.0));
 
     let gltf_scene = gltf_scene.map(|mut scene| {

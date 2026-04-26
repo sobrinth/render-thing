@@ -171,7 +171,7 @@ pub(crate) fn before_frame(
             0.0
         };
 
-        egui::Window::new("Debug (F3)")
+        egui::Window::new("Debug (F4)")
             .resizable(false)
             .open(state.show_stats)
             .anchor(egui::Align2::RIGHT_TOP, [-10.0, 10.0])

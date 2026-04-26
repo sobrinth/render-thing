@@ -84,6 +84,11 @@ pub(crate) struct RendererResources {
     pub(crate) default_black_texture: crate::TextureHandle,
     pub(crate) default_checkerboard_texture: crate::TextureHandle,
     pub(crate) default_metal_rough_texture: crate::TextureHandle,
+    pub(crate) gizmo_mesh: crate::MeshHandle,
+    /// [0..2] bright R/G/B for positive arm + cap, [3..5] dim R/G/B for negative stubs, [6] origin cube
+    pub(crate) gizmo_materials: [crate::MaterialHandle; 7],
+    pub(crate) show_dev_overlay: bool,
+    pub(crate) last_frame_start: Option<std::time::Instant>,
 }
 
 pub(crate) struct VulkanRenderer {
@@ -332,7 +337,7 @@ impl VulkanRenderer {
                 metal_rough_material,
                 stats: StatsHistory::default(),
                 show_stats: false,
-                show_controls: true,
+                show_controls: false,
                 mesh_registry: Vec::new(),
                 texture_registry: Vec::new(),
                 material_registry: Vec::new(),
@@ -342,6 +347,10 @@ impl VulkanRenderer {
                 default_black_texture: crate::TextureHandle(2),
                 default_checkerboard_texture: crate::TextureHandle(3),
                 default_metal_rough_texture: crate::TextureHandle(4),
+                gizmo_mesh: crate::MeshHandle(0),
+                gizmo_materials: [crate::MaterialHandle(0); 7],
+                show_dev_overlay: false,
+                last_frame_start: None,
             }),
             context: ManuallyDrop::new(context),
         };
@@ -367,7 +376,59 @@ impl VulkanRenderer {
         renderer.resources.default_checkerboard_texture = cb;
         renderer.resources.default_metal_rough_texture = mr;
 
+        // Create gizmo resources: a unit box mesh shared across three axis materials (R/G/B).
+        let (gizmo_idx, gizmo_verts) = Self::unit_cube_mesh();
+        let gizmo_mesh = renderer.upload_mesh(&gizmo_idx, &gizmo_verts);
+
+        let make_gizmo_mat = |r: &mut VulkanRenderer, color: [f32; 4]| -> crate::MaterialHandle {
+            let mut c = crate::material::MaterialConstants::default();
+            c.color_factors = color;
+            c.metal_rough_factors = [0.0, 1.0, 0.0, 0.0];
+            r.create_material_colored(c, crate::material::MaterialPass::MainColor)
+        };
+        let x_pos = make_gizmo_mat(&mut renderer, [1.00, 0.00, 0.00, 1.0]);
+        let y_pos = make_gizmo_mat(&mut renderer, [0.00, 1.00, 0.00, 1.0]);
+        let z_pos = make_gizmo_mat(&mut renderer, [0.00, 0.00, 1.00, 1.0]);
+        let x_neg = make_gizmo_mat(&mut renderer, [0.35, 0.00, 0.00, 1.0]);
+        let y_neg = make_gizmo_mat(&mut renderer, [0.00, 0.35, 0.00, 1.0]);
+        let z_neg = make_gizmo_mat(&mut renderer, [0.00, 0.00, 0.35, 1.0]);
+        let origin = make_gizmo_mat(&mut renderer, [0.2, 0.2, 0.2, 1.0]);
+        renderer.resources.gizmo_mesh = gizmo_mesh;
+        renderer.resources.gizmo_materials = [x_pos, y_pos, z_pos, x_neg, y_neg, z_neg, origin];
+
         renderer
+    }
+
+    fn unit_cube_mesh() -> (Vec<u32>, Vec<Vertex>) {
+        let positions: [[f32; 3]; 8] = [
+            [-0.5, -0.5, -0.5],
+            [0.5, -0.5, -0.5],
+            [0.5, 0.5, -0.5],
+            [-0.5, 0.5, -0.5],
+            [-0.5, -0.5, 0.5],
+            [0.5, -0.5, 0.5],
+            [0.5, 0.5, 0.5],
+            [-0.5, 0.5, 0.5],
+        ];
+        let vertices = positions
+            .iter()
+            .map(|&p| Vertex {
+                position: p,
+                uv_x: 0.0,
+                normal: [0.0, 1.0, 0.0],
+                uv_y: 0.0,
+                color: [1.0, 1.0, 1.0, 1.0],
+            })
+            .collect();
+        let indices = vec![
+            0u32, 2, 1, 0, 3, 2, // -Z
+            4, 5, 6, 4, 6, 7, // +Z
+            0, 4, 7, 0, 7, 3, // -X
+            1, 2, 6, 1, 6, 5, // +X
+            0, 1, 5, 0, 5, 4, // -Y
+            3, 7, 6, 3, 6, 2, // +Y
+        ];
+        (indices, vertices)
     }
 
     pub(crate) fn egui_context(&self) -> egui::Context {
@@ -381,6 +442,10 @@ impl VulkanRenderer {
                 return;
             }
             if matches!(key_event, (ElementState::Pressed, Key::Named(NamedKey::F3))) {
+                self.resources.show_dev_overlay = !self.resources.show_dev_overlay;
+                return;
+            }
+            if matches!(key_event, (ElementState::Pressed, Key::Named(NamedKey::F4))) {
                 self.resources.show_stats = !self.resources.show_stats;
             }
         }
@@ -631,7 +696,7 @@ impl VulkanRenderer {
 
             let scene_buffer = AllocatedBuffer::create(
                 gpu_alloc,
-                size_of::<GPUSceneData>() as u64,
+                2 * size_of::<GPUSceneData>() as u64,
                 vk::BufferUsageFlags::UNIFORM_BUFFER,
                 vk_mem::MemoryUsage::Auto,
                 Some(
