@@ -12,6 +12,14 @@ pub enum MaterialPass {
     Transparent,
 }
 
+/// Per-material constants uploaded to the GPU.
+///
+/// `color_factors`: RGBA multiplier on the colour texture. [r, g, b, a].
+///
+/// `metal_rough_factors`: scales the metallic-roughness texture channels.
+///   - x: metallic scale  (multiplies texture B; 0 = fully dielectric, 1 = fully metallic)
+///   - y: roughness scale (multiplies texture G; 0 = mirror, 1 = fully diffuse)
+///   - z, w: unused
 #[repr(C)]
 pub struct MaterialConstants {
     pub color_factors: [f32; 4],

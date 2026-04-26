@@ -3,7 +3,7 @@ mod physics;
 mod player;
 
 use engine::input::{self as einput, ElementState};
-use engine::{CameraView, Engine, MaterialConstants, MaterialPass};
+use engine::{CameraView, Engine, MaterialConstants, MaterialHandle, MaterialPass};
 use level::{Level, build_box};
 use nalgebra_glm as glm;
 use player::Player;
@@ -400,35 +400,69 @@ fn build_level(engine: &mut Engine) -> Level {
     ];
     let box_mesh = engine.upload_mesh(&cube_indices, &cube_vertices);
 
-    let material = engine.create_material_colored(
+    let yellow_material = engine.create_material_colored(
         MaterialConstants {
-            color_factors: [1.0, 1.0, 0.0, 1.0],
+            color_factors: [1.0, 0.6, 0.0, 1.0],
+            metal_rough_factors: [0.3, 1.0, 0.0, 0.0],
             ..Default::default()
         },
+        MaterialPass::MainColor,
+    );
+
+    let checkerboard_material = engine.create_material(
+        engine.checkerboard_texture(),
+        engine.metal_rough_texture(),
+        MaterialConstants::default(),
         MaterialPass::MainColor,
     );
 
     let mut proc_draws = Vec::new();
     let mut proc_collision = Vec::new();
 
-    let mut add_box = |min: glm::Vec3, max: glm::Vec3| {
+    let mut add_box = |min: glm::Vec3, max: glm::Vec3, material: MaterialHandle| {
         let (draw, aabb) = build_box(box_mesh, material, min, max);
         proc_draws.push(draw);
         proc_collision.push(aabb);
     };
 
     // Ground floor
-    add_box(glm::vec3(-50.0, -0.5, -50.0), glm::vec3(50.0, 0.0, 50.0));
+    add_box(
+        glm::vec3(-50.0, -0.5, -50.0),
+        glm::vec3(50.0, 0.0, 50.0),
+        yellow_material,
+    );
     // Platform 1
-    add_box(glm::vec3(-4.0, 1.0, -15.0), glm::vec3(4.0, 1.5, -10.0));
+    add_box(
+        glm::vec3(-4.0, 1.0, -15.0),
+        glm::vec3(4.0, 1.5, -10.0),
+        checkerboard_material,
+    );
     // Platform 2
-    add_box(glm::vec3(-3.0, 2.0, -21.0), glm::vec3(3.0, 2.5, -16.0));
+    add_box(
+        glm::vec3(-3.0, 2.0, -21.0),
+        glm::vec3(3.0, 2.5, -16.0),
+        yellow_material,
+    );
     // Platform 3
-    add_box(glm::vec3(-2.0, 3.5, -27.0), glm::vec3(2.0, 4.0, -22.0));
+    add_box(
+        glm::vec3(-2.0, 3.5, -27.0),
+        glm::vec3(2.0, 4.0, -22.0),
+        checkerboard_material,
+    );
 
     // Optional glTF scene for visual detail (visual only; collision proxies TODO)
     let gltf_scene = engine.load_gltf("assets/models/downloaded/abbey.glb");
     let gltf_collision = vec![];
+
+    let world = glm::translate(&glm::Mat4::identity(), &glm::vec3(-25.0, 0.0, 0.0));
+    let world = glm::rotate(&world, 90.0f32.to_radians(), &glm::vec3(0.0, 1.0, 0.0));
+
+    let gltf_scene = gltf_scene.map(|mut scene| {
+        for draw in &mut scene.draws {
+            draw.transform = world * draw.transform;
+        }
+        scene
+    });
 
     Level::new(gltf_scene, gltf_collision, proc_draws, proc_collision)
 }

@@ -107,7 +107,7 @@ pub(crate) fn before_frame(
                 ui.horizontal(|ui| {
                     ui.label("Ambient color: ");
                     state.ambient_color.iter_mut().for_each(|v| {
-                        ui.add(egui::DragValue::new(v).range(0.0..=2.0).speed(0.005));
+                        ui.add(egui::DragValue::new(v).range(0.0..=f32::MAX).speed(0.005));
                     });
                 });
                 ui.add_space(10.0);
@@ -121,7 +121,7 @@ pub(crate) fn before_frame(
                 ui.horizontal(|ui| {
                     ui.label("Sun color: ");
                     state.sunlight_color.iter_mut().for_each(|v| {
-                        ui.add(egui::DragValue::new(v).range(0.0..=5.0).speed(0.01));
+                        ui.add(egui::DragValue::new(v).range(0.0..=f32::MAX).speed(0.01));
                     });
                 });
                 ui.add(egui::Separator::default().spacing(12.0));
@@ -130,28 +130,28 @@ pub(crate) fn before_frame(
                 ui.horizontal(|ui| {
                     ui.label("Data1: ");
                     state.effect.data.data1.iter_mut().for_each(|v| {
-                        ui.add(egui::DragValue::new(v).range(0.0..=1.0).speed(0.005));
+                        ui.add(egui::DragValue::new(v).speed(0.005));
                     })
                 });
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     ui.label("Data2: ");
                     state.effect.data.data2.iter_mut().for_each(|v| {
-                        ui.add(egui::DragValue::new(v).range(0.0..=1.0).speed(0.005));
+                        ui.add(egui::DragValue::new(v).speed(0.005));
                     })
                 });
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     ui.label("Data3: ");
                     state.effect.data.data3.iter_mut().for_each(|v| {
-                        ui.add(egui::DragValue::new(v).range(0.0..=1.0).speed(0.005));
+                        ui.add(egui::DragValue::new(v).speed(0.005));
                     })
                 });
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     ui.label("Data4: ");
                     state.effect.data.data4.iter_mut().for_each(|v| {
-                        ui.add(egui::DragValue::new(v).range(0.0..=1.0).speed(0.005));
+                        ui.add(egui::DragValue::new(v).speed(0.005));
                     })
                 });
             });

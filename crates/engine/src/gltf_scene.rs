@@ -27,7 +27,6 @@ pub(crate) fn load_gltf_scene(
     }
 
     let white = renderer.resources.default_white_texture;
-    let grey = renderer.resources.default_grey_texture;
 
     // 2. Upload materials
     let mut material_handles: Vec<crate::MaterialHandle> = Vec::new();
@@ -40,7 +39,7 @@ pub(crate) fn load_gltf_scene(
         let mr_tex = pbr
             .metallic_roughness_texture()
             .and_then(|t| texture_handles.get(t.texture().source().index()).copied())
-            .unwrap_or(grey);
+            .unwrap_or(white);
         let [r, g, b, a] = pbr.base_color_factor();
         let mut constants = crate::material::MaterialConstants::default();
         constants.color_factors = [r, g, b, a];
@@ -55,7 +54,7 @@ pub(crate) fn load_gltf_scene(
 
     let default_material = renderer.create_material(
         white,
-        grey,
+        white,
         crate::material::MaterialConstants::default(),
         crate::material::MaterialPass::MainColor,
     );
