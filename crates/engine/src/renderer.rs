@@ -100,8 +100,9 @@ impl VulkanRenderer {
     pub(crate) fn initialize(
         window: &(impl HasDisplayHandle + HasWindowHandle),
         window_size: (u32, u32),
+        config: crate::EngineConfig,
     ) -> Self {
-        let (context, graphics_queue, gpu_alloc) = VkContext::initialize(window);
+        let (context, graphics_queue, gpu_alloc) = VkContext::initialize(window, &config.app_name);
 
         let swapchain = Swapchain::create(&context, [window_size.0, window_size.1]);
         let ui = UiContext::initialize(&context.device, &gpu_alloc, swapchain.properties);
@@ -113,7 +114,7 @@ impl VulkanRenderer {
         let draw_image = AllocatedImage::create(
             &context,
             &gpu_alloc,
-            (2560, 1440),
+            config.max_render_resolution,
             vk::Format::R16G16B16A16_SFLOAT,
             vk::ImageUsageFlags::TRANSFER_SRC
                 | vk::ImageUsageFlags::TRANSFER_DST
@@ -303,7 +304,7 @@ impl VulkanRenderer {
             resources: ManuallyDrop::new(RendererResources {
                 frame_number: 0,
                 window_size,
-                render_scale: 1f32,
+                render_scale: config.initial_render_scale,
                 render_size: (0, 0),
                 resize_requested: false,
                 ui_context: ui,

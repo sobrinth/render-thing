@@ -58,6 +58,25 @@ mod ui;
 pub use material::{MaterialConstants, MaterialPass};
 pub use primitives::Vertex;
 
+pub struct EngineConfig {
+    /// Name passed to VkApplicationInfo; shown in GPU debugging tools (RenderDoc, Nsight).
+    pub app_name: String,
+    /// Maximum internal render resolution. Render scale is applied on top of this.
+    pub max_render_resolution: (u32, u32),
+    /// Starting render scale in [0.1, 1.0].
+    pub initial_render_scale: f32,
+}
+
+impl Default for EngineConfig {
+    fn default() -> Self {
+        Self {
+            app_name: "Vulkan Application".to_string(),
+            max_render_resolution: (2560, 1440),
+            initial_render_scale: 1.0,
+        }
+    }
+}
+
 pub struct Engine {
     renderer: VulkanRenderer,
 }
@@ -66,8 +85,9 @@ impl Engine {
     pub fn initialize(
         window: &(impl HasDisplayHandle + HasWindowHandle),
         window_size: (u32, u32),
+        config: EngineConfig,
     ) -> Self {
-        let renderer = VulkanRenderer::initialize(window, window_size);
+        let renderer = VulkanRenderer::initialize(window, window_size, config);
         Self { renderer }
     }
 

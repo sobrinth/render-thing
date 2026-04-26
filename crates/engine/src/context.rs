@@ -25,10 +25,11 @@ pub(crate) struct VkContext {
 impl VkContext {
     pub(crate) fn initialize(
         window: &(impl HasDisplayHandle + HasWindowHandle),
+        app_name: &str,
     ) -> (Self, QueueData, Arc<vk_mem::Allocator>) {
         log::trace!("Creating vulkan context");
         let vulkan_fn = unsafe { Entry::load().expect("Failed to create ash entrypoint") };
-        let instance = Self::create_instance(&vulkan_fn, window).unwrap();
+        let instance = Self::create_instance(&vulkan_fn, window, app_name).unwrap();
 
         let debug_report_callback = setup_debug_messenger(&vulkan_fn, &instance);
 
@@ -71,11 +72,12 @@ impl VkContext {
     fn create_instance(
         vulkan_fn: &Entry,
         window: &impl HasDisplayHandle,
+        app_name: &str,
     ) -> Result<Instance, Box<dyn Error>> {
-        let app_name = c"Vulkan Application";
+        let app_name = std::ffi::CString::new(app_name).unwrap_or_default();
         let engine_name = c"No Engine";
         let app_info = vk::ApplicationInfo::default()
-            .application_name(app_name)
+            .application_name(&app_name)
             .application_version(vk::make_api_version(0, 1, 0, 0))
             .engine_name(engine_name)
             .engine_version(vk::make_api_version(0, 1, 0, 0))
