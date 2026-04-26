@@ -1,0 +1,18 @@
+[package]
+name = "scene"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[features]
+egui = ["dep:egui"]
+
+[dependencies]
+engine.workspace = true
+gltf.workspace = true
+nalgebra-glm.workspace = true
+
+[dependencies.egui]
+workspace = true
+optional = true

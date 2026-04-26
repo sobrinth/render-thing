@@ -73,6 +73,7 @@ impl VulkanRenderer {
         camera: crate::CameraView,
         draws: &[crate::DrawCall],
         raw_input: egui::RawInput,
+        build_ui: impl FnOnce(&egui::Context),
     ) -> egui::PlatformOutput {
         let frame_start = Instant::now();
         let frametime_ms = self
@@ -168,6 +169,7 @@ impl VulkanRenderer {
                 sunlight_color: &mut res.scene_data.sunlight_color,
             },
             frame_index,
+            build_ui,
         );
 
         let t0 = Instant::now();

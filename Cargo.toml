@@ -17,6 +17,8 @@ authors = ["Dominik Baumann <hey@sobrinth.com>"]
 #
 
 engine = { path = "crates/engine" }
+scene = { path = "crates/scene" }
+
 #
 # External crates
 #

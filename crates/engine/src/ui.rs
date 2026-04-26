@@ -67,6 +67,7 @@ pub(crate) fn before_frame(
     frame: &FrameData,
     state: UiState<'_>,
     frame_index: usize,
+    build_ui: impl FnOnce(&Context),
 ) -> (Vec<ClippedPrimitive>, egui::PlatformOutput) {
     let renderer = ui
         .renderer
@@ -234,6 +235,8 @@ pub(crate) fn before_frame(
                     });
             });
     }
+
+    build_ui(&ctx);
 
     let egui::FullOutput {
         platform_output,
