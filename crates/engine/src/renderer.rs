@@ -34,7 +34,7 @@ pub(crate) struct MeshEntry {
 
 pub(crate) struct TextureEntry {
     pub image: std::sync::Arc<crate::resources::AllocatedImage>,
-    pub sampler: crate::resources::Sampler,
+    pub sampler: std::sync::Arc<crate::resources::Sampler>,
 }
 
 pub(crate) struct MaterialEntry {
@@ -64,12 +64,13 @@ pub(crate) struct RendererResources {
     pub(crate) active_background_effect: usize,
     pub(crate) scene_data: GPUSceneData,
     pub(crate) scene_data_layout: DescriptorSetLayout,
-    pub(crate) default_sampler_nearest: Sampler,
-    pub(crate) default_sampler_linear: Sampler,
+    pub(crate) default_sampler_nearest: Arc<Sampler>,
+    pub(crate) default_sampler_linear: Arc<Sampler>,
     pub(crate) white_image: Arc<AllocatedImage>,
     pub(crate) grey_image: Arc<AllocatedImage>,
     pub(crate) black_image: Arc<AllocatedImage>,
     pub(crate) checkerboard_image: Arc<AllocatedImage>,
+    pub(crate) metal_rough_image: Arc<AllocatedImage>,
     pub(crate) metal_rough_material: GltfMetallicRoughness,
     pub(crate) stats: StatsHistory,
     pub(crate) show_stats: bool,
@@ -82,6 +83,7 @@ pub(crate) struct RendererResources {
     pub(crate) default_grey_texture: crate::TextureHandle,
     pub(crate) default_black_texture: crate::TextureHandle,
     pub(crate) default_checkerboard_texture: crate::TextureHandle,
+    pub(crate) default_metal_rough_texture: crate::TextureHandle,
 }
 
 pub(crate) struct VulkanRenderer {
@@ -173,6 +175,8 @@ impl VulkanRenderer {
         const GREY: u32 = u32::from_le_bytes([128, 128, 128, 255]);
         const MAGENTA: u32 = u32::from_le_bytes([255, 0, 255, 255]);
         const BLACK: u32 = u32::from_le_bytes([0, 0, 0, 0]);
+        // glTF metallic-roughness: R=unused, G=roughness(1.0), B=metallic(0.0)
+        const METAL_ROUGH_DEFAULT: u32 = u32::from_le_bytes([0, 255, 0, 255]);
 
         let white_image = Arc::new(AllocatedImage::create_from_data(
             &gpu_alloc,
@@ -245,19 +249,35 @@ impl VulkanRenderer {
             },
         ));
 
+        let metal_rough_image = Arc::new(AllocatedImage::create_from_data(
+            &gpu_alloc,
+            &context,
+            &immediate_submit,
+            &graphics_queue,
+            &[METAL_ROUGH_DEFAULT],
+            ImageCreateInfo {
+                resolution: (1, 1),
+                format: vk::Format::R8G8B8A8_UNORM,
+                usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+                aspect_flags: vk::ImageAspectFlags::COLOR,
+                mip_mapped: false,
+            },
+        ));
+
         let sampler = vk::SamplerCreateInfo::default()
             .mag_filter(vk::Filter::NEAREST)
             .min_filter(vk::Filter::NEAREST);
 
         let nearest_handle = unsafe { context.device.create_sampler(&sampler, None) }.unwrap();
-        let default_sampler_nearest = Sampler::new(nearest_handle, context.device.clone());
+        let default_sampler_nearest =
+            Arc::new(Sampler::new(nearest_handle, context.device.clone()));
 
         let sampler = vk::SamplerCreateInfo::default()
             .mag_filter(vk::Filter::LINEAR)
             .min_filter(vk::Filter::LINEAR);
 
         let linear_handle = unsafe { context.device.create_sampler(&sampler, None) }.unwrap();
-        let default_sampler_linear = Sampler::new(linear_handle, context.device.clone());
+        let default_sampler_linear = Arc::new(Sampler::new(linear_handle, context.device.clone()));
 
         let material_descriptor_allocator = descriptor::GrowableAllocator::init(
             &context.device,
@@ -308,6 +328,7 @@ impl VulkanRenderer {
                 grey_image,
                 black_image,
                 checkerboard_image,
+                metal_rough_image,
                 metal_rough_material,
                 stats: StatsHistory::default(),
                 show_stats: false,
@@ -320,39 +341,31 @@ impl VulkanRenderer {
                 default_grey_texture: crate::TextureHandle(1),
                 default_black_texture: crate::TextureHandle(2),
                 default_checkerboard_texture: crate::TextureHandle(3),
+                default_metal_rough_texture: crate::TextureHandle(4),
             }),
             context: ManuallyDrop::new(context),
         };
 
-        // Register default textures into the registry so handles 0-3 are valid.
-        // Clone arcs and device before taking &mut renderer.
+        // Register default textures into the registry so handles 0-4 are valid.
+        // Reuse the shared default samplers — no need for per-texture sampler objects.
         let white_img = Arc::clone(&renderer.resources.white_image);
         let grey_img = Arc::clone(&renderer.resources.grey_image);
         let black_img = Arc::clone(&renderer.resources.black_image);
         let cb_img = Arc::clone(&renderer.resources.checkerboard_image);
-        let device = renderer.context.device.clone();
+        let mr_img = Arc::clone(&renderer.resources.metal_rough_image);
+        let linear = Arc::clone(&renderer.resources.default_sampler_linear);
+        let nearest = Arc::clone(&renderer.resources.default_sampler_nearest);
 
-        let make_sampler = |filter: vk::Filter| -> Sampler {
-            let info = vk::SamplerCreateInfo::default()
-                .mag_filter(filter)
-                .min_filter(filter);
-            let vk_s = unsafe { device.create_sampler(&info, None) }.unwrap();
-            Sampler::new(vk_s, device.clone())
-        };
-
-        let white_sampler = make_sampler(vk::Filter::LINEAR);
-        let grey_sampler = make_sampler(vk::Filter::LINEAR);
-        let black_sampler = make_sampler(vk::Filter::LINEAR);
-        let cb_sampler = make_sampler(vk::Filter::NEAREST);
-
-        let wh = renderer.register_texture(white_img, white_sampler);
-        let gr = renderer.register_texture(grey_img, grey_sampler);
-        let bl = renderer.register_texture(black_img, black_sampler);
-        let cb = renderer.register_texture(cb_img, cb_sampler);
+        let wh = renderer.register_texture(white_img, Arc::clone(&linear));
+        let gr = renderer.register_texture(grey_img, Arc::clone(&linear));
+        let bl = renderer.register_texture(black_img, Arc::clone(&linear));
+        let cb = renderer.register_texture(cb_img, nearest);
+        let mr = renderer.register_texture(mr_img, linear);
         renderer.resources.default_white_texture = wh;
         renderer.resources.default_grey_texture = gr;
         renderer.resources.default_black_texture = bl;
         renderer.resources.default_checkerboard_texture = cb;
+        renderer.resources.default_metal_rough_texture = mr;
 
         renderer
     }
@@ -376,7 +389,7 @@ impl VulkanRenderer {
     pub(crate) fn register_texture(
         &mut self,
         image: Arc<AllocatedImage>,
-        sampler: Sampler,
+        sampler: Arc<Sampler>,
     ) -> crate::TextureHandle {
         let idx = self.resources.texture_registry.len() as u32;
         self.resources
@@ -459,7 +472,7 @@ impl VulkanRenderer {
             .min_filter(filter);
         let vk_sampler =
             unsafe { self.context.device.create_sampler(&sampler_info, None) }.unwrap();
-        let sampler = Sampler::new(vk_sampler, self.context.device.clone());
+        let sampler = Arc::new(Sampler::new(vk_sampler, self.context.device.clone()));
         self.register_texture(Arc::new(image), sampler)
     }
 
@@ -528,6 +541,16 @@ impl VulkanRenderer {
             _data_buffer: data_buffer,
         });
         crate::MaterialHandle(idx)
+    }
+
+    pub(crate) fn create_material_colored(
+        &mut self,
+        constants: crate::material::MaterialConstants,
+        pass: crate::material::MaterialPass,
+    ) -> crate::MaterialHandle {
+        let white = self.resources.default_white_texture;
+        let metal_rough = self.resources.default_metal_rough_texture;
+        self.create_material(white, metal_rough, constants, pass)
     }
 
     fn create_immediate_submit_data(

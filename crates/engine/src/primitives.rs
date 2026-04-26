@@ -33,4 +33,5 @@ pub struct GPUSceneData {
     pub ambient_color: [f32; 4],
     pub sunlight_direction: [f32; 4],
     pub sunlight_color: [f32; 4],
+    pub camera_pos: [f32; 4],
 }
