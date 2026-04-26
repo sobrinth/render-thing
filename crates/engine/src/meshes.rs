@@ -1,4 +1,3 @@
-use crate::primitives::GPUMeshBuffers;
 use nalgebra_glm as glm;
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -6,20 +5,6 @@ pub(crate) struct Bounds {
     pub origin: glm::Vec3,
     pub extents: glm::Vec3,
     pub sphere_radius: f32,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct GeoSurface {
-    pub start_index: u32,
-    pub count: u32,
-    pub bounds: Bounds,
-}
-
-#[derive(Debug)]
-pub(crate) struct MeshAsset {
-    pub name: String,
-    pub surfaces: Vec<GeoSurface>,
-    pub mesh_buffers: GPUMeshBuffers,
 }
 
 pub(crate) fn node_to_mat4(node: &gltf::Node) -> glm::Mat4 {

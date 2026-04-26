@@ -864,25 +864,65 @@ impl VulkanRenderer {
             self.context.device.cmd_set_scissor(cmd, 0, &[gizmo_rect]);
         }
 
-        let t = 0.05f32; // arm half-thickness
-        let ct = 0.15f32; // cap half-thickness (3× arm)
-        let ot = 0.1f32; // origin cube half-size
+        let arm_half = 0.05f32;
+        let cap_half = 0.15f32;
+        let origin_half = 0.1f32;
 
         // Arms start at the cube's outer face; stubs end at the cube's inner face.
         // Nothing overlaps in 3D, so depth testing handles all ordering naturally
         // with no extra clears needed.
         let m = &self.resources.gizmo_materials;
         let draws: [(crate::MaterialHandle, glm::Vec3, glm::Vec3); 10] = [
-            (m[6], glm::vec3(-ot, -ot, -ot), glm::vec3(ot, ot, ot)), // origin cube
-            (m[0], glm::vec3(ot, -t, -t), glm::vec3(0.75, t, t)),    // X body
-            (m[0], glm::vec3(0.75, -ct, -ct), glm::vec3(1.0, ct, ct)), // X cap
-            (m[3], glm::vec3(-0.3, -t, -t), glm::vec3(-ot, t, t)),   // X neg stub
-            (m[1], glm::vec3(-t, ot, -t), glm::vec3(t, 0.75, t)),    // Y body
-            (m[1], glm::vec3(-ct, 0.75, -ct), glm::vec3(ct, 1.0, ct)), // Y cap
-            (m[4], glm::vec3(-t, -0.3, -t), glm::vec3(t, -ot, t)),   // Y neg stub
-            (m[2], glm::vec3(-t, -t, ot), glm::vec3(t, t, 0.75)),    // Z body
-            (m[2], glm::vec3(-ct, -ct, 0.75), glm::vec3(ct, ct, 1.0)), // Z cap
-            (m[5], glm::vec3(-t, -t, -0.3), glm::vec3(t, t, -ot)),   // Z neg stub
+            (
+                m[6],
+                glm::vec3(-origin_half, -origin_half, -origin_half),
+                glm::vec3(origin_half, origin_half, origin_half),
+            ), // origin cube
+            (
+                m[0],
+                glm::vec3(origin_half, -arm_half, -arm_half),
+                glm::vec3(0.75, arm_half, arm_half),
+            ), // X body
+            (
+                m[0],
+                glm::vec3(0.75, -cap_half, -cap_half),
+                glm::vec3(1.0, cap_half, cap_half),
+            ), // X cap
+            (
+                m[3],
+                glm::vec3(-0.3, -arm_half, -arm_half),
+                glm::vec3(-origin_half, arm_half, arm_half),
+            ), // X neg stub
+            (
+                m[1],
+                glm::vec3(-arm_half, origin_half, -arm_half),
+                glm::vec3(arm_half, 0.75, arm_half),
+            ), // Y body
+            (
+                m[1],
+                glm::vec3(-cap_half, 0.75, -cap_half),
+                glm::vec3(cap_half, 1.0, cap_half),
+            ), // Y cap
+            (
+                m[4],
+                glm::vec3(-arm_half, -0.3, -arm_half),
+                glm::vec3(arm_half, -origin_half, arm_half),
+            ), // Y neg stub
+            (
+                m[2],
+                glm::vec3(-arm_half, -arm_half, origin_half),
+                glm::vec3(arm_half, arm_half, 0.75),
+            ), // Z body
+            (
+                m[2],
+                glm::vec3(-cap_half, -cap_half, 0.75),
+                glm::vec3(cap_half, cap_half, 1.0),
+            ), // Z cap
+            (
+                m[5],
+                glm::vec3(-arm_half, -arm_half, -0.3),
+                glm::vec3(arm_half, arm_half, -origin_half),
+            ), // Z neg stub
         ];
 
         let gizmo_mesh_idx = self.resources.gizmo_mesh.0 as usize;
@@ -896,19 +936,12 @@ impl VulkanRenderer {
             .vertex_buffer_address;
 
         let mut last_pipeline = vk::Pipeline::null();
+        let mut last_mat_set = vk::DescriptorSet::null();
         for &(mat_handle, arm_min, arm_max) in &draws {
-            let mat_idx = mat_handle.0 as usize;
-            let pipeline = self.resources.material_registry[mat_idx]
-                .instance
-                .pipeline
-                .pipeline;
-            let layout = self.resources.material_registry[mat_idx]
-                .instance
-                .pipeline
-                .layout;
-            let mat_set = self.resources.material_registry[mat_idx]
-                .instance
-                .material_set;
+            let inst = &self.resources.material_registry[mat_handle.0 as usize].instance;
+            let pipeline = inst.pipeline.pipeline;
+            let layout = inst.pipeline.layout;
+            let mat_set = inst.material_set;
 
             if pipeline != last_pipeline {
                 unsafe {
@@ -921,15 +954,21 @@ impl VulkanRenderer {
                 last_pipeline = pipeline;
             }
 
+            if mat_set != last_mat_set {
+                unsafe {
+                    self.context.device.cmd_bind_descriptor_sets(
+                        cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        layout,
+                        0,
+                        &[gizmo_scene_set, mat_set],
+                        &[],
+                    );
+                }
+                last_mat_set = mat_set;
+            }
+
             unsafe {
-                self.context.device.cmd_bind_descriptor_sets(
-                    cmd,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    layout,
-                    0,
-                    &[gizmo_scene_set, mat_set],
-                    &[],
-                );
                 self.context.device.cmd_bind_index_buffer(
                     cmd,
                     index_buffer,
