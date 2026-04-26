@@ -28,7 +28,7 @@ pub(crate) struct UiContext {
     renderer: Option<Renderer>,
     pub ctx: Context,
     scale_factor: f32,
-    textures_to_free: Option<Vec<TextureId>>,
+    textures_to_free: [Option<Vec<TextureId>>; FRAME_OVERLAP as usize],
 }
 
 impl UiContext {
@@ -55,7 +55,7 @@ impl UiContext {
             renderer: Some(egui_renderer),
             ctx: Context::default(),
             scale_factor: 1.0,
-            textures_to_free: None,
+            textures_to_free: Default::default(),
         }
     }
 }
@@ -66,6 +66,7 @@ pub(crate) fn before_frame(
     graphics_queue: &QueueData,
     frame: &FrameData,
     state: UiState<'_>,
+    frame_index: usize,
 ) -> (Vec<ClippedPrimitive>, egui::PlatformOutput) {
     let renderer = ui
         .renderer
@@ -245,7 +246,7 @@ pub(crate) fn before_frame(
     let primitives = ctx.tessellate(shapes, pixels_per_point);
 
     if !textures_delta.free.is_empty() {
-        ui.textures_to_free = Some(textures_delta.free.clone());
+        ui.textures_to_free[frame_index] = Some(textures_delta.free.clone());
     }
 
     if !textures_delta.set.is_empty() {
@@ -274,11 +275,13 @@ pub(crate) fn render(
         .unwrap();
 }
 
-pub(crate) fn after_frame(ui: &mut UiContext) {
-    // ? soundness with multiple frames in flight
-    // ? move to after frame
-    if let Some(textures) = ui.textures_to_free.take() {
-        log::trace!("Freeing {} textures from previous frame", textures.len());
+pub(crate) fn after_frame(ui: &mut UiContext, frame_index: usize) {
+    if let Some(textures) = ui.textures_to_free[frame_index].take() {
+        log::trace!(
+            "Freeing {} textures from frame slot {}",
+            textures.len(),
+            frame_index
+        );
         ui.renderer
             .as_mut()
             .unwrap()

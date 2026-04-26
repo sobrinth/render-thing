@@ -119,6 +119,11 @@ impl VulkanRenderer {
         );
         self.resources.frames[frame_index].render_fence.reset();
         self.resources.frames[frame_index].clean_resources(&self.context.device);
+        // Safe: the fence wait above guarantees the GPU has finished all commands from the
+        // previous use of this slot (frame N-2). By then frame N-3's GPU work is also done
+        // (confirmed at start of frame N-1), so textures marked free in slot N%2 two frames
+        // ago are no longer referenced by any in-flight GPU work.
+        ui::after_frame(&mut self.resources.ui_context, frame_index);
 
         let res = unsafe {
             self.resources.swapchain.swapchain_fn.acquire_next_image(
@@ -162,6 +167,7 @@ impl VulkanRenderer {
                 sunlight_direction: &mut res.scene_data.sunlight_direction,
                 sunlight_color: &mut res.scene_data.sunlight_color,
             },
+            frame_index,
         );
 
         let t0 = Instant::now();
@@ -361,8 +367,6 @@ impl VulkanRenderer {
             }
             Err(e) => panic!("Failed to present swapchain image: {:?}", e),
         }
-
-        ui::after_frame(&mut self.resources.ui_context);
 
         self.resources.stats.push(FrameStats {
             frametime_ms,
