@@ -53,7 +53,14 @@ impl ApplicationHandler for GameApp {
             .unwrap();
 
         let window_size = (window.inner_size().width, window.inner_size().height);
-        let mut engine = Engine::initialize(&window, window_size);
+        let mut engine = Engine::initialize(
+            &window,
+            window_size,
+            engine::EngineConfig {
+                app_name: "Game".to_string(),
+                ..Default::default()
+            },
+        );
 
         let ui = egui_winit::State::new(
             engine.egui_context(),
