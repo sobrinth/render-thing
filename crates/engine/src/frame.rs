@@ -75,6 +75,12 @@ impl VulkanRenderer {
         raw_input: egui::RawInput,
     ) -> egui::PlatformOutput {
         let frame_start = Instant::now();
+        let frametime_ms = self
+            .resources
+            .last_frame_start
+            .replace(frame_start)
+            .map(|prev| prev.elapsed().as_secs_f32() * 1000.0)
+            .unwrap_or(0.0);
         if self.resources.resize_requested {
             let minimized = Self::resize_swapchain(self);
             if minimized {
@@ -208,6 +214,8 @@ impl VulkanRenderer {
             camera.position,
         );
         let draw_time_ms = t0.elapsed().as_secs_f32() * 1000.0;
+
+        self.draw_dev_overlay(frame_index, cmd.handle(), draw_extent, &camera.view_matrix);
 
         // transition the draw image and the swapchain image into their correct transfer layouts.
         transition_image(
@@ -357,7 +365,7 @@ impl VulkanRenderer {
         ui::after_frame(&mut self.resources.ui_context);
 
         self.resources.stats.push(FrameStats {
-            frametime_ms: frame_start.elapsed().as_secs_f32() * 1000.0,
+            frametime_ms,
             draw_time_ms,
             update_time_ms,
             draw_call_count: draw_stats.draw_call_count,
@@ -721,6 +729,238 @@ impl VulkanRenderer {
 
         unsafe { self.context.device.cmd_end_rendering(cmd) }
         stats
+    }
+
+    fn draw_dev_overlay(
+        &mut self,
+        frame_index: usize,
+        cmd: vk::CommandBuffer,
+        draw_extent: vk::Extent2D,
+        camera_view: &glm::Mat4,
+    ) {
+        if !self.resources.show_dev_overlay {
+            return;
+        }
+
+        const GIZMO_SIZE: u32 = 180;
+        let gx = (draw_extent.width / 2).saturating_sub(GIZMO_SIZE / 2);
+        let gy = (draw_extent.height / 2).saturating_sub(GIZMO_SIZE / 2);
+
+        // Rotation-only view: strip the translation column so the gizmo doesn't move with position
+        let mut view = *camera_view;
+        view[(0, 3)] = 0.0;
+        view[(1, 3)] = 0.0;
+        view[(2, 3)] = 0.0;
+
+        // Swapped near/far so that the axis pointing *toward* the camera gets higher
+        // depth and wins the GREATER_OR_EQUAL test — matching standard gizmo behaviour.
+        // Flip Y for Vulkan so +Y points up in the viewport.
+        let mut proj = glm::ortho_rh_zo(-1.5f32, 1.5, -1.5, 1.5, 5.0, -5.0);
+        proj[(1, 1)] *= -1.0;
+
+        let gizmo_scene = GPUSceneData {
+            view: view.data.0,
+            proj: proj.data.0,
+            view_proj: (proj * view).data.0,
+            ambient_color: [1.0, 1.0, 1.0, 1.0],
+            sunlight_direction: [0.0, 1.0, 0.0, 1.0],
+            sunlight_color: [1.0, 1.0, 1.0, 0.0], // w=0 disables sun → pure flat ambient colour
+            camera_pos: [0.0, 0.0, 0.0, 1.0],
+        };
+
+        // Write gizmo scene data into the second GPUSceneData slot of the per-frame scene buffer
+        let scene_mem_ptr = self.resources.frames[frame_index]
+            .scene_buffer
+            .info
+            .mapped_data;
+        unsafe {
+            let dst = (scene_mem_ptr as *mut u8).add(size_of::<GPUSceneData>());
+            std::ptr::copy_nonoverlapping(
+                (&gizmo_scene as *const GPUSceneData).cast::<u8>(),
+                dst,
+                size_of::<GPUSceneData>(),
+            );
+        }
+
+        // Allocate a descriptor set pointing at the second slot
+        let scene_data_layout = self.resources.scene_data_layout.layout;
+        let scene_buffer = self.resources.frames[frame_index].scene_buffer.buffer;
+        let gizmo_scene_set = self.resources.frames[frame_index]
+            .descriptors
+            .allocate(&self.context.device, scene_data_layout);
+        let mut writer = DescriptorWriter::new();
+        writer.write_buffer(
+            0,
+            scene_buffer,
+            size_of::<GPUSceneData>() as u64,
+            size_of::<GPUSceneData>() as u64,
+            vk::DescriptorType::UNIFORM_BUFFER,
+        );
+        writer.update_set(&self.context.device, gizmo_scene_set);
+
+        let gizmo_rect = vk::Rect2D {
+            offset: vk::Offset2D {
+                x: gx as i32,
+                y: gy as i32,
+            },
+            extent: vk::Extent2D {
+                width: GIZMO_SIZE,
+                height: GIZMO_SIZE,
+            },
+        };
+
+        let color_attachment = vk::RenderingAttachmentInfo::default()
+            .image_view(self.resources.draw_image.view)
+            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::LOAD)
+            .store_op(vk::AttachmentStoreOp::STORE);
+
+        let depth_attachment = vk::RenderingAttachmentInfo::default()
+            .image_view(self.resources.depth_image.view)
+            .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::LOAD)
+            .store_op(vk::AttachmentStoreOp::STORE);
+
+        let render_info = vk::RenderingInfo::default()
+            .render_area(gizmo_rect)
+            .layer_count(1)
+            .color_attachments(core::slice::from_ref(&color_attachment))
+            .depth_attachment(&depth_attachment);
+
+        unsafe { self.context.device.cmd_begin_rendering(cmd, &render_info) }
+
+        // Clear depth in the gizmo region to 0.0 (reversed-depth "far") so gizmo always appears on top
+        let clear_attachment = vk::ClearAttachment {
+            aspect_mask: vk::ImageAspectFlags::DEPTH,
+            color_attachment: 0,
+            clear_value: vk::ClearValue {
+                depth_stencil: vk::ClearDepthStencilValue {
+                    depth: 0.0,
+                    stencil: 0,
+                },
+            },
+        };
+        let clear_rect = vk::ClearRect {
+            rect: gizmo_rect,
+            base_array_layer: 0,
+            layer_count: 1,
+        };
+        unsafe {
+            self.context
+                .device
+                .cmd_clear_attachments(cmd, &[clear_attachment], &[clear_rect]);
+        }
+
+        let viewport = vk::Viewport {
+            x: gx as f32,
+            y: gy as f32,
+            width: GIZMO_SIZE as f32,
+            height: GIZMO_SIZE as f32,
+            min_depth: 0.0,
+            max_depth: 1.0,
+        };
+        unsafe {
+            self.context.device.cmd_set_viewport(cmd, 0, &[viewport]);
+            self.context.device.cmd_set_scissor(cmd, 0, &[gizmo_rect]);
+        }
+
+        let t = 0.05f32; // arm half-thickness
+        let ct = 0.15f32; // cap half-thickness (3× arm)
+        let ot = 0.1f32; // origin cube half-size
+
+        // Arms start at the cube's outer face; stubs end at the cube's inner face.
+        // Nothing overlaps in 3D, so depth testing handles all ordering naturally
+        // with no extra clears needed.
+        let m = &self.resources.gizmo_materials;
+        let draws: [(crate::MaterialHandle, glm::Vec3, glm::Vec3); 10] = [
+            (m[6], glm::vec3(-ot, -ot, -ot), glm::vec3(ot, ot, ot)), // origin cube
+            (m[0], glm::vec3(ot, -t, -t), glm::vec3(0.75, t, t)),    // X body
+            (m[0], glm::vec3(0.75, -ct, -ct), glm::vec3(1.0, ct, ct)), // X cap
+            (m[3], glm::vec3(-0.3, -t, -t), glm::vec3(-ot, t, t)),   // X neg stub
+            (m[1], glm::vec3(-t, ot, -t), glm::vec3(t, 0.75, t)),    // Y body
+            (m[1], glm::vec3(-ct, 0.75, -ct), glm::vec3(ct, 1.0, ct)), // Y cap
+            (m[4], glm::vec3(-t, -0.3, -t), glm::vec3(t, -ot, t)),   // Y neg stub
+            (m[2], glm::vec3(-t, -t, ot), glm::vec3(t, t, 0.75)),    // Z body
+            (m[2], glm::vec3(-ct, -ct, 0.75), glm::vec3(ct, ct, 1.0)), // Z cap
+            (m[5], glm::vec3(-t, -t, -0.3), glm::vec3(t, t, -ot)),   // Z neg stub
+        ];
+
+        let gizmo_mesh_idx = self.resources.gizmo_mesh.0 as usize;
+        let index_count = self.resources.mesh_registry[gizmo_mesh_idx].index_count;
+        let index_buffer = self.resources.mesh_registry[gizmo_mesh_idx]
+            .buffers
+            .index_buffer
+            .buffer;
+        let vertex_buffer_address = self.resources.mesh_registry[gizmo_mesh_idx]
+            .buffers
+            .vertex_buffer_address;
+
+        let mut last_pipeline = vk::Pipeline::null();
+        for &(mat_handle, arm_min, arm_max) in &draws {
+            let mat_idx = mat_handle.0 as usize;
+            let pipeline = self.resources.material_registry[mat_idx]
+                .instance
+                .pipeline
+                .pipeline;
+            let layout = self.resources.material_registry[mat_idx]
+                .instance
+                .pipeline
+                .layout;
+            let mat_set = self.resources.material_registry[mat_idx]
+                .instance
+                .material_set;
+
+            if pipeline != last_pipeline {
+                unsafe {
+                    self.context.device.cmd_bind_pipeline(
+                        cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        pipeline,
+                    );
+                }
+                last_pipeline = pipeline;
+            }
+
+            unsafe {
+                self.context.device.cmd_bind_descriptor_sets(
+                    cmd,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    layout,
+                    0,
+                    &[gizmo_scene_set, mat_set],
+                    &[],
+                );
+                self.context.device.cmd_bind_index_buffer(
+                    cmd,
+                    index_buffer,
+                    0,
+                    vk::IndexType::UINT32,
+                );
+                let center = (arm_min + arm_max) * 0.5;
+                let scale = arm_max - arm_min;
+                let transform =
+                    glm::scale(&glm::translate(&glm::Mat4::identity(), &center), &scale);
+                let push = GPUDrawPushConstants {
+                    world_matrix: transform.data.0,
+                    vertex_buffer: vertex_buffer_address,
+                };
+                self.context.device.cmd_push_constants(
+                    cmd,
+                    layout,
+                    vk::ShaderStageFlags::VERTEX,
+                    0,
+                    std::slice::from_raw_parts(
+                        (&push as *const GPUDrawPushConstants).cast::<u8>(),
+                        size_of::<GPUDrawPushConstants>(),
+                    ),
+                );
+                self.context
+                    .device
+                    .cmd_draw_indexed(cmd, index_count, 1, 0, 0, 0);
+            }
+        }
+
+        unsafe { self.context.device.cmd_end_rendering(cmd) }
     }
 
     fn copy_image_to_image(

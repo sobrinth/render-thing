@@ -120,6 +120,7 @@ impl ApplicationHandler for Application {
                         winit::keyboard::NamedKey::Shift => einput::NamedKey::Shift,
                         winit::keyboard::NamedKey::F2 => einput::NamedKey::F2,
                         winit::keyboard::NamedKey::F3 => einput::NamedKey::F3,
+                        winit::keyboard::NamedKey::F4 => einput::NamedKey::F4,
                         _ => einput::NamedKey::Other,
                     }),
                     _ => einput::Key::Other,
