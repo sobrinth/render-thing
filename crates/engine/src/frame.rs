@@ -429,6 +429,8 @@ impl VulkanRenderer {
         self.resources.scene_data.view = camera.view_matrix.data.0;
         self.resources.scene_data.proj = camera.proj_matrix.data.0;
         self.resources.scene_data.view_proj = (camera.proj_matrix * camera.view_matrix).data.0;
+        self.resources.scene_data.camera_pos =
+            [camera.position.x, camera.position.y, camera.position.z, 1.0];
 
         let view_proj =
             glm::Mat4::from_column_slice(self.resources.scene_data.view_proj.as_flattened());

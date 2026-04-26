@@ -120,6 +120,18 @@ impl Engine {
         self.renderer.resources.default_checkerboard_texture
     }
 
+    pub fn metal_rough_texture(&self) -> TextureHandle {
+        self.renderer.resources.default_metal_rough_texture
+    }
+
+    pub fn create_material_colored(
+        &mut self,
+        constants: MaterialConstants,
+        pass: MaterialPass,
+    ) -> MaterialHandle {
+        self.renderer.create_material_colored(constants, pass)
+    }
+
     pub fn draw(
         &mut self,
         camera: CameraView,

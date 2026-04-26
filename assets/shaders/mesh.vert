@@ -6,6 +6,7 @@
 layout(location = 0) out vec3 outColor;
 layout(location = 1) out vec2 outUV;
 layout(location = 2) out vec3 outNormal;
+layout(location = 3) out vec3 outWorldPos;
 
 struct Vertex {
     vec3 position;
@@ -27,8 +28,10 @@ layout(push_constant) uniform constants {
 void main() {
     Vertex v = PushConstants.vertexBuffer.vertices[gl_VertexIndex];
 
-    gl_Position = sceneData.viewproj * PushConstants.render_matrix * vec4(v.position, 1.0f);
+    vec4 worldPos = PushConstants.render_matrix * vec4(v.position, 1.0f);
+    gl_Position = sceneData.viewproj * worldPos;
     outColor = v.color.xyz;
     outUV = vec2(v.uv_x, v.uv_y);
     outNormal = normalize(mat3(transpose(inverse(mat3(PushConstants.render_matrix)))) * v.normal);
+    outWorldPos = worldPos.xyz;
 }
