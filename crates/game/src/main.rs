@@ -1,10 +1,11 @@
+mod geometry;
 mod level;
 mod physics;
 mod player;
 
 use engine::input::{self as einput, ElementState};
 use engine::{CameraView, Engine, MaterialConstants, MaterialPass};
-use level::{Level, build_box};
+use level::{Level, build_box, build_hex_platform};
 use nalgebra_glm as glm;
 use player::Player;
 use scene::SceneGraph;
@@ -212,7 +213,8 @@ impl GameApp {
         self.accumulator += frame_dt;
         while self.accumulator >= PHYSICS_DT {
             player.update(PHYSICS_DT, &self.held_keys);
-            if let Some(level) = &self.level {
+            if let Some(level) = &mut self.level {
+                level.tick(PHYSICS_DT);
                 player.resolve_collision(&level.collision_boxes);
             }
             self.accumulator -= PHYSICS_DT;
@@ -470,32 +472,64 @@ fn build_level(engine: &mut Engine) -> Level {
 
     let proc_root = scene.add_child(floor_root, "procedural", glm::Mat4::identity());
 
-    {
-        let mut add_box =
-            |name: &str, min: glm::Vec3, max: glm::Vec3, material: engine::MaterialHandle| {
-                let (_, aabb) =
-                    build_box(&mut scene, proc_root, name, box_mesh, material, min, max);
-                collision_boxes.push(aabb);
-            };
-        add_box(
-            "platform-1",
-            glm::vec3(-4.0, 1.0, -15.0),
-            glm::vec3(4.0, 1.5, -10.0),
-            checkerboard_material,
-        );
-        add_box(
-            "platform-2",
-            glm::vec3(-3.0, 2.0, -21.0),
-            glm::vec3(3.0, 2.5, -16.0),
-            yellow_material,
-        );
-        add_box(
-            "platform-3",
-            glm::vec3(-2.0, 3.5, -27.0),
-            glm::vec3(2.0, 4.0, -22.0),
-            checkerboard_material,
-        );
-    }
+    // --- Hex platform chain ---
+    // Each mesh is generated at its final size to avoid non-uniform scaling
+    // (which would corrupt normals without inverse-transpose correction).
+    let (verts, idx) = geometry::hex_prism_mesh(4.0, 0.5);
+    let hex_mesh_1 = engine.upload_mesh(&idx, &verts);
+
+    let (verts, idx) = geometry::hex_prism_mesh(3.0, 0.5);
+    let hex_mesh_2 = engine.upload_mesh(&idx, &verts);
+
+    let (verts, idx) = geometry::hex_prism_mesh(2.0, 0.5);
+    let hex_mesh_3 = engine.upload_mesh(&idx, &verts);
+
+    let p1 = build_hex_platform(
+        &mut scene,
+        proc_root,
+        "platform-1",
+        hex_mesh_1,
+        checkerboard_material,
+        glm::vec3(0.0, 1.25, -12.5),
+    );
+    let t = scene.global_transform(p1);
+    collision_boxes.push(geometry::hex_aabb(
+        glm::vec3(t[(0, 3)], t[(1, 3)], t[(2, 3)]),
+        4.0,
+        0.5,
+    ));
+
+    let p2 = build_hex_platform(
+        &mut scene,
+        p1,
+        "platform-2",
+        hex_mesh_2,
+        yellow_material,
+        glm::vec3(0.0, 1.0, -6.0),
+    );
+    let t = scene.global_transform(p2);
+    let p2_aabb_idx = collision_boxes.len();
+    collision_boxes.push(geometry::hex_aabb(
+        glm::vec3(t[(0, 3)], t[(1, 3)], t[(2, 3)]),
+        3.0,
+        0.5,
+    ));
+
+    let p3 = build_hex_platform(
+        &mut scene,
+        p2,
+        "platform-3",
+        hex_mesh_3,
+        checkerboard_material,
+        glm::vec3(0.0, 1.5, -6.0),
+    );
+    let t = scene.global_transform(p3);
+    let p3_aabb_idx = collision_boxes.len();
+    collision_boxes.push(geometry::hex_aabb(
+        glm::vec3(t[(0, 3)], t[(1, 3)], t[(2, 3)]),
+        2.0,
+        0.5,
+    ));
 
     let world = glm::rotate(
         &glm::translate(&glm::Mat4::identity(), &glm::vec3(-25.0, 0.5, 0.0)),
@@ -507,5 +541,8 @@ fn build_level(engine: &mut Engine) -> Level {
         scene.adopt(sponza_root, gltf);
     }
 
-    Level::new(scene, collision_boxes)
+    let mut level = Level::new(scene, collision_boxes);
+    level.add_orbit(p2, p2_aabb_idx, 6.0, 1.0, 10.0, 3.0, 0.5);
+    level.add_orbit(p3, p3_aabb_idx, 6.0, 1.5, 5.0, 2.0, 0.5);
+    level
 }
