@@ -116,6 +116,14 @@ impl SceneGraph {
         }
     }
 
+    pub fn global_transform(&self, id: NodeId) -> glm::Mat4 {
+        let node = &self.nodes[id.0 as usize];
+        match node.parent {
+            None => node.local_transform,
+            Some(parent) => self.global_transform(parent) * node.local_transform,
+        }
+    }
+
     pub fn flatten_visible(&self) -> Vec<DrawCall> {
         let mut out = Vec::new();
         for &root in &self.roots {

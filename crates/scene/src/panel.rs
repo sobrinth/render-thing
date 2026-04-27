@@ -138,6 +138,29 @@ impl ScenePanel {
                 ui.monospace(format!("{:.2}  {:.2}  {:.2}", sc.x, sc.y, sc.z));
                 ui.end_row();
             });
+
+        ui.collapsing("Global transform", |ui| {
+            let (tr, rot_deg, sc) = decompose(&scene.global_transform(id));
+            egui::Grid::new("scene_inspector_global")
+                .num_columns(2)
+                .spacing([10.0, 4.0])
+                .show(ui, |ui| {
+                    ui.label("Translation");
+                    ui.monospace(format!("{:.2}  {:.2}  {:.2}", tr.x, tr.y, tr.z));
+                    ui.end_row();
+
+                    ui.label("Rotation");
+                    ui.monospace(format!(
+                        "{:.1}°  {:.1}°  {:.1}°",
+                        rot_deg.x, rot_deg.y, rot_deg.z
+                    ));
+                    ui.end_row();
+
+                    ui.label("Scale");
+                    ui.monospace(format!("{:.2}  {:.2}  {:.2}", sc.x, sc.y, sc.z));
+                    ui.end_row();
+                });
+        });
     }
 }
 
