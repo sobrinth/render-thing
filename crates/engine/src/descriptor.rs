@@ -37,6 +37,19 @@ impl LayoutBuilder<'_> {
         self.bindings.push(layout_binding);
     }
 
+    pub(crate) fn add_binding_array(
+        &mut self,
+        binding: u32,
+        descriptor_type: vk::DescriptorType,
+        count: u32,
+    ) {
+        let layout_binding = vk::DescriptorSetLayoutBinding::default()
+            .binding(binding)
+            .descriptor_type(descriptor_type)
+            .descriptor_count(count);
+        self.bindings.push(layout_binding);
+    }
+
     pub(crate) fn clear(&mut self) {
         self.bindings.clear();
     }
@@ -56,6 +69,34 @@ impl LayoutBuilder<'_> {
         if let Some(flags) = create_flags {
             info = info.flags(flags);
         }
+
+        let layout = unsafe { device.create_descriptor_set_layout(&info, None) }.unwrap();
+        DescriptorSetLayout::new(layout, device.clone())
+    }
+
+    pub(crate) fn build_with_binding_flags(
+        &mut self,
+        device: &ash::Device,
+        stage_flags: vk::ShaderStageFlags,
+        binding_flags: &[vk::DescriptorBindingFlags],
+        create_flags: vk::DescriptorSetLayoutCreateFlags,
+    ) -> DescriptorSetLayout {
+        assert_eq!(
+            binding_flags.len(),
+            self.bindings.len(),
+            "one binding-flags entry per binding required"
+        );
+        self.bindings
+            .iter_mut()
+            .for_each(|binding| binding.stage_flags |= stage_flags);
+
+        let mut flags_info =
+            vk::DescriptorSetLayoutBindingFlagsCreateInfo::default().binding_flags(binding_flags);
+
+        let info = vk::DescriptorSetLayoutCreateInfo::default()
+            .bindings(&self.bindings)
+            .flags(create_flags)
+            .push_next(&mut flags_info);
 
         let layout = unsafe { device.create_descriptor_set_layout(&info, None) }.unwrap();
         DescriptorSetLayout::new(layout, device.clone())
