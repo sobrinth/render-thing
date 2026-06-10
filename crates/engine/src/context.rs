@@ -164,7 +164,9 @@ impl VkContext {
 
         let mut device_features12 = vk::PhysicalDeviceVulkan12Features::default()
             .buffer_device_address(true)
-            .descriptor_indexing(true);
+            .descriptor_indexing(true)
+            .descriptor_binding_partially_bound(true)
+            .descriptor_binding_sampled_image_update_after_bind(true);
 
         let mut device_features13 = vk::PhysicalDeviceVulkan13Features::default()
             .dynamic_rendering(true)
