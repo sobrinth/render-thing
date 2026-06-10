@@ -42,9 +42,10 @@ pub fn load_gltf(engine: &mut Engine, path: &str) -> Option<SceneGraph> {
             .and_then(|t| texture_handles.get(t.texture().source().index()).copied())
             .unwrap_or(white);
         let [r, g, b, a] = pbr.base_color_factor();
-        let mut constants = engine::MaterialConstants::default();
-        constants.color_factors = [r, g, b, a];
-        constants.metal_rough_factors = [pbr.metallic_factor(), pbr.roughness_factor(), 0.0, 0.0];
+        let constants = engine::MaterialConstants {
+            color_factors: [r, g, b, a],
+            metal_rough_factors: [pbr.metallic_factor(), pbr.roughness_factor(), 0.0, 0.0],
+        };
         let pass = if material.alpha_mode() == gltf::material::AlphaMode::Blend {
             engine::MaterialPass::Transparent
         } else {

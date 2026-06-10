@@ -2,6 +2,7 @@ use crate::graph::{NodeId, SceneGraph};
 use egui::Context;
 use nalgebra_glm as glm;
 
+#[derive(Default)]
 pub struct ScenePanel {
     selected: Option<NodeId>,
     visible: bool,

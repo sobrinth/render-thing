@@ -1,9 +1,7 @@
 use crate::command_buffer::UploadBatch;
 use crate::context::{QueueData, VkContext};
 use crate::descriptor;
-use crate::descriptor::{
-    DescriptorSetLayout, DescriptorWriter, LayoutBuilder, PoolSizeRatio,
-};
+use crate::descriptor::{DescriptorSetLayout, DescriptorWriter, LayoutBuilder, PoolSizeRatio};
 use crate::frame::FrameData;
 use crate::input::{ElementState, Key, NamedKey};
 use crate::material::GltfMetallicRoughness;
@@ -388,9 +386,10 @@ impl VulkanRenderer {
         let gizmo_mesh = renderer.upload_mesh(&gizmo_idx, &gizmo_verts);
 
         let make_gizmo_mat = |r: &mut VulkanRenderer, color: [f32; 4]| -> crate::MaterialHandle {
-            let mut c = crate::material::MaterialConstants::default();
-            c.color_factors = color;
-            c.metal_rough_factors = [0.0, 1.0, 0.0, 0.0];
+            let c = crate::material::MaterialConstants {
+                color_factors: color,
+                metal_rough_factors: [0.0, 1.0, 0.0, 0.0],
+            };
             r.create_material_colored(c, crate::material::MaterialPass::MainColor)
         };
         let x_pos = make_gizmo_mat(&mut renderer, [1.00, 0.00, 0.00, 1.0]);

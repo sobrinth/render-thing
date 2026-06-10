@@ -917,12 +917,9 @@ impl VulkanRenderer {
                 &[gizmo_scene_set, bindless_set],
                 &[],
             );
-            self.context.device.cmd_bind_index_buffer(
-                cmd,
-                index_buffer,
-                0,
-                vk::IndexType::UINT32,
-            );
+            self.context
+                .device
+                .cmd_bind_index_buffer(cmd, index_buffer, 0, vk::IndexType::UINT32);
         }
 
         for &(mat_handle, arm_min, arm_max) in &draws {

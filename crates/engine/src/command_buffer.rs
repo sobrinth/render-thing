@@ -122,7 +122,9 @@ impl UploadBatch {
         Self {
             command_pool,
             // Safety: freshly allocated buffer, sole wrapper, never submitted.
-            cmd: Some(BatchCmd::Idle(unsafe { CommandBuffer::wrap(command_buffer) })),
+            cmd: Some(BatchCmd::Idle(unsafe {
+                CommandBuffer::wrap(command_buffer)
+            })),
             staging: Vec::new(),
             staging_bytes: 0,
             fence,

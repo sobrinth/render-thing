@@ -19,6 +19,12 @@ pub struct SceneGraph {
     roots: Vec<NodeId>,
 }
 
+impl Default for SceneGraph {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SceneGraph {
     pub fn new() -> Self {
         Self {
