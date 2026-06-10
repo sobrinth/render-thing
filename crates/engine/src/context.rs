@@ -115,7 +115,15 @@ impl VkContext {
         let available_devices = unsafe { instance.enumerate_physical_devices() }.unwrap();
         let selected_device = available_devices
             .into_iter()
-            .find(|d| Self::is_device_suitable(instance, surface_fn, surface, *d))
+            .filter(|d| Self::is_device_suitable(instance, surface_fn, surface, *d))
+            .max_by_key(|d| {
+                let props = unsafe { instance.get_physical_device_properties(*d) };
+                match props.device_type {
+                    vk::PhysicalDeviceType::DISCRETE_GPU => 2,
+                    vk::PhysicalDeviceType::INTEGRATED_GPU => 1,
+                    _ => 0,
+                }
+            })
             .expect("No suitable physical device found.");
 
         let props = unsafe { instance.get_physical_device_properties(selected_device) };
