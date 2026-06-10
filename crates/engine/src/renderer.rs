@@ -53,6 +53,7 @@ pub(crate) struct RendererResources {
     pub(crate) swapchain: Swapchain,
     pub(crate) frames: Vec<FrameData>,
     pub(crate) frame_descriptor_pool: descriptor::Allocator,
+    pub(crate) bindless: crate::bindless::BindlessResources,
     pub(crate) graphics_queue: QueueData,
     pub(crate) descriptor_allocator: descriptor::Allocator,
     pub(crate) immediate_submit: ImmediateSubmitData,
@@ -115,6 +116,8 @@ impl VulkanRenderer {
 
         let (frames, frame_descriptor_pool) =
             Self::create_framedata(&context, &gpu_alloc, &graphics_queue, &scene_data_layout);
+
+        let bindless = crate::bindless::BindlessResources::new(&context.device, &gpu_alloc);
 
         let draw_image = AllocatedImage::create(
             &context,
@@ -329,6 +332,7 @@ impl VulkanRenderer {
                 swapchain,
                 frames,
                 frame_descriptor_pool,
+                bindless,
                 graphics_queue,
                 descriptor_allocator,
                 immediate_submit,
@@ -477,6 +481,9 @@ impl VulkanRenderer {
         sampler: Arc<Sampler>,
     ) -> crate::TextureHandle {
         let idx = self.resources.texture_registry.len() as u32;
+        self.resources
+            .bindless
+            .write_texture(idx, image.view, sampler.sampler);
         self.resources
             .texture_registry
             .push(TextureEntry { image, sampler });

@@ -36,6 +36,7 @@ mod frame;
 mod renderer;
 mod resources;
 
+mod bindless;
 mod command_buffer;
 mod context;
 mod debug;
