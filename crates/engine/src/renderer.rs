@@ -2,7 +2,7 @@ use crate::command_buffer::ImmediateSubmitData;
 use crate::context::{QueueData, VkContext};
 use crate::descriptor;
 use crate::descriptor::{
-    DescriptorSetLayout, DescriptorWriter, GrowableAllocator, LayoutBuilder, PoolSizeRatio,
+    DescriptorSetLayout, DescriptorWriter, LayoutBuilder, PoolSizeRatio,
 };
 use crate::frame::FrameData;
 use crate::input::{ElementState, Key, NamedKey};
@@ -52,6 +52,7 @@ pub(crate) struct RendererResources {
     pub(crate) gpu_alloc: Arc<vk_mem::Allocator>,
     pub(crate) swapchain: Swapchain,
     pub(crate) frames: Vec<FrameData>,
+    pub(crate) frame_descriptor_pool: descriptor::Allocator,
     pub(crate) graphics_queue: QueueData,
     pub(crate) descriptor_allocator: descriptor::Allocator,
     pub(crate) immediate_submit: ImmediateSubmitData,
@@ -110,7 +111,10 @@ impl VulkanRenderer {
 
         let immediate_submit = Self::create_immediate_submit_data(&context, &graphics_queue);
 
-        let frames = Self::create_framedata(&context, &gpu_alloc, &graphics_queue);
+        let scene_data_layout = Self::init_scene_data(&context);
+
+        let (frames, frame_descriptor_pool) =
+            Self::create_framedata(&context, &gpu_alloc, &graphics_queue, &scene_data_layout);
 
         let draw_image = AllocatedImage::create(
             &context,
@@ -137,8 +141,6 @@ impl VulkanRenderer {
 
         let (descriptor_allocator, draw_image_descriptor_layout, draw_image_descriptors) =
             Self::init_descriptors(&context, &draw_image);
-
-        let scene_data_layout = Self::init_scene_data(&context);
 
         let metal_rough_material = crate::material::GltfMetallicRoughness::build_pipelines(
             &context,
@@ -326,6 +328,7 @@ impl VulkanRenderer {
                 gpu_alloc,
                 swapchain,
                 frames,
+                frame_descriptor_pool,
                 graphics_queue,
                 descriptor_allocator,
                 immediate_submit,
@@ -670,10 +673,21 @@ impl VulkanRenderer {
         context: &VkContext,
         gpu_alloc: &Arc<vk_mem::Allocator>,
         graphics_queue: &QueueData,
-    ) -> Vec<FrameData> {
+        scene_data_layout: &DescriptorSetLayout,
+    ) -> (Vec<FrameData>, descriptor::Allocator) {
         let commandpool_info = vk::CommandPoolCreateInfo::default()
             .queue_family_index(graphics_queue.family_index)
             .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+
+        // Scene + gizmo set per frame; bindings never change after this function.
+        let scene_set_pool = descriptor::Allocator::init_pool(
+            &context.device,
+            2 * FRAME_OVERLAP,
+            vec![PoolSizeRatio {
+                descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+                ratio: 1.0,
+            }],
+        );
 
         let mut frames = Vec::with_capacity(FRAME_OVERLAP as usize);
 
@@ -693,28 +707,6 @@ impl VulkanRenderer {
 
             let render_fence = Fence::new_signaled(&context.device);
 
-            // create descriptor allocator exclusive to this frame
-            let pool_ratios = [
-                PoolSizeRatio {
-                    descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
-                    ratio: 3.0,
-                },
-                PoolSizeRatio {
-                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                    ratio: 3.0,
-                },
-                PoolSizeRatio {
-                    descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
-                    ratio: 3.0,
-                },
-                PoolSizeRatio {
-                    descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                    ratio: 4.0,
-                },
-            ];
-
-            let desc_allocator = GrowableAllocator::init(&context.device, 1000, &pool_ratios);
-
             let scene_buffer = AllocatedBuffer::create(
                 gpu_alloc,
                 2 * size_of::<GPUSceneData>() as u64,
@@ -726,18 +718,42 @@ impl VulkanRenderer {
                 ),
             );
 
+            let scene_set = scene_set_pool.allocate(&context.device, scene_data_layout.layout);
+            let gizmo_scene_set =
+                scene_set_pool.allocate(&context.device, scene_data_layout.layout);
+
+            let mut writer = DescriptorWriter::new();
+            writer.write_buffer(
+                0,
+                scene_buffer.buffer,
+                size_of::<GPUSceneData>() as u64,
+                0,
+                vk::DescriptorType::UNIFORM_BUFFER,
+            );
+            writer.update_set(&context.device, scene_set);
+            writer.clear();
+            writer.write_buffer(
+                0,
+                scene_buffer.buffer,
+                size_of::<GPUSceneData>() as u64,
+                size_of::<GPUSceneData>() as u64,
+                vk::DescriptorType::UNIFORM_BUFFER,
+            );
+            writer.update_set(&context.device, gizmo_scene_set);
+
             let frame = FrameData::new(
                 pool,
                 buffer,
                 swapchain_semaphore,
                 render_fence,
-                desc_allocator,
+                scene_set,
+                gizmo_scene_set,
                 scene_buffer,
                 context.device.clone(),
             );
             frames.push(frame);
         }
-        frames
+        (frames, scene_set_pool)
     }
 
     pub(crate) fn wait_gpu_idle(&self) {

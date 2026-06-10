@@ -1,5 +1,4 @@
 use crate::command_buffer::{BarrierScope, CommandBuffer, Submitted, transition_image};
-use crate::descriptor::{DescriptorWriter, GrowableAllocator};
 use crate::material::MaterialInstance;
 use crate::meshes::Bounds;
 use crate::pipeline::ComputePushConstants;
@@ -119,7 +118,6 @@ impl VulkanRenderer {
             "render fence timed out"
         );
         self.resources.frames[frame_index].render_fence.reset();
-        self.resources.frames[frame_index].clean_resources(&self.context.device);
         // Safe: the fence wait above guarantees the GPU has finished all commands from the
         // previous use of this slot (frame N-2). By then frame N-3's GPU work is also done
         // (confirmed at start of frame N-1), so textures marked free in slot N%2 two frames
@@ -570,7 +568,7 @@ impl VulkanRenderer {
             );
         }
 
-        // Write scene data into per-frame UBO and allocate + update set 0
+        // Write scene data into the per-frame UBO; set 0 was written once at startup
         let scene_mem_ptr = self.resources.frames[frame_index]
             .scene_buffer
             .info
@@ -582,19 +580,7 @@ impl VulkanRenderer {
                 size_of::<GPUSceneData>(),
             )
         }
-        let scene_data_layout = self.resources.scene_data_layout.layout;
-        let scene_set = self.resources.frames[frame_index]
-            .descriptors
-            .allocate(&self.context.device, scene_data_layout);
-        let mut writer = DescriptorWriter::new();
-        writer.write_buffer(
-            0,
-            self.resources.frames[frame_index].scene_buffer.buffer,
-            size_of::<GPUSceneData>() as u64,
-            0,
-            vk::DescriptorType::UNIFORM_BUFFER,
-        );
-        writer.update_set(&self.context.device, scene_set);
+        let scene_set = self.resources.frames[frame_index].scene_set;
 
         // Sort opaque surfaces by material pointer then index buffer to minimise state changes
         let mut opaque_indices: Vec<usize> = (0..ctx.opaque_surfaces.len()).collect();
@@ -844,21 +830,8 @@ impl VulkanRenderer {
             );
         }
 
-        // Allocate a descriptor set pointing at the second slot
-        let scene_data_layout = self.resources.scene_data_layout.layout;
-        let scene_buffer = self.resources.frames[frame_index].scene_buffer.buffer;
-        let gizmo_scene_set = self.resources.frames[frame_index]
-            .descriptors
-            .allocate(&self.context.device, scene_data_layout);
-        let mut writer = DescriptorWriter::new();
-        writer.write_buffer(
-            0,
-            scene_buffer,
-            size_of::<GPUSceneData>() as u64,
-            size_of::<GPUSceneData>() as u64,
-            vk::DescriptorType::UNIFORM_BUFFER,
-        );
-        writer.update_set(&self.context.device, gizmo_scene_set);
+        // Set 0 pointing at the second slot was written once at startup
+        let gizmo_scene_set = self.resources.frames[frame_index].gizmo_scene_set;
 
         let gizmo_rect = vk::Rect2D {
             offset: vk::Offset2D {
@@ -1121,15 +1094,16 @@ pub struct FrameData {
     pub(crate) main_command_buffer: vk::CommandBuffer,
     pub(crate) acquire_semaphore: Semaphore,
     pub(crate) render_fence: Fence,
-    pub(crate) descriptors: GrowableAllocator,
+    pub(crate) scene_set: vk::DescriptorSet,
+    pub(crate) gizmo_scene_set: vk::DescriptorSet,
     pub(crate) scene_buffer: AllocatedBuffer,
     device: Device,
 }
 
 impl Drop for FrameData {
     fn drop(&mut self) {
-        self.descriptors.destroy_pools(&self.device);
-        // scene_buffer drops automatically via its own Drop
+        // scene_buffer drops automatically via its own Drop;
+        // descriptor sets die with the pool owned by the renderer
         unsafe {
             self.device.destroy_command_pool(self.command_pool, None);
         }
@@ -1137,12 +1111,14 @@ impl Drop for FrameData {
 }
 
 impl FrameData {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         command_pool: vk::CommandPool,
         main_command_buffer: vk::CommandBuffer,
         acquire_semaphore: Semaphore,
         render_fence: Fence,
-        descriptors: GrowableAllocator,
+        scene_set: vk::DescriptorSet,
+        gizmo_scene_set: vk::DescriptorSet,
         scene_buffer: AllocatedBuffer,
         device: Device,
     ) -> Self {
@@ -1151,13 +1127,10 @@ impl FrameData {
             main_command_buffer,
             acquire_semaphore,
             render_fence,
-            descriptors,
+            scene_set,
+            gizmo_scene_set,
             scene_buffer,
             device,
         }
-    }
-
-    pub(crate) fn clean_resources(&mut self, device: &Device) {
-        self.descriptors.clear_pools(device);
     }
 }
