@@ -12,6 +12,11 @@ use std::error::Error;
 use std::ffi::CStr;
 use std::sync::Arc;
 
+// KHR promotions of the maintenance1 extensions (aliases of the EXT variants);
+// ash 0.38 predates them, so the names are spelled out here.
+const SURFACE_MAINTENANCE1_KHR: &CStr = c"VK_KHR_surface_maintenance1";
+const SWAPCHAIN_MAINTENANCE1_KHR: &CStr = c"VK_KHR_swapchain_maintenance1";
+
 pub(crate) struct VkContext {
     _vulkan_fn: Entry,
     pub(crate) instance: Instance,
@@ -92,6 +97,39 @@ impl VkContext {
             extension_names.push(debug_utils::NAME.as_ptr());
         }
 
+        // Instance-level dependencies of VK_(KHR|EXT)_swapchain_maintenance1.
+        // Hard requirement: drivers are assumed end-of-2025 or newer (see spec).
+        let available_extensions =
+            unsafe { vulkan_fn.enumerate_instance_extension_properties(None) }.unwrap();
+        let has_extension = |name: &CStr| {
+            available_extensions.iter().any(|ext| {
+                let ext_name = unsafe { CStr::from_ptr(ext.extension_name.as_ptr()) };
+                ext_name == name
+            })
+        };
+
+        assert!(
+            has_extension(ash::khr::get_surface_capabilities2::NAME),
+            "VK_KHR_get_surface_capabilities2 is required (driver too old?)"
+        );
+        extension_names.push(ash::khr::get_surface_capabilities2::NAME.as_ptr());
+
+        // Enable every available spelling: on multi-ICD systems the instance-level
+        // list is a union across drivers, and the selected device's variant must
+        // find its dependency under the matching name.
+        let surface_maintenance1 = [
+            SURFACE_MAINTENANCE1_KHR,
+            ash::ext::surface_maintenance1::NAME,
+        ]
+        .into_iter()
+        .filter(|name| has_extension(name))
+        .collect_vec();
+        assert!(
+            !surface_maintenance1.is_empty(),
+            "VK_KHR/EXT_surface_maintenance1 is required (driver too old?)"
+        );
+        extension_names.extend(surface_maintenance1.iter().map(|name| name.as_ptr()));
+
         let (_layer_names, layer_names_ptrs) = get_layer_names_and_pointers();
 
         let mut instance_create_info = vk::InstanceCreateInfo::default()
@@ -162,7 +200,8 @@ impl VkContext {
                 .collect_vec()
         };
 
-        let device_extensions = Self::get_required_device_extensions();
+        let device_extensions = Self::select_device_extensions(instance, selected_device)
+            .expect("selected device is missing required extensions");
         let device_extensions_ptrs = device_extensions
             .iter()
             .map(|ext| ext.as_ptr())
@@ -180,12 +219,17 @@ impl VkContext {
             .dynamic_rendering(true)
             .synchronization2(true);
 
+        let mut swapchain_maintenance1_features =
+            vk::PhysicalDeviceSwapchainMaintenance1FeaturesEXT::default()
+                .swapchain_maintenance1(true);
+
         let device_create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&queue_create_infos)
             .enabled_extension_names(&device_extensions_ptrs)
             .enabled_features(&device_features)
             .push_next(&mut device_features12)
-            .push_next(&mut device_features13);
+            .push_next(&mut device_features13)
+            .push_next(&mut swapchain_maintenance1_features);
 
         let device = unsafe { instance.create_device(selected_device, &device_create_info, None) }
             .expect("Failed to create logical device.");
@@ -212,7 +256,7 @@ impl VkContext {
         let (graphics, present) =
             Self::find_queue_families(instance, surface_fn, surface, physical_device);
 
-        let extension_support = Self::check_device_extension_support(instance, physical_device);
+        let extension_support = Self::select_device_extensions(instance, physical_device).is_some();
 
         let is_swapchain_usable = {
             let details =
@@ -227,31 +271,33 @@ impl VkContext {
             && features.sampler_anisotropy == vk::TRUE
     }
 
-    fn check_device_extension_support(
+    /// Device extensions to enable, or None if the device is missing any.
+    /// swapchain_maintenance1 prefers the KHR name, falling back to the EXT
+    /// alias (older Mesa advertises only EXT; NVIDIA advertises only KHR).
+    fn select_device_extensions(
         instance: &Instance,
         physical_device: vk::PhysicalDevice,
-    ) -> bool {
-        let required_extension = Self::get_required_device_extensions();
-
+    ) -> Option<Vec<&'static CStr>> {
         let extension_properties =
             unsafe { instance.enumerate_device_extension_properties(physical_device) }.unwrap();
-
-        for extension in required_extension.iter() {
-            let found_ext = extension_properties.iter().any(|ext| {
+        let has_extension = |name: &CStr| {
+            extension_properties.iter().any(|ext| {
                 let ext_name = unsafe { CStr::from_ptr(ext.extension_name.as_ptr()) };
-                extension == &ext_name
-            });
+                ext_name == name
+            })
+        };
 
-            if !found_ext {
-                return false;
-            }
+        if !has_extension(ash::khr::swapchain::NAME) {
+            return None;
         }
+        let maintenance1 = [
+            SWAPCHAIN_MAINTENANCE1_KHR,
+            ash::ext::swapchain_maintenance1::NAME,
+        ]
+        .into_iter()
+        .find(|name| has_extension(name))?;
 
-        true
-    }
-
-    fn get_required_device_extensions() -> [&'static CStr; 1] {
-        [c"VK_KHR_swapchain"]
+        Some(vec![ash::khr::swapchain::NAME, maintenance1])
     }
 
     /// Find a queue family with at least one graphics queue and one with

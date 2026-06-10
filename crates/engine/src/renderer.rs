@@ -833,12 +833,14 @@ impl VulkanRenderer {
     }
 
     pub(crate) fn resize_swapchain(&mut self) -> bool {
-        self.wait_gpu_idle();
         if self.resources.window_size.0 == 0 || self.resources.window_size.1 == 0 {
             return true;
         }
 
         let old_handle = self.resources.swapchain.swapchain;
+        // Reassignment drops the old swapchain, whose Drop blocks on its present
+        // fences — unlike the device_wait_idle this replaces, that actually
+        // covers the presentation engine (see spec, "Safety argument").
         self.resources.swapchain = Swapchain::recreate(
             &self.context,
             [self.resources.window_size.0, self.resources.window_size.1],

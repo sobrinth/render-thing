@@ -1,5 +1,5 @@
 use crate::context::VkContext;
-use crate::sync::Semaphore;
+use crate::sync::{Fence, Semaphore};
 use ash::khr::surface;
 use ash::{Device, vk};
 use itertools::Itertools;
@@ -11,6 +11,7 @@ pub(crate) struct Swapchain {
 
     pub(crate) images: Vec<vk::Image>,
     pub(crate) semaphores: Vec<Semaphore>,
+    pub(crate) present_fences: Vec<Fence>,
     pub(crate) image_views: Vec<vk::ImageView>,
     device: Device,
 }
@@ -110,21 +111,38 @@ impl Swapchain {
             .map(|_i| Semaphore::new(&vk_context.device))
             .collect_vec();
 
+        // Created signaled: the first present of each image has no predecessor to wait for.
+        let present_fences = swapchain_images
+            .iter()
+            .map(|_i| Fence::new_signaled(&vk_context.device))
+            .collect_vec();
+
         Self {
             properties: swapchain_properties,
             swapchain_fn,
             swapchain,
             images: swapchain_images,
             semaphores: swapchain_semaphore,
+            present_fences,
             image_views: swapchain_image_views,
             device: vk_context.device.clone(),
         }
     }
 }
 
+const PRESENT_FENCE_TIMEOUT_NS: u64 = 1_000_000_000;
+
 impl Drop for Swapchain {
     fn drop(&mut self) {
         log::trace!("Start: Destroying swapchain");
+        // device_wait_idle does not cover the presentation engine; these fences
+        // are the only signal that presents using the images/semaphores are done.
+        for fence in &self.present_fences {
+            assert!(
+                fence.wait(PRESENT_FENCE_TIMEOUT_NS),
+                "present fence timed out while destroying swapchain"
+            );
+        }
         unsafe {
             self.image_views
                 .iter()

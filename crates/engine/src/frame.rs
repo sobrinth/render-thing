@@ -123,7 +123,6 @@ impl VulkanRenderer {
                 .wait(ONE_SECOND),
             "render fence timed out"
         );
-        self.resources.frames[frame_index].render_fence.reset();
         // Safe: the fence wait above guarantees the GPU has finished all commands from the
         // previous use of this slot (frame N-2). By then frame N-3's GPU work is also done
         // (confirmed at start of frame N-1), so textures marked free in slot N%2 two frames
@@ -149,6 +148,19 @@ impl VulkanRenderer {
             }
             Err(err) => panic!("Failed to acquire next image. Cause: {err}"),
         };
+
+        // Reset only after a successful acquire: the OUT_OF_DATE early return
+        // above must leave the fence signaled, or the next draw() on this frame
+        // slot would wait on a fence that no submit will ever signal.
+        self.resources.frames[frame_index].render_fence.reset();
+
+        // semaphores[image_index] is re-signaled at submit below; the present
+        // fence proves the previous present waiting on it is done with it
+        // (fix for the semaphore-reuse gap worked around in cbf18cc).
+        assert!(
+            self.resources.swapchain.present_fences[image_index].wait(ONE_SECOND),
+            "present fence timed out"
+        );
 
         // BEFORE FRAME
         // Extract values needed to avoid simultaneous borrow conflicts through ManuallyDrop
@@ -387,12 +399,20 @@ impl VulkanRenderer {
         let present_semaphore = self.resources.swapchain.semaphores[image_index].handle();
         let present_semaphores = [present_semaphore];
 
+        // Reset only right before the present that re-signals it — the fence
+        // signals even if the present returns OUT_OF_DATE, so this cannot deadlock.
+        self.resources.swapchain.present_fences[image_index].reset();
+        let present_fence = self.resources.swapchain.present_fences[image_index].handle();
+        let present_fences = [present_fence];
+        let mut present_fence_info =
+            vk::SwapchainPresentFenceInfoEXT::default().fences(&present_fences);
+
         let present_info = vk::PresentInfoKHR::default()
             .swapchains(core::slice::from_ref(&self.resources.swapchain.swapchain))
             .wait_semaphores(&present_semaphores)
-            .image_indices(image_indices);
+            .image_indices(image_indices)
+            .push_next(&mut present_fence_info);
 
-        // TODO db: Maybe use `VK_EXT_swapchain_maintenance1` to be able to use a fence here and "circumvent" the semaphore per image
         let res = unsafe {
             self.resources
                 .swapchain
