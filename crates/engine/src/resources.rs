@@ -275,11 +275,11 @@ impl AllocatedImage {
 
         let data_size = size_of_val(data);
 
-        let mut upload_buffer = AllocatedBuffer::create(
+        let upload_buffer = AllocatedBuffer::create(
             gpu_alloc,
             data_size as u64,
             vk::BufferUsageFlags::TRANSFER_SRC,
-            vk_mem::MemoryUsage::AutoPreferDevice,
+            vk_mem::MemoryUsage::AutoPreferHost,
             Some(
                 vk_mem::AllocationCreateFlags::MAPPED
                     | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
@@ -296,9 +296,8 @@ impl AllocatedImage {
             info.mip_mapped,
         );
 
-        let dst_data = unsafe { gpu_alloc.map_memory(&mut upload_buffer.allocation) }.unwrap();
+        let dst_data = upload_buffer.info.mapped_data as *mut u8;
         unsafe { std::ptr::copy_nonoverlapping(data.as_ptr() as *const u8, dst_data, data_size) };
-        unsafe { gpu_alloc.unmap_memory(&mut upload_buffer.allocation) };
 
         imm_data.submit(&context.device, graphics_queue, |cmd| {
             transition_image(
@@ -369,11 +368,11 @@ impl AllocatedImage {
             depth: 1,
         };
 
-        let mut upload_buffer = AllocatedBuffer::create(
+        let upload_buffer = AllocatedBuffer::create(
             gpu_alloc,
             data.len() as u64,
             vk::BufferUsageFlags::TRANSFER_SRC,
-            vk_mem::MemoryUsage::AutoPreferDevice,
+            vk_mem::MemoryUsage::AutoPreferHost,
             Some(
                 vk_mem::AllocationCreateFlags::MAPPED
                     | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
@@ -390,9 +389,8 @@ impl AllocatedImage {
             info.mip_mapped,
         );
 
-        let dst_data = unsafe { gpu_alloc.map_memory(&mut upload_buffer.allocation) }.unwrap();
+        let dst_data = upload_buffer.info.mapped_data as *mut u8;
         unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), dst_data, data.len()) };
-        unsafe { gpu_alloc.unmap_memory(&mut upload_buffer.allocation) };
 
         imm_data.submit(&context.device, graphics_queue, |cmd| {
             transition_image(
@@ -504,7 +502,7 @@ pub(crate) fn upload_mesh_buffers(
         vertex_buffer_address: device_address,
     };
 
-    let mut staging = AllocatedBuffer::create(
+    let staging = AllocatedBuffer::create(
         gpu_alloc,
         (vertex_buffer_size + index_buffer_size) as u64,
         vk::BufferUsageFlags::TRANSFER_SRC,
@@ -515,7 +513,7 @@ pub(crate) fn upload_mesh_buffers(
         ),
     );
 
-    let dst_data = unsafe { gpu_alloc.map_memory(&mut staging.allocation) }.unwrap();
+    let dst_data = staging.info.mapped_data as *mut u8;
     unsafe {
         std::ptr::copy_nonoverlapping(vertices.as_ptr() as *const u8, dst_data, vertex_buffer_size);
         std::ptr::copy_nonoverlapping(
@@ -524,7 +522,6 @@ pub(crate) fn upload_mesh_buffers(
             index_buffer_size,
         );
     };
-    unsafe { gpu_alloc.unmap_memory(&mut staging.allocation) };
 
     imm_data.submit(&context.device, graphics_queue, |cmd| {
         let vertex_copy = &[vk::BufferCopy::default()
