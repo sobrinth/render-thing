@@ -45,7 +45,7 @@ pub(crate) fn is_visible(obj: &RenderObject, view_proj: &glm::Mat4) -> bool {
         glm::vec4(o.x - e.x, o.y - e.y, o.z - e.z, 1.0),
     ];
 
-    let clip: Vec<glm::Vec4> = corners.iter().map(|c| mvp * c).collect();
+    let clip = corners.map(|c| mvp * c);
 
     let planes: [fn(&glm::Vec4) -> bool; 6] = [
         |c| c.x > c.w,
