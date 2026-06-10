@@ -9,13 +9,22 @@ layout(location = 3) in vec3 inWorldPos;
 
 layout(location = 0) out vec4 outFragColor;
 
+// Same 80-byte block as the vertex stage; the device address is opaque here.
+layout(push_constant) uniform constants {
+    mat4 render_matrix;
+    uvec2 vertexBuffer;
+    uint materialIndex;
+} PushConstants;
+
 void main() {
-    vec4 color = texture(colorTex, inUV) * materialData.colorFactors * vec4(inColor, 1.0);
+    Material mat = materialBuffer.materials[PushConstants.materialIndex];
+
+    vec4 color = texture(textures[mat.colorTexIndex], inUV) * mat.colorFactors * vec4(inColor, 1.0);
 
     // glTF metallic-roughness convention: G = roughness, B = metallic
-    vec4 metalRough = texture(metalRoughTex, inUV);
-    float roughness = clamp(metalRough.g * materialData.metalRoughFactors.y, 0.05, 1.0);
-    float metallic  = clamp(metalRough.b * materialData.metalRoughFactors.x, 0.0,  1.0);
+    vec4 metalRough = texture(textures[mat.metalRoughTexIndex], inUV);
+    float roughness = clamp(metalRough.g * mat.metalRoughFactors.y, 0.05, 1.0);
+    float metallic  = clamp(metalRough.b * mat.metalRoughFactors.x, 0.0,  1.0);
 
     vec3 N = normalize(inNormal);
     vec3 L = normalize(sceneData.sunlightDirection.xyz);

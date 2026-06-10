@@ -22,6 +22,8 @@ pub struct GPUMeshBuffers {
 pub struct GPUDrawPushConstants {
     pub world_matrix: [[f32; 4]; 4],
     pub vertex_buffer: vk::DeviceAddress,
+    pub material_index: u32,
+    pub _pad: u32,
 }
 
 #[repr(C)]

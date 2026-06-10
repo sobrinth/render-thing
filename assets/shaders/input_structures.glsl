@@ -10,10 +10,19 @@ layout(set = 0, binding = 0) uniform SceneData {
     vec4 cameraPos;
 } sceneData;
 
-layout(set = 1, binding = 0) uniform MaterialData {
+// Must match MAX_TEXTURES in crates/engine/src/bindless.rs.
+layout(set = 1, binding = 0) uniform sampler2D textures[4096];
+
+// Must match GPUMaterial in crates/engine/src/bindless.rs.
+struct Material {
     vec4 colorFactors;
     vec4 metalRoughFactors;
-} materialData;
+    uint colorTexIndex;
+    uint metalRoughTexIndex;
+    uint _pad0;
+    uint _pad1;
+};
 
-layout(set = 1, binding = 1) uniform sampler2D colorTex;
-layout(set = 1, binding = 2) uniform sampler2D metalRoughTex;
+layout(set = 1, binding = 1, std430) readonly buffer Materials {
+    Material materials[];
+} materialBuffer;

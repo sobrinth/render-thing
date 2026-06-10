@@ -38,8 +38,7 @@ pub(crate) struct TextureEntry {
 }
 
 pub(crate) struct MaterialEntry {
-    pub instance: std::sync::Arc<crate::material::MaterialInstance>,
-    pub _data_buffer: crate::resources::AllocatedBuffer,
+    pub pass_type: crate::material::MaterialPass,
 }
 
 pub(crate) struct RendererResources {
@@ -80,7 +79,6 @@ pub(crate) struct RendererResources {
     pub(crate) mesh_registry: Vec<MeshEntry>,
     pub(crate) texture_registry: Vec<TextureEntry>,
     pub(crate) material_registry: Vec<MaterialEntry>,
-    pub(crate) material_descriptor_allocator: descriptor::GrowableAllocator,
     pub(crate) default_white_texture: crate::TextureHandle,
     pub(crate) default_grey_texture: crate::TextureHandle,
     pub(crate) default_black_texture: crate::TextureHandle,
@@ -150,6 +148,7 @@ impl VulkanRenderer {
             draw_image.format,
             depth_image.format,
             &scene_data_layout.layout,
+            &bindless.layout.layout,
         );
 
         let gradient_shader_module =
@@ -305,21 +304,6 @@ impl VulkanRenderer {
         let linear_handle = unsafe { context.device.create_sampler(&sampler, None) }.unwrap();
         let default_sampler_linear = Arc::new(Sampler::new(linear_handle, context.device.clone()));
 
-        let material_descriptor_allocator = descriptor::GrowableAllocator::init(
-            &context.device,
-            1000,
-            &[
-                descriptor::PoolSizeRatio {
-                    descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
-                    ratio: 1.0,
-                },
-                descriptor::PoolSizeRatio {
-                    descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                    ratio: 2.0,
-                },
-            ],
-        );
-
         let mut renderer = Self {
             resources: ManuallyDrop::new(RendererResources {
                 frame_number: 0,
@@ -364,7 +348,6 @@ impl VulkanRenderer {
                 mesh_registry: Vec::new(),
                 texture_registry: Vec::new(),
                 material_registry: Vec::new(),
-                material_descriptor_allocator,
                 default_white_texture: crate::TextureHandle(0),
                 default_grey_texture: crate::TextureHandle(1),
                 default_black_texture: crate::TextureHandle(2),
@@ -579,63 +562,20 @@ impl VulkanRenderer {
         constants: crate::material::MaterialConstants,
         pass: crate::material::MaterialPass,
     ) -> crate::MaterialHandle {
-        use crate::material::MaterialResources;
-        use std::mem::size_of;
-
-        let data_buffer = AllocatedBuffer::create(
-            &self.resources.gpu_alloc,
-            size_of::<crate::material::MaterialConstants>() as u64,
-            vk::BufferUsageFlags::UNIFORM_BUFFER,
-            vk_mem::MemoryUsage::Auto,
-            Some(
-                vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE
-                    | vk_mem::AllocationCreateFlags::MAPPED,
-            ),
-        );
-
-        let dst = data_buffer.info.mapped_data;
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                (&constants as *const crate::material::MaterialConstants).cast::<u8>(),
-                dst.cast::<u8>(),
-                size_of::<crate::material::MaterialConstants>(),
-            )
-        };
-
-        let color_sampler = self.resources.texture_registry[color.0 as usize]
-            .sampler
-            .sampler;
-        let mr_sampler = self.resources.texture_registry[metal_rough.0 as usize]
-            .sampler
-            .sampler;
-        let color_image = Arc::clone(&self.resources.texture_registry[color.0 as usize].image);
-        let mr_image = Arc::clone(&self.resources.texture_registry[metal_rough.0 as usize].image);
-
-        let resources = MaterialResources {
-            color_image,
-            color_sampler,
-            metal_rough_image: mr_image,
-            metal_rough_sampler: mr_sampler,
-            data_buffer: &data_buffer,
-            data_buffer_offset: 0,
-        };
-
-        // Split disjoint field borrows through ManuallyDrop by going through &mut *self.resources.
-        let instance = {
-            let res = &mut *self.resources;
-            res.metal_rough_material.write_material(
-                &self.context.device,
-                pass,
-                &resources,
-                &mut res.material_descriptor_allocator,
-            )
-        };
-
         let idx = self.resources.material_registry.len() as u32;
-        self.resources.material_registry.push(MaterialEntry {
-            instance: Arc::new(instance),
-            _data_buffer: data_buffer,
-        });
+        self.resources.bindless.write_material(
+            idx,
+            crate::bindless::GPUMaterial {
+                color_factors: constants.color_factors,
+                metal_rough_factors: constants.metal_rough_factors,
+                color_tex_index: color.0,
+                metal_rough_tex_index: metal_rough.0,
+                _pad: [0; 2],
+            },
+        );
+        self.resources
+            .material_registry
+            .push(MaterialEntry { pass_type: pass });
         crate::MaterialHandle(idx)
     }
 
@@ -922,9 +862,6 @@ impl Drop for VulkanRenderer {
         log::trace!("Start: Dropping renderer");
         unsafe {
             self.context.device.device_wait_idle().unwrap();
-            self.resources
-                .material_descriptor_allocator
-                .destroy_pools(&self.context.device);
             ManuallyDrop::drop(&mut self.resources);
             ManuallyDrop::drop(&mut self.context); // device + instance destroyed last
         }

@@ -1,5 +1,4 @@
 use crate::command_buffer::{BarrierScope, CommandBuffer, Submitted, transition_image};
-use crate::material::MaterialInstance;
 use crate::meshes::Bounds;
 use crate::pipeline::ComputePushConstants;
 use crate::primitives::{GPUDrawPushConstants, GPUSceneData};
@@ -10,7 +9,6 @@ use crate::sync::{Fence, Semaphore};
 use crate::ui::{self, UiState};
 use ash::{Device, vk, vk::Handle};
 use nalgebra_glm as glm;
-use std::sync::Arc;
 use std::time::Instant;
 
 #[derive(Default)]
@@ -24,7 +22,7 @@ pub(crate) struct RenderObject {
     pub index_count: u32,
     pub first_index: u32,
     pub index_buffer: vk::Buffer,
-    pub material: Arc<MaterialInstance>,
+    pub material_index: u32,
     pub transform: glm::Mat4,
     pub vertex_buffer_address: vk::DeviceAddress,
     pub bounds: Bounds,
@@ -481,22 +479,20 @@ impl VulkanRenderer {
         let submitted = draws.len() as u32;
         for draw_call in draws {
             let mesh = &self.resources.mesh_registry[draw_call.mesh.0 as usize];
-            let mat = Arc::clone(
-                &self.resources.material_registry[draw_call.material.0 as usize].instance,
-            );
+            let pass = self.resources.material_registry[draw_call.material.0 as usize].pass_type;
 
             let obj = RenderObject {
                 index_count: mesh.index_count,
                 first_index: 0,
                 index_buffer: mesh.buffers.index_buffer.buffer,
-                material: mat,
+                material_index: draw_call.material.0,
                 transform: draw_call.transform,
                 vertex_buffer_address: mesh.buffers.vertex_buffer_address,
                 bounds: mesh.bounds,
             };
 
             if is_visible(&obj, &view_proj) {
-                match obj.material.pass_type {
+                match pass {
                     crate::material::MaterialPass::MainColor => ctx.opaque_surfaces.push(obj),
                     crate::material::MaterialPass::Transparent => {
                         ctx.transparent_surfaces.push(obj)
@@ -582,87 +578,33 @@ impl VulkanRenderer {
         }
         let scene_set = self.resources.frames[frame_index].scene_set;
 
-        // Sort opaque surfaces by material pointer then index buffer to minimise state changes
-        let mut opaque_indices: Vec<usize> = (0..ctx.opaque_surfaces.len()).collect();
-        opaque_indices.sort_unstable_by(|&a, &b| {
-            let oa = &ctx.opaque_surfaces[a];
-            let ob = &ctx.opaque_surfaces[b];
-            let ma = Arc::as_ptr(&oa.material) as usize;
-            let mb = Arc::as_ptr(&ob.material) as usize;
-            ma.cmp(&mb)
-                .then(oa.index_buffer.as_raw().cmp(&ob.index_buffer.as_raw()))
-        });
+        let bindless_set = self.resources.bindless.set;
+        let layout = self.resources.metal_rough_material.pipeline_layout.layout;
 
-        stats.opaque_count = opaque_indices.len() as u32;
-        stats.culled_count = ctx.culled_count;
+        // Sets 0 and 1 are layout-compatible across both pipelines; bind once.
+        unsafe {
+            self.context.device.cmd_bind_descriptor_sets(
+                cmd,
+                vk::PipelineBindPoint::GRAPHICS,
+                layout,
+                0,
+                &[scene_set, bindless_set],
+                &[],
+            );
+        }
 
-        // Opaque pass — full state tracking
-        let mut last_pipeline = vk::Pipeline::null();
-        let mut last_material: *const crate::material::MaterialInstance = std::ptr::null();
-        let mut last_index_buffer = vk::Buffer::null();
-        // All materials share compatible set 0/1 layouts (GltfMetallicRoughness)
-
-        for &i in &opaque_indices {
-            let obj = &ctx.opaque_surfaces[i];
-            let pipeline = obj.material.pipeline.pipeline;
-            let layout = obj.material.pipeline.layout;
-            let mat_ptr = Arc::as_ptr(&obj.material);
-
-            if pipeline != last_pipeline {
-                unsafe {
-                    self.context.device.cmd_bind_pipeline(
-                        cmd,
-                        vk::PipelineBindPoint::GRAPHICS,
-                        pipeline,
-                    );
-                    self.context.device.cmd_set_viewport(cmd, 0, &[viewport]);
-                    self.context.device.cmd_set_scissor(
-                        cmd,
-                        0,
-                        &[vk::Rect2D {
-                            offset: vk::Offset2D { x: 0, y: 0 },
-                            extent,
-                        }],
-                    );
-                }
-                last_pipeline = pipeline;
-            }
-
-            if mat_ptr != last_material {
-                unsafe {
-                    self.context.device.cmd_bind_descriptor_sets(
-                        cmd,
-                        vk::PipelineBindPoint::GRAPHICS,
-                        layout,
-                        0,
-                        &[scene_set, obj.material.material_set],
-                        &[],
-                    );
-                }
-                last_material = mat_ptr;
-            }
-
-            if obj.index_buffer != last_index_buffer {
-                unsafe {
-                    self.context.device.cmd_bind_index_buffer(
-                        cmd,
-                        obj.index_buffer,
-                        0,
-                        vk::IndexType::UINT32,
-                    );
-                }
-                last_index_buffer = obj.index_buffer;
-            }
-
+        let push_draw = |obj: &RenderObject| {
+            let push = GPUDrawPushConstants {
+                world_matrix: obj.transform.data.0,
+                vertex_buffer: obj.vertex_buffer_address,
+                material_index: obj.material_index,
+                _pad: 0,
+            };
             unsafe {
-                let push = GPUDrawPushConstants {
-                    world_matrix: obj.transform.data.0,
-                    vertex_buffer: obj.vertex_buffer_address,
-                };
                 self.context.device.cmd_push_constants(
                     cmd,
                     layout,
-                    vk::ShaderStageFlags::VERTEX,
+                    vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                     0,
                     std::slice::from_raw_parts(
                         (&push as *const GPUDrawPushConstants).cast::<u8>(),
@@ -678,11 +620,42 @@ impl VulkanRenderer {
                     0,
                 );
             }
+        };
+
+        // Opaque pass — one pipeline; sort by index buffer to minimise rebinds.
+        let mut opaque_indices: Vec<usize> = (0..ctx.opaque_surfaces.len()).collect();
+        opaque_indices.sort_unstable_by_key(|&i| ctx.opaque_surfaces[i].index_buffer.as_raw());
+
+        stats.opaque_count = opaque_indices.len() as u32;
+        stats.culled_count = ctx.culled_count;
+
+        unsafe {
+            self.context.device.cmd_bind_pipeline(
+                cmd,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.resources.metal_rough_material.opaque_pipeline.pipeline,
+            );
+        }
+        let mut last_index_buffer = vk::Buffer::null();
+        for &i in &opaque_indices {
+            let obj = &ctx.opaque_surfaces[i];
+            if obj.index_buffer != last_index_buffer {
+                unsafe {
+                    self.context.device.cmd_bind_index_buffer(
+                        cmd,
+                        obj.index_buffer,
+                        0,
+                        vk::IndexType::UINT32,
+                    );
+                }
+                last_index_buffer = obj.index_buffer;
+            }
+            push_draw(obj);
             stats.draw_call_count += 1;
             stats.triangle_count += obj.index_count / 3;
         }
 
-        // Transparent pass — naive back-to-front sort by squared distance from camera
+        // Transparent pass — back-to-front by squared distance from camera.
         let mut transparent: Vec<&RenderObject> = ctx.transparent_surfaces.iter().collect();
         transparent.sort_by(|a, b| {
             let t = |m: &glm::Mat4| glm::Vec3::from([m[(0, 3)], m[(1, 3)], m[(2, 3)]]);
@@ -693,48 +666,20 @@ impl VulkanRenderer {
 
         stats.transparent_count = transparent.len() as u32;
 
-        last_pipeline = vk::Pipeline::null();
-        last_material = std::ptr::null();
+        if !transparent.is_empty() {
+            unsafe {
+                self.context.device.cmd_bind_pipeline(
+                    cmd,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    self.resources
+                        .metal_rough_material
+                        .transparent_pipeline
+                        .pipeline,
+                );
+            }
+        }
         last_index_buffer = vk::Buffer::null();
         for obj in transparent {
-            let pipeline = obj.material.pipeline.pipeline;
-            let layout = obj.material.pipeline.layout;
-            let mat_ptr = Arc::as_ptr(&obj.material);
-
-            if pipeline != last_pipeline {
-                unsafe {
-                    self.context.device.cmd_bind_pipeline(
-                        cmd,
-                        vk::PipelineBindPoint::GRAPHICS,
-                        pipeline,
-                    );
-                    self.context.device.cmd_set_viewport(cmd, 0, &[viewport]);
-                    self.context.device.cmd_set_scissor(
-                        cmd,
-                        0,
-                        &[vk::Rect2D {
-                            offset: vk::Offset2D { x: 0, y: 0 },
-                            extent,
-                        }],
-                    );
-                }
-                last_pipeline = pipeline;
-            }
-
-            if mat_ptr != last_material {
-                unsafe {
-                    self.context.device.cmd_bind_descriptor_sets(
-                        cmd,
-                        vk::PipelineBindPoint::GRAPHICS,
-                        layout,
-                        0,
-                        &[scene_set, obj.material.material_set],
-                        &[],
-                    );
-                }
-                last_material = mat_ptr;
-            }
-
             if obj.index_buffer != last_index_buffer {
                 unsafe {
                     self.context.device.cmd_bind_index_buffer(
@@ -746,31 +691,7 @@ impl VulkanRenderer {
                 }
                 last_index_buffer = obj.index_buffer;
             }
-
-            unsafe {
-                let push = GPUDrawPushConstants {
-                    world_matrix: obj.transform.data.0,
-                    vertex_buffer: obj.vertex_buffer_address,
-                };
-                self.context.device.cmd_push_constants(
-                    cmd,
-                    layout,
-                    vk::ShaderStageFlags::VERTEX,
-                    0,
-                    std::slice::from_raw_parts(
-                        (&push as *const GPUDrawPushConstants).cast::<u8>(),
-                        size_of::<GPUDrawPushConstants>(),
-                    ),
-                );
-                self.context.device.cmd_draw_indexed(
-                    cmd,
-                    obj.index_count,
-                    1,
-                    obj.first_index,
-                    0,
-                    0,
-                );
-            }
+            push_draw(obj);
             stats.draw_call_count += 1;
             stats.triangle_count += obj.index_count / 3;
         }
@@ -970,46 +891,34 @@ impl VulkanRenderer {
             .buffers
             .vertex_buffer_address;
 
-        let mut last_pipeline = vk::Pipeline::null();
-        let mut last_mat_set = vk::DescriptorSet::null();
+        // All gizmo materials are MainColor, so the opaque pipeline covers every draw.
+        let bindless_set = self.resources.bindless.set;
+        let layout = self.resources.metal_rough_material.pipeline_layout.layout;
+
+        unsafe {
+            self.context.device.cmd_bind_pipeline(
+                cmd,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.resources.metal_rough_material.opaque_pipeline.pipeline,
+            );
+            self.context.device.cmd_bind_descriptor_sets(
+                cmd,
+                vk::PipelineBindPoint::GRAPHICS,
+                layout,
+                0,
+                &[gizmo_scene_set, bindless_set],
+                &[],
+            );
+            self.context.device.cmd_bind_index_buffer(
+                cmd,
+                index_buffer,
+                0,
+                vk::IndexType::UINT32,
+            );
+        }
+
         for &(mat_handle, arm_min, arm_max) in &draws {
-            let inst = &self.resources.material_registry[mat_handle.0 as usize].instance;
-            let pipeline = inst.pipeline.pipeline;
-            let layout = inst.pipeline.layout;
-            let mat_set = inst.material_set;
-
-            if pipeline != last_pipeline {
-                unsafe {
-                    self.context.device.cmd_bind_pipeline(
-                        cmd,
-                        vk::PipelineBindPoint::GRAPHICS,
-                        pipeline,
-                    );
-                }
-                last_pipeline = pipeline;
-            }
-
-            if mat_set != last_mat_set {
-                unsafe {
-                    self.context.device.cmd_bind_descriptor_sets(
-                        cmd,
-                        vk::PipelineBindPoint::GRAPHICS,
-                        layout,
-                        0,
-                        &[gizmo_scene_set, mat_set],
-                        &[],
-                    );
-                }
-                last_mat_set = mat_set;
-            }
-
             unsafe {
-                self.context.device.cmd_bind_index_buffer(
-                    cmd,
-                    index_buffer,
-                    0,
-                    vk::IndexType::UINT32,
-                );
                 let center = (arm_min + arm_max) * 0.5;
                 let scale = arm_max - arm_min;
                 let transform =
@@ -1017,11 +926,13 @@ impl VulkanRenderer {
                 let push = GPUDrawPushConstants {
                     world_matrix: transform.data.0,
                     vertex_buffer: vertex_buffer_address,
+                    material_index: mat_handle.0,
+                    _pad: 0,
                 };
                 self.context.device.cmd_push_constants(
                     cmd,
                     layout,
-                    vk::ShaderStageFlags::VERTEX,
+                    vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                     0,
                     std::slice::from_raw_parts(
                         (&push as *const GPUDrawPushConstants).cast::<u8>(),
