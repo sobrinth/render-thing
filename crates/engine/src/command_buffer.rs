@@ -1,4 +1,5 @@
 use crate::context::QueueData;
+use crate::resources::AllocatedBuffer;
 use crate::sync::Fence;
 use ash::Device;
 use ash::vk;
@@ -90,14 +91,28 @@ impl CommandBuffer<Executable> {
     }
 }
 
-pub struct ImmediateSubmitData {
+enum BatchCmd {
+    Idle(CommandBuffer<Submitted>),
+    Recording(CommandBuffer<Recording>),
+}
+
+/// Accumulates upload commands into a single command buffer that is submitted
+/// lazily: when pending staging memory crosses [`Self::FLUSH_THRESHOLD_BYTES`]
+/// or when `flush` runs at the start of a frame. Staging buffers are owned by
+/// the batch so their memory stays valid until the flush fence signals.
+pub struct UploadBatch {
     command_pool: vk::CommandPool,
-    command_buffer: vk::CommandBuffer,
+    cmd: Option<BatchCmd>,
+    staging: Vec<AllocatedBuffer>,
+    staging_bytes: vk::DeviceSize,
     fence: Fence,
     device: Device,
 }
 
-impl ImmediateSubmitData {
+impl UploadBatch {
+    /// Bounds peak host memory held by pending staging buffers.
+    const FLUSH_THRESHOLD_BYTES: vk::DeviceSize = 64 * 1024 * 1024;
+
     pub(crate) fn new(
         command_pool: vk::CommandPool,
         command_buffer: vk::CommandBuffer,
@@ -106,25 +121,57 @@ impl ImmediateSubmitData {
     ) -> Self {
         Self {
             command_pool,
-            command_buffer,
+            // Safety: freshly allocated buffer, sole wrapper, never submitted.
+            cmd: Some(BatchCmd::Idle(unsafe { CommandBuffer::wrap(command_buffer) })),
+            staging: Vec::new(),
+            staging_bytes: 0,
             fence,
             device,
         }
     }
 
-    pub(crate) fn submit<F>(&self, gpu: &Device, graphics_queue: &QueueData, func: F)
-    where
+    /// Records upload commands and takes ownership of the staging buffer they
+    /// read from, keeping it alive until the batch is flushed.
+    pub(crate) fn record_upload<F>(
+        &mut self,
+        gpu: &Device,
+        graphics_queue: &QueueData,
+        staging: AllocatedBuffer,
+        func: F,
+    ) where
         F: FnOnce(&CommandBuffer<Recording>),
     {
-        self.fence.reset();
-
-        let cmd = unsafe { CommandBuffer::<Submitted>::wrap(self.command_buffer) };
-        let cmd = cmd.reset(gpu);
-        let cmd = cmd.begin(gpu, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+        let cmd = match self.cmd.take().unwrap() {
+            BatchCmd::Recording(cmd) => cmd,
+            BatchCmd::Idle(cmd) => cmd
+                .reset(gpu)
+                .begin(gpu, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+        };
 
         func(&cmd);
 
+        self.cmd = Some(BatchCmd::Recording(cmd));
+        self.staging_bytes += staging.info.size;
+        self.staging.push(staging);
+
+        if self.staging_bytes >= Self::FLUSH_THRESHOLD_BYTES {
+            self.flush(gpu, graphics_queue);
+        }
+    }
+
+    /// Submits pending uploads and waits for completion; no-op when idle.
+    pub(crate) fn flush(&mut self, gpu: &Device, graphics_queue: &QueueData) {
+        let cmd = match self.cmd.take().unwrap() {
+            BatchCmd::Recording(cmd) => cmd,
+            idle @ BatchCmd::Idle(_) => {
+                self.cmd = Some(idle);
+                return;
+            }
+        };
+
         let cmd = cmd.end(gpu);
+
+        self.fence.reset();
 
         let cmd_info = &[vk::CommandBufferSubmitInfo::default()
             .command_buffer(cmd.handle())
@@ -135,16 +182,19 @@ impl ImmediateSubmitData {
         unsafe { gpu.queue_submit2(graphics_queue.queue, submit_info, self.fence.handle()) }
             .unwrap();
 
-        cmd.into_submitted(); // type-level marker: buffer is now pending, no Vulkan call
+        self.cmd = Some(BatchCmd::Idle(cmd.into_submitted()));
 
         assert!(
             self.fence.wait(1_000_000_000),
-            "immediate submit fence timed out"
+            "upload batch fence timed out"
         );
+
+        self.staging.clear();
+        self.staging_bytes = 0;
     }
 }
 
-impl Drop for ImmediateSubmitData {
+impl Drop for UploadBatch {
     fn drop(&mut self) {
         unsafe {
             self.device.destroy_command_pool(self.command_pool, None);

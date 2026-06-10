@@ -86,6 +86,14 @@ impl VulkanRenderer {
             }
         }
 
+        // Complete any pending resource uploads before this frame reads them.
+        {
+            let resources = &mut *self.resources;
+            resources
+                .upload_batch
+                .flush(&self.context.device, &resources.graphics_queue);
+        }
+
         let draw_extent = (
             f32::min(
                 self.resources.swapchain.properties.extent.width as f32,

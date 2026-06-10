@@ -1,4 +1,4 @@
-use crate::command_buffer::ImmediateSubmitData;
+use crate::command_buffer::UploadBatch;
 use crate::context::{QueueData, VkContext};
 use crate::descriptor;
 use crate::descriptor::{
@@ -55,7 +55,7 @@ pub(crate) struct RendererResources {
     pub(crate) bindless: crate::bindless::BindlessResources,
     pub(crate) graphics_queue: QueueData,
     pub(crate) descriptor_allocator: descriptor::Allocator,
-    pub(crate) immediate_submit: ImmediateSubmitData,
+    pub(crate) upload_batch: UploadBatch,
     pub(crate) draw_image: AllocatedImage,
     pub(crate) draw_image_descriptors: vk::DescriptorSet,
     pub(crate) draw_image_descriptor_layout: DescriptorSetLayout,
@@ -108,7 +108,7 @@ impl VulkanRenderer {
         let swapchain = Swapchain::create(&context, [window_size.0, window_size.1]);
         let ui = UiContext::initialize(&context.device, &gpu_alloc, swapchain.properties);
 
-        let immediate_submit = Self::create_immediate_submit_data(&context, &graphics_queue);
+        let mut upload_batch = Self::create_upload_batch(&context, &graphics_queue);
 
         let scene_data_layout = Self::init_scene_data(&context);
 
@@ -192,7 +192,7 @@ impl VulkanRenderer {
         let white_image = Arc::new(AllocatedImage::create_from_data(
             &gpu_alloc,
             &context,
-            &immediate_submit,
+            &mut upload_batch,
             &graphics_queue,
             &[WHITE],
             ImageCreateInfo {
@@ -207,7 +207,7 @@ impl VulkanRenderer {
         let grey_image = Arc::new(AllocatedImage::create_from_data(
             &gpu_alloc,
             &context,
-            &immediate_submit,
+            &mut upload_batch,
             &graphics_queue,
             &[GREY],
             ImageCreateInfo {
@@ -222,7 +222,7 @@ impl VulkanRenderer {
         let black_image = Arc::new(AllocatedImage::create_from_data(
             &gpu_alloc,
             &context,
-            &immediate_submit,
+            &mut upload_batch,
             &graphics_queue,
             &[BLACK],
             ImageCreateInfo {
@@ -248,7 +248,7 @@ impl VulkanRenderer {
         let checkerboard_image = Arc::new(AllocatedImage::create_from_data(
             &gpu_alloc,
             &context,
-            &immediate_submit,
+            &mut upload_batch,
             &graphics_queue,
             &checkerboard_data,
             ImageCreateInfo {
@@ -263,7 +263,7 @@ impl VulkanRenderer {
         let metal_rough_image = Arc::new(AllocatedImage::create_from_data(
             &gpu_alloc,
             &context,
-            &immediate_submit,
+            &mut upload_batch,
             &graphics_queue,
             &[METAL_ROUGH_DEFAULT],
             ImageCreateInfo {
@@ -319,7 +319,7 @@ impl VulkanRenderer {
                 bindless,
                 graphics_queue,
                 descriptor_allocator,
-                immediate_submit,
+                upload_batch,
                 draw_image,
                 draw_image_descriptors,
                 draw_image_descriptor_layout,
@@ -479,11 +479,13 @@ impl VulkanRenderer {
         vertices: &[Vertex],
     ) -> crate::MeshHandle {
         use crate::meshes::Bounds;
+        // Deref ManuallyDrop once so field borrows stay disjoint.
+        let resources = &mut *self.resources;
         let buffers = upload_mesh_buffers(
-            &self.resources.gpu_alloc,
+            &resources.gpu_alloc,
             &self.context,
-            &self.resources.immediate_submit,
-            &self.resources.graphics_queue,
+            &mut resources.upload_batch,
+            &resources.graphics_queue,
             indices,
             vertices,
         );
@@ -522,11 +524,13 @@ impl VulkanRenderer {
         height: u32,
         sampler_type: crate::SamplerType,
     ) -> crate::TextureHandle {
+        // Deref ManuallyDrop once so field borrows stay disjoint.
+        let resources = &mut *self.resources;
         let image = AllocatedImage::create_from_bytes(
-            &self.resources.gpu_alloc,
+            &resources.gpu_alloc,
             &self.context,
-            &self.resources.immediate_submit,
-            &self.resources.graphics_queue,
+            &mut resources.upload_batch,
+            &resources.graphics_queue,
             data,
             ImageCreateInfo {
                 resolution: (width, height),
@@ -589,10 +593,7 @@ impl VulkanRenderer {
         self.create_material(white, metal_rough, constants, pass)
     }
 
-    fn create_immediate_submit_data(
-        context: &VkContext,
-        graphics_queue: &QueueData,
-    ) -> ImmediateSubmitData {
+    fn create_upload_batch(context: &VkContext, graphics_queue: &QueueData) -> UploadBatch {
         let commandpool_info = vk::CommandPoolCreateInfo::default()
             .queue_family_index(graphics_queue.family_index)
             .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
@@ -608,7 +609,7 @@ impl VulkanRenderer {
         let command_buffer =
             unsafe { context.device.allocate_command_buffers(&commandbuffer_info) }.unwrap()[0];
 
-        ImmediateSubmitData::new(
+        UploadBatch::new(
             command_pool,
             command_buffer,
             Fence::new_signaled(&context.device),

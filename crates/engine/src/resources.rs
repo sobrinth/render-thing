@@ -1,4 +1,4 @@
-use crate::command_buffer::{BarrierScope, ImmediateSubmitData, transition_image};
+use crate::command_buffer::{BarrierScope, UploadBatch, transition_image};
 use crate::context::{QueueData, VkContext};
 use crate::primitives::{GPUMeshBuffers, Vertex};
 use ash::{Device, vk};
@@ -262,7 +262,7 @@ impl AllocatedImage {
     pub(crate) fn create_from_data(
         gpu_alloc: &Arc<vk_mem::Allocator>,
         context: &VkContext,
-        imm_data: &ImmediateSubmitData,
+        batch: &mut UploadBatch,
         graphics_queue: &QueueData,
         data: &[u32],
         info: ImageCreateInfo,
@@ -299,7 +299,8 @@ impl AllocatedImage {
         let dst_data = upload_buffer.info.mapped_data as *mut u8;
         unsafe { std::ptr::copy_nonoverlapping(data.as_ptr() as *const u8, dst_data, data_size) };
 
-        imm_data.submit(&context.device, graphics_queue, |cmd| {
+        let staging_buffer = upload_buffer.buffer;
+        batch.record_upload(&context.device, graphics_queue, upload_buffer, |cmd| {
             transition_image(
                 &context.device,
                 cmd.handle(),
@@ -325,7 +326,7 @@ impl AllocatedImage {
             unsafe {
                 context.device.cmd_copy_buffer_to_image(
                     cmd.handle(),
-                    upload_buffer.buffer,
+                    staging_buffer,
                     new_image.image,
                     vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                     &[copy_region],
@@ -357,7 +358,7 @@ impl AllocatedImage {
     pub(crate) fn create_from_bytes(
         gpu_alloc: &Arc<vk_mem::Allocator>,
         context: &VkContext,
-        imm_data: &ImmediateSubmitData,
+        batch: &mut UploadBatch,
         graphics_queue: &QueueData,
         data: &[u8],
         info: ImageCreateInfo,
@@ -392,7 +393,8 @@ impl AllocatedImage {
         let dst_data = upload_buffer.info.mapped_data as *mut u8;
         unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), dst_data, data.len()) };
 
-        imm_data.submit(&context.device, graphics_queue, |cmd| {
+        let staging_buffer = upload_buffer.buffer;
+        batch.record_upload(&context.device, graphics_queue, upload_buffer, |cmd| {
             transition_image(
                 &context.device,
                 cmd.handle(),
@@ -418,7 +420,7 @@ impl AllocatedImage {
             unsafe {
                 context.device.cmd_copy_buffer_to_image(
                     cmd.handle(),
-                    upload_buffer.buffer,
+                    staging_buffer,
                     new_image.image,
                     vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                     &[copy_region],
@@ -464,7 +466,7 @@ impl Drop for Sampler {
 pub(crate) fn upload_mesh_buffers(
     gpu_alloc: &Arc<vk_mem::Allocator>,
     context: &VkContext,
-    imm_data: &ImmediateSubmitData,
+    batch: &mut UploadBatch,
     graphics_queue: &QueueData,
     indices: &[u32],
     vertices: &[Vertex],
@@ -523,7 +525,8 @@ pub(crate) fn upload_mesh_buffers(
         );
     };
 
-    imm_data.submit(&context.device, graphics_queue, |cmd| {
+    let staging_buffer = staging.buffer;
+    batch.record_upload(&context.device, graphics_queue, staging, |cmd| {
         let vertex_copy = &[vk::BufferCopy::default()
             .dst_offset(0)
             .src_offset(0)
@@ -531,7 +534,7 @@ pub(crate) fn upload_mesh_buffers(
         unsafe {
             context.device.cmd_copy_buffer(
                 cmd.handle(),
-                staging.buffer,
+                staging_buffer,
                 meshes.vertex_buffer.buffer,
                 vertex_copy,
             )
@@ -545,7 +548,7 @@ pub(crate) fn upload_mesh_buffers(
         unsafe {
             context.device.cmd_copy_buffer(
                 cmd.handle(),
-                staging.buffer,
+                staging_buffer,
                 meshes.index_buffer.buffer,
                 index_copy,
             )
