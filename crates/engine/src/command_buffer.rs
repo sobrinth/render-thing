@@ -152,12 +152,68 @@ impl Drop for ImmediateSubmitData {
     }
 }
 
+/// Stage + access masks for one side of an image barrier.
+#[derive(Clone, Copy)]
+pub(crate) struct BarrierScope {
+    pub(crate) stage: vk::PipelineStageFlags2,
+    pub(crate) access: vk::AccessFlags2,
+}
+
+impl BarrierScope {
+    pub(crate) const NONE: Self = Self {
+        stage: vk::PipelineStageFlags2::NONE,
+        access: vk::AccessFlags2::NONE,
+    };
+    pub(crate) const COMPUTE_STORAGE_RW: Self = Self {
+        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+        access: vk::AccessFlags2::from_raw(
+            vk::AccessFlags2::SHADER_STORAGE_READ.as_raw()
+                | vk::AccessFlags2::SHADER_STORAGE_WRITE.as_raw(),
+        ),
+    };
+    pub(crate) const COLOR_ATTACHMENT_RW: Self = Self {
+        stage: vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
+        access: vk::AccessFlags2::from_raw(
+            vk::AccessFlags2::COLOR_ATTACHMENT_READ.as_raw()
+                | vk::AccessFlags2::COLOR_ATTACHMENT_WRITE.as_raw(),
+        ),
+    };
+    pub(crate) const COLOR_ATTACHMENT_WRITE: Self = Self {
+        stage: vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
+        access: vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
+    };
+    pub(crate) const DEPTH_ATTACHMENT_RW: Self = Self {
+        stage: vk::PipelineStageFlags2::from_raw(
+            vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS.as_raw()
+                | vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS.as_raw(),
+        ),
+        access: vk::AccessFlags2::from_raw(
+            vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ.as_raw()
+                | vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE.as_raw(),
+        ),
+    };
+    pub(crate) const TRANSFER_READ: Self = Self {
+        stage: vk::PipelineStageFlags2::TRANSFER,
+        access: vk::AccessFlags2::TRANSFER_READ,
+    };
+    pub(crate) const TRANSFER_WRITE: Self = Self {
+        stage: vk::PipelineStageFlags2::TRANSFER,
+        access: vk::AccessFlags2::TRANSFER_WRITE,
+    };
+    pub(crate) const FRAGMENT_SAMPLED_READ: Self = Self {
+        stage: vk::PipelineStageFlags2::FRAGMENT_SHADER,
+        access: vk::AccessFlags2::SHADER_SAMPLED_READ,
+    };
+}
+
 pub(crate) fn transition_image(
     device: &Device,
     cmd: vk::CommandBuffer,
     image: vk::Image,
     current_layout: vk::ImageLayout,
     new_layout: vk::ImageLayout,
+    src: BarrierScope,
+    dst: BarrierScope,
 ) {
     let aspect_mask = if new_layout == vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL {
         vk::ImageAspectFlags::DEPTH
@@ -173,12 +229,10 @@ pub(crate) fn transition_image(
         .layer_count(vk::REMAINING_ARRAY_LAYERS);
 
     let image_barrier = vk::ImageMemoryBarrier2::default()
-        // Using ALL_COMMANDS is inefficient as it will stop gpu commands completely when it arrives at the barrier
-        // for more complex applications use correct stage masks
-        .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-        .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
-        .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-        .dst_access_mask(vk::AccessFlags2::MEMORY_WRITE | vk::AccessFlags2::MEMORY_READ)
+        .src_stage_mask(src.stage)
+        .src_access_mask(src.access)
+        .dst_stage_mask(dst.stage)
+        .dst_access_mask(dst.access)
         .old_layout(current_layout)
         .new_layout(new_layout)
         .subresource_range(subresource_range)

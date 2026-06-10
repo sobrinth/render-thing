@@ -1,4 +1,4 @@
-use crate::command_buffer::{ImmediateSubmitData, transition_image};
+use crate::command_buffer::{BarrierScope, ImmediateSubmitData, transition_image};
 use crate::context::{QueueData, VkContext};
 use crate::primitives::{GPUMeshBuffers, Vertex};
 use ash::{Device, vk};
@@ -211,6 +211,8 @@ impl AllocatedImage {
                 new_image.image,
                 vk::ImageLayout::UNDEFINED,
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                BarrierScope::NONE,
+                BarrierScope::TRANSFER_WRITE,
             );
 
             let copy_region = vk::BufferImageCopy::default()
@@ -241,6 +243,8 @@ impl AllocatedImage {
                 new_image.image,
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                 vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                BarrierScope::TRANSFER_WRITE,
+                BarrierScope::FRAGMENT_SAMPLED_READ,
             );
         });
 
@@ -297,6 +301,8 @@ impl AllocatedImage {
                 new_image.image,
                 vk::ImageLayout::UNDEFINED,
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                BarrierScope::NONE,
+                BarrierScope::TRANSFER_WRITE,
             );
 
             let copy_region = vk::BufferImageCopy::default()
@@ -327,6 +333,8 @@ impl AllocatedImage {
                 new_image.image,
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                 vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                BarrierScope::TRANSFER_WRITE,
+                BarrierScope::FRAGMENT_SAMPLED_READ,
             );
         });
 

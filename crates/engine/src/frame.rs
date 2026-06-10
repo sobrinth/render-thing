@@ -1,4 +1,4 @@
-use crate::command_buffer::{CommandBuffer, Submitted, transition_image};
+use crate::command_buffer::{BarrierScope, CommandBuffer, Submitted, transition_image};
 use crate::descriptor::{DescriptorWriter, GrowableAllocator};
 use crate::material::MaterialInstance;
 use crate::meshes::Bounds;
@@ -186,13 +186,20 @@ impl VulkanRenderer {
         );
 
         // transition the main draw image to Layout::GENERAL so we can draw into it.
-        // we will overwrite the contents, so we don't care about the old layout
+        // we will overwrite the contents, so we don't care about the old layout.
+        // src covers the previous frame's last accesses (attachment writes + blit read).
         transition_image(
             &self.context.device,
             cmd.handle(),
             self.resources.draw_image.image,
             vk::ImageLayout::UNDEFINED,
             vk::ImageLayout::GENERAL,
+            BarrierScope {
+                stage: vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT
+                    | vk::PipelineStageFlags2::TRANSFER,
+                access: vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
+            },
+            BarrierScope::COMPUTE_STORAGE_RW,
         );
 
         self.draw_background(cmd.handle(), &self.context.device, draw_extent);
@@ -203,6 +210,8 @@ impl VulkanRenderer {
             self.resources.draw_image.image,
             vk::ImageLayout::GENERAL,
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            BarrierScope::COMPUTE_STORAGE_RW,
+            BarrierScope::COLOR_ATTACHMENT_RW,
         );
 
         transition_image(
@@ -211,6 +220,9 @@ impl VulkanRenderer {
             self.resources.depth_image.image,
             vk::ImageLayout::UNDEFINED,
             vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+            // src covers the previous frame's depth accesses
+            BarrierScope::DEPTH_ATTACHMENT_RW,
+            BarrierScope::DEPTH_ATTACHMENT_RW,
         );
 
         let t0 = Instant::now();
@@ -232,13 +244,22 @@ impl VulkanRenderer {
             self.resources.draw_image.image,
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+            BarrierScope::COLOR_ATTACHMENT_WRITE,
+            BarrierScope::TRANSFER_READ,
         );
+        // src stage TRANSFER chains with the acquire-semaphore wait (also at TRANSFER),
+        // ordering this layout transition after the presentation engine releases the image.
         transition_image(
             &self.context.device,
             cmd.handle(),
             self.resources.swapchain.images[image_index],
             vk::ImageLayout::UNDEFINED,
             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            BarrierScope {
+                stage: vk::PipelineStageFlags2::TRANSFER,
+                access: vk::AccessFlags2::NONE,
+            },
+            BarrierScope::TRANSFER_WRITE,
         );
 
         // copy the draw image to the swapchain image
@@ -259,6 +280,8 @@ impl VulkanRenderer {
             self.resources.swapchain.images[image_index],
             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            BarrierScope::TRANSFER_WRITE,
+            BarrierScope::COLOR_ATTACHMENT_RW,
         );
 
         let color_attachment_info = vk::RenderingAttachmentInfo::default()
@@ -290,13 +313,17 @@ impl VulkanRenderer {
 
         unsafe { self.context.device.cmd_end_rendering(cmd.handle()) }
 
-        // set the swapchain image to Layout::PRESENT so we can present it
+        // set the swapchain image to Layout::PRESENT so we can present it.
+        // dst is NONE: visibility to the presentation engine is handled by the
+        // present-semaphore signal (ALL_COMMANDS), which covers this transition.
         transition_image(
             &self.context.device,
             cmd.handle(),
             self.resources.swapchain.images[image_index],
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             vk::ImageLayout::PRESENT_SRC_KHR,
+            BarrierScope::COLOR_ATTACHMENT_WRITE,
+            BarrierScope::NONE,
         );
 
         // finalize command buffer
@@ -309,19 +336,22 @@ impl VulkanRenderer {
             .command_buffer(cmd.handle())
             .device_mask(0)];
 
+        // Wait at TRANSFER: the first use of the swapchain image is the layout
+        // transition + blit, whose src stage (TRANSFER) chains with this wait.
         let wait_info = &[vk::SemaphoreSubmitInfo::default()
             .semaphore(
                 self.resources.frames[frame_index]
                     .acquire_semaphore
                     .handle(),
             )
-            .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+            .stage_mask(vk::PipelineStageFlags2::TRANSFER)
             .device_index(0)
             .value(1)];
 
+        // Signal at ALL_COMMANDS so the final transition to PRESENT_SRC is covered.
         let signal_info = &[vk::SemaphoreSubmitInfo::default()
             .semaphore(self.resources.swapchain.semaphores[image_index].handle())
-            .stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS)
+            .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
             .device_index(0)
             .value(1)];
 
