@@ -84,6 +84,7 @@ pub(crate) struct RendererResources {
     pub(crate) default_black_texture: crate::TextureHandle,
     pub(crate) default_checkerboard_texture: crate::TextureHandle,
     pub(crate) default_metal_rough_texture: crate::TextureHandle,
+    pub(crate) max_sampler_anisotropy: f32,
     pub(crate) gizmo_mesh: crate::MeshHandle,
     /// [0..2] bright R/G/B for positive arm + cap, [3..5] dim R/G/B for negative stubs, [6] origin cube
     pub(crate) gizmo_materials: [crate::MaterialHandle; 7],
@@ -270,6 +271,14 @@ impl VulkanRenderer {
             },
         ));
 
+        let max_sampler_anisotropy = unsafe {
+            context
+                .instance
+                .get_physical_device_properties(context.physical_device)
+        }
+        .limits
+        .max_sampler_anisotropy;
+
         let sampler = vk::SamplerCreateInfo::default()
             .mag_filter(vk::Filter::NEAREST)
             .min_filter(vk::Filter::NEAREST);
@@ -280,7 +289,9 @@ impl VulkanRenderer {
 
         let sampler = vk::SamplerCreateInfo::default()
             .mag_filter(vk::Filter::LINEAR)
-            .min_filter(vk::Filter::LINEAR);
+            .min_filter(vk::Filter::LINEAR)
+            .anisotropy_enable(true)
+            .max_anisotropy(max_sampler_anisotropy);
 
         let linear_handle = unsafe { context.device.create_sampler(&sampler, None) }.unwrap();
         let default_sampler_linear = Arc::new(Sampler::new(linear_handle, context.device.clone()));
@@ -348,6 +359,7 @@ impl VulkanRenderer {
                 default_black_texture: crate::TextureHandle(2),
                 default_checkerboard_texture: crate::TextureHandle(3),
                 default_metal_rough_texture: crate::TextureHandle(4),
+                max_sampler_anisotropy,
                 gizmo_mesh: crate::MeshHandle(0),
                 gizmo_materials: [crate::MaterialHandle(0); 7],
                 show_dev_overlay: false,
@@ -535,7 +547,9 @@ impl VulkanRenderer {
         };
         let sampler_info = vk::SamplerCreateInfo::default()
             .mag_filter(filter)
-            .min_filter(filter);
+            .min_filter(filter)
+            .anisotropy_enable(filter == vk::Filter::LINEAR)
+            .max_anisotropy(self.resources.max_sampler_anisotropy);
         let vk_sampler =
             unsafe { self.context.device.create_sampler(&sampler_info, None) }.unwrap();
         let sampler = Arc::new(Sampler::new(vk_sampler, self.context.device.clone()));
