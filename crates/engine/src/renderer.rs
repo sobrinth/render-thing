@@ -127,7 +127,7 @@ impl VulkanRenderer {
         let depth_image = AllocatedImage::create(
             &context,
             &gpu_alloc,
-            (2560, 1440),
+            config.max_render_resolution,
             vk::Format::D32_SFLOAT,
             vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
             vk::ImageAspectFlags::DEPTH,
