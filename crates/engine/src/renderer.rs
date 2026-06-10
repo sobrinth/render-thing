@@ -281,7 +281,9 @@ impl VulkanRenderer {
 
         let sampler = vk::SamplerCreateInfo::default()
             .mag_filter(vk::Filter::NEAREST)
-            .min_filter(vk::Filter::NEAREST);
+            .min_filter(vk::Filter::NEAREST)
+            .mipmap_mode(vk::SamplerMipmapMode::NEAREST)
+            .max_lod(vk::LOD_CLAMP_NONE);
 
         let nearest_handle = unsafe { context.device.create_sampler(&sampler, None) }.unwrap();
         let default_sampler_nearest =
@@ -290,6 +292,8 @@ impl VulkanRenderer {
         let sampler = vk::SamplerCreateInfo::default()
             .mag_filter(vk::Filter::LINEAR)
             .min_filter(vk::Filter::LINEAR)
+            .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
+            .max_lod(vk::LOD_CLAMP_NONE)
             .anisotropy_enable(true)
             .max_anisotropy(max_sampler_anisotropy);
 
@@ -538,16 +542,18 @@ impl VulkanRenderer {
                     | vk::ImageUsageFlags::TRANSFER_DST
                     | vk::ImageUsageFlags::TRANSFER_SRC,
                 aspect_flags: vk::ImageAspectFlags::COLOR,
-                mip_mapped: false,
+                mip_mapped: true,
             },
         );
-        let filter = match sampler_type {
-            crate::SamplerType::Linear => vk::Filter::LINEAR,
-            crate::SamplerType::Nearest => vk::Filter::NEAREST,
+        let (filter, mipmap_mode) = match sampler_type {
+            crate::SamplerType::Linear => (vk::Filter::LINEAR, vk::SamplerMipmapMode::LINEAR),
+            crate::SamplerType::Nearest => (vk::Filter::NEAREST, vk::SamplerMipmapMode::NEAREST),
         };
         let sampler_info = vk::SamplerCreateInfo::default()
             .mag_filter(filter)
             .min_filter(filter)
+            .mipmap_mode(mipmap_mode)
+            .max_lod(vk::LOD_CLAMP_NONE)
             .anisotropy_enable(filter == vk::Filter::LINEAR)
             .max_anisotropy(self.resources.max_sampler_anisotropy);
         let vk_sampler =

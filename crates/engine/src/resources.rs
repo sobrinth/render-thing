@@ -80,6 +80,7 @@ pub(crate) struct AllocatedImage {
     pub(crate) allocation: vk_mem::Allocation,
     pub(crate) extent: vk::Extent3D,
     pub(crate) format: vk::Format,
+    pub(crate) mip_levels: u32,
     device: Device,
     allocator: Arc<vk_mem::Allocator>,
 }
@@ -156,10 +157,105 @@ impl AllocatedImage {
             allocation,
             extent,
             format,
+            mip_levels,
             device: context.device.clone(),
             allocator: Arc::clone(gpu_alloc),
         }
     }
+}
+
+/// Fill mips 1..n by successively blitting each level down to the next.
+/// Expects all mip levels in TRANSFER_DST; leaves the whole image in SHADER_READ_ONLY.
+fn generate_mipmaps(device: &Device, cmd: vk::CommandBuffer, image: &AllocatedImage) {
+    let mut mip_width = image.extent.width as i32;
+    let mut mip_height = image.extent.height as i32;
+
+    for mip in 0..image.mip_levels {
+        // Transition the current level (just written by the copy or previous blit)
+        // to TRANSFER_SRC so it can be read by the next blit.
+        let barrier = vk::ImageMemoryBarrier2::default()
+            .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+            .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+            .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+            .dst_access_mask(vk::AccessFlags2::TRANSFER_READ)
+            .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+            .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+            .image(image.image)
+            .subresource_range(
+                vk::ImageSubresourceRange::default()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .base_mip_level(mip)
+                    .level_count(1)
+                    .base_array_layer(0)
+                    .layer_count(1),
+            );
+        let barriers = [barrier];
+        let dependency_info = vk::DependencyInfo::default().image_memory_barriers(&barriers);
+        unsafe { device.cmd_pipeline_barrier2(cmd, &dependency_info) };
+
+        if mip + 1 == image.mip_levels {
+            break;
+        }
+
+        let next_width = i32::max(mip_width / 2, 1);
+        let next_height = i32::max(mip_height / 2, 1);
+
+        let blit_region = vk::ImageBlit2::default()
+            .src_offsets([
+                vk::Offset3D::default(),
+                vk::Offset3D {
+                    x: mip_width,
+                    y: mip_height,
+                    z: 1,
+                },
+            ])
+            .dst_offsets([
+                vk::Offset3D::default(),
+                vk::Offset3D {
+                    x: next_width,
+                    y: next_height,
+                    z: 1,
+                },
+            ])
+            .src_subresource(
+                vk::ImageSubresourceLayers::default()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .mip_level(mip)
+                    .base_array_layer(0)
+                    .layer_count(1),
+            )
+            .dst_subresource(
+                vk::ImageSubresourceLayers::default()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .mip_level(mip + 1)
+                    .base_array_layer(0)
+                    .layer_count(1),
+            );
+
+        let blit_info = vk::BlitImageInfo2::default()
+            .src_image(image.image)
+            .src_image_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+            .dst_image(image.image)
+            .dst_image_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+            .filter(vk::Filter::LINEAR)
+            .regions(std::slice::from_ref(&blit_region));
+
+        unsafe { device.cmd_blit_image2(cmd, &blit_info) };
+
+        mip_width = next_width;
+        mip_height = next_height;
+    }
+
+    // All levels are now TRANSFER_SRC; make the whole image sampleable.
+    transition_image(
+        device,
+        cmd,
+        image.image,
+        vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        BarrierScope::TRANSFER_READ,
+        BarrierScope::FRAGMENT_SAMPLED_READ,
+    );
 }
 
 impl AllocatedImage {
@@ -237,15 +333,19 @@ impl AllocatedImage {
                 )
             }
 
-            transition_image(
-                &context.device,
-                cmd.handle(),
-                new_image.image,
-                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                BarrierScope::TRANSFER_WRITE,
-                BarrierScope::FRAGMENT_SAMPLED_READ,
-            );
+            if new_image.mip_levels > 1 {
+                generate_mipmaps(&context.device, cmd.handle(), &new_image);
+            } else {
+                transition_image(
+                    &context.device,
+                    cmd.handle(),
+                    new_image.image,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                    BarrierScope::TRANSFER_WRITE,
+                    BarrierScope::FRAGMENT_SAMPLED_READ,
+                );
+            }
         });
 
         new_image
@@ -327,15 +427,19 @@ impl AllocatedImage {
                 )
             }
 
-            transition_image(
-                &context.device,
-                cmd.handle(),
-                new_image.image,
-                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                BarrierScope::TRANSFER_WRITE,
-                BarrierScope::FRAGMENT_SAMPLED_READ,
-            );
+            if new_image.mip_levels > 1 {
+                generate_mipmaps(&context.device, cmd.handle(), &new_image);
+            } else {
+                transition_image(
+                    &context.device,
+                    cmd.handle(),
+                    new_image.image,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                    BarrierScope::TRANSFER_WRITE,
+                    BarrierScope::FRAGMENT_SAMPLED_READ,
+                );
+            }
         });
 
         new_image
