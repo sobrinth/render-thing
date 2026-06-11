@@ -56,12 +56,10 @@ impl GltfMetallicRoughness {
         let vert_module = load_spv("assets/shaders/mesh.vert.spv", &context.device);
         let frag_module = load_spv("assets/shaders/mesh.frag.spv", &context.device);
 
-        // One range covering both stages: the vertex stage reads matrix + vertex
-        // buffer address, the fragment stage reads the material index.
         let push_range = vk::PushConstantRange::default()
             .offset(0)
             .size(size_of::<crate::primitives::GPUDrawPushConstants>() as u32)
-            .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT);
+            .stage_flags(vk::ShaderStageFlags::VERTEX);
 
         let set_layouts = [*scene_data_layout, *bindless_layout];
         let layout_info = vk::PipelineLayoutCreateInfo::default()

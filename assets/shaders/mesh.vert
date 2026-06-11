@@ -2,37 +2,28 @@
 #extension GL_EXT_buffer_reference : require
 #extension GL_GOOGLE_include_directive : require
 #include "input_structures.glsl"
+#include "object_structures.glsl"
 
 layout(location = 0) out vec3 outColor;
 layout(location = 1) out vec2 outUV;
 layout(location = 2) out vec3 outNormal;
 layout(location = 3) out vec3 outWorldPos;
-
-struct Vertex {
-    vec3 position;
-    float uv_x;
-    vec3 normal;
-    float uv_y;
-    vec4 color;
-};
-
-layout(buffer_reference, std430) readonly buffer VertexBuffer {
-    Vertex vertices[];
-};
+layout(location = 4) flat out uint outMaterialIndex;
 
 layout(push_constant) uniform constants {
-    mat4 render_matrix;
-    VertexBuffer vertexBuffer;
-    uint materialIndex;
+    ObjectBuffer objectBuffer;
 } PushConstants;
 
 void main() {
-    Vertex v = PushConstants.vertexBuffer.vertices[gl_VertexIndex];
+    // first_instance carries the object record index; instance count is always 1.
+    ObjectData obj = PushConstants.objectBuffer.objects[gl_InstanceIndex];
+    Vertex v = obj.vertexBuffer.vertices[gl_VertexIndex];
 
-    vec4 worldPos = PushConstants.render_matrix * vec4(v.position, 1.0f);
+    vec4 worldPos = obj.model * vec4(v.position, 1.0f);
     gl_Position = sceneData.viewproj * worldPos;
     outColor = v.color.xyz;
     outUV = vec2(v.uv_x, v.uv_y);
-    outNormal = normalize(mat3(transpose(inverse(mat3(PushConstants.render_matrix)))) * v.normal);
+    outNormal = normalize(mat3(obj.normalMatrix) * v.normal);
     outWorldPos = worldPos.xyz;
+    outMaterialIndex = obj.materialIndex;
 }

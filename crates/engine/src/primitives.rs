@@ -20,10 +20,7 @@ pub struct GPUMeshBuffers {
 
 #[repr(C)]
 pub struct GPUDrawPushConstants {
-    pub world_matrix: [[f32; 4]; 4],
-    pub vertex_buffer: vk::DeviceAddress,
-    pub material_index: u32,
-    pub _pad: u32,
+    pub object_buffer: vk::DeviceAddress,
 }
 
 /// Per-draw record read by mesh.vert via buffer reference.

@@ -653,6 +653,22 @@ impl VulkanRenderer {
             );
         }
 
+        let push = GPUDrawPushConstants {
+            object_buffer: self.resources.frames[frame_index].object_buffer_address,
+        };
+        unsafe {
+            self.context.device.cmd_push_constants(
+                cmd,
+                layout,
+                vk::ShaderStageFlags::VERTEX,
+                0,
+                std::slice::from_raw_parts(
+                    (&push as *const GPUDrawPushConstants).cast::<u8>(),
+                    size_of::<GPUDrawPushConstants>(),
+                ),
+            );
+        }
+
         // Opaque pass — one pipeline; sort by index buffer to minimise rebinds.
         ctx.opaque_surfaces
             .sort_unstable_by_key(|obj| obj.index_buffer.as_raw());
@@ -685,23 +701,7 @@ impl VulkanRenderer {
         }
 
         let push_draw = |obj: &RenderObject, draw_id: u32| {
-            let push = GPUDrawPushConstants {
-                world_matrix: obj.transform.data.0,
-                vertex_buffer: obj.vertex_buffer_address,
-                material_index: obj.material_index,
-                _pad: 0,
-            };
             unsafe {
-                self.context.device.cmd_push_constants(
-                    cmd,
-                    layout,
-                    vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                    0,
-                    std::slice::from_raw_parts(
-                        (&push as *const GPUDrawPushConstants).cast::<u8>(),
-                        size_of::<GPUDrawPushConstants>(),
-                    ),
-                );
                 self.context.device.cmd_draw_indexed(
                     cmd,
                     obj.index_count,
@@ -993,6 +993,22 @@ impl VulkanRenderer {
                 .cmd_bind_index_buffer(cmd, index_buffer, 0, vk::IndexType::UINT32);
         }
 
+        let push = GPUDrawPushConstants {
+            object_buffer: self.resources.frames[frame_index].object_buffer_address,
+        };
+        unsafe {
+            self.context.device.cmd_push_constants(
+                cmd,
+                layout,
+                vk::ShaderStageFlags::VERTEX,
+                0,
+                std::slice::from_raw_parts(
+                    (&push as *const GPUDrawPushConstants).cast::<u8>(),
+                    size_of::<GPUDrawPushConstants>(),
+                ),
+            );
+        }
+
         assert!(
             base_object_index as usize + draws.len() <= MAX_DRAWS as usize,
             "gizmo draws exceed MAX_DRAWS ({MAX_DRAWS})"
@@ -1009,22 +1025,6 @@ impl VulkanRenderer {
             let record = object_record(&transform, vertex_buffer_address, mat_handle.0);
             unsafe {
                 object_ptr.add(draw_id as usize).write(record);
-                let push = GPUDrawPushConstants {
-                    world_matrix: transform.data.0,
-                    vertex_buffer: vertex_buffer_address,
-                    material_index: mat_handle.0,
-                    _pad: 0,
-                };
-                self.context.device.cmd_push_constants(
-                    cmd,
-                    layout,
-                    vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                    0,
-                    std::slice::from_raw_parts(
-                        (&push as *const GPUDrawPushConstants).cast::<u8>(),
-                        size_of::<GPUDrawPushConstants>(),
-                    ),
-                );
                 self.context
                     .device
                     .cmd_draw_indexed(cmd, index_count, 1, 0, 0, draw_id);
