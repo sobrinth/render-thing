@@ -5,7 +5,7 @@ use crate::primitives::{GPUDrawPushConstants, GPUSceneData};
 use crate::renderer::{FRAME_OVERLAP, VulkanRenderer};
 use crate::resources::AllocatedBuffer;
 use crate::stats::{DrawStats, FrameStats};
-use crate::sync::{Fence, Semaphore};
+use crate::sync::Semaphore;
 use crate::ui::{self, UiState};
 use ash::{Device, vk, vk::Handle};
 use nalgebra_glm as glm;
@@ -112,18 +112,20 @@ impl VulkanRenderer {
         };
 
         const ONE_SECOND: u64 = 1_000_000_000;
-        let frame_index: usize = (self.resources.frame_number % FRAME_OVERLAP) as usize;
+        let frame_index: usize = (self.resources.frame_number % FRAME_OVERLAP as u64) as usize;
 
         let raw_cmd = self.resources.frames[frame_index].main_command_buffer;
 
-        // wait for the GPU to have finished the last rendering of this frame.
+        // Wait for the GPU to have finished the last rendering of this frame slot:
+        // frame N-2's submit (with FRAME_OVERLAP = 2) signaled timeline value N-1. Frames 0 and 1 wait for
+        // value >= 0, which a fresh timeline (initial value 0) already satisfies.
+        let wait_value =
+            self.resources.frame_number.saturating_sub(FRAME_OVERLAP as u64 - 1);
         assert!(
-            self.resources.frames[frame_index]
-                .render_fence
-                .wait(ONE_SECOND),
-            "render fence timed out"
+            self.resources.frame_timeline.wait(wait_value, ONE_SECOND),
+            "frame timeline wait timed out"
         );
-        // Safe: the fence wait above guarantees the GPU has finished all commands from the
+        // Safe: the timeline wait above guarantees the GPU has finished all commands from the
         // previous use of this slot (frame N-2). By then frame N-3's GPU work is also done
         // (confirmed at start of frame N-1), so textures marked free in slot N%2 two frames
         // ago are no longer referenced by any in-flight GPU work.
@@ -148,11 +150,6 @@ impl VulkanRenderer {
             }
             Err(err) => panic!("Failed to acquire next image. Cause: {err}"),
         };
-
-        // Reset only after a successful acquire: the OUT_OF_DATE early return
-        // above must leave the fence signaled, or the next draw() on this frame
-        // slot would wait on a fence that no submit will ever signal.
-        self.resources.frames[frame_index].render_fence.reset();
 
         // semaphores[image_index] is re-signaled at submit below; the present
         // fence proves the previous present waiting on it is done with it
@@ -196,7 +193,8 @@ impl VulkanRenderer {
         let update_time_ms = t0.elapsed().as_secs_f32() * 1000.0;
 
         // Reset and begin command buffer for the frame
-        // SAFETY: render_fence was waited on and reset above; no other wrapper exists for this handle.
+        // SAFETY: the frame timeline wait above proves the GPU is done with this
+        // slot's previous submit; no other wrapper exists for this handle.
         let cmd = unsafe { CommandBuffer::<Submitted>::wrap(raw_cmd) };
         let cmd = cmd.reset(&self.context.device);
         let cmd = cmd.begin(
@@ -369,11 +367,19 @@ impl VulkanRenderer {
             .value(1)];
 
         // Signal at ALL_COMMANDS so the final transition to PRESENT_SRC is covered.
-        let signal_info = &[vk::SemaphoreSubmitInfo::default()
-            .semaphore(self.resources.swapchain.semaphores[image_index].handle())
-            .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-            .device_index(0)
-            .value(1)];
+        // The frame timeline signals value N+1, releasing this slot for frame N+2 (with FRAME_OVERLAP = 2).
+        let signal_info = &[
+            vk::SemaphoreSubmitInfo::default()
+                .semaphore(self.resources.swapchain.semaphores[image_index].handle())
+                .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                .device_index(0)
+                .value(1),
+            vk::SemaphoreSubmitInfo::default()
+                .semaphore(self.resources.frame_timeline.handle())
+                .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                .device_index(0)
+                .value(self.resources.frame_number + 1),
+        ];
 
         let submit_info = vk::SubmitInfo2::default()
             .wait_semaphore_infos(wait_info)
@@ -381,12 +387,12 @@ impl VulkanRenderer {
             .command_buffer_infos(cmd_info);
 
         // submit a command buffer to the queue and execute it.
-        // render_fence will now block until the graphic commands finish execution
+        // the frame timeline signal marks this slot reusable once execution finishes
         unsafe {
             self.context.device.queue_submit2(
                 self.resources.graphics_queue.queue,
                 &[submit_info],
-                self.resources.frames[frame_index].render_fence.handle(),
+                vk::Fence::null(),
             )
         }
         .unwrap();
@@ -1030,7 +1036,6 @@ pub struct FrameData {
     pub command_pool: vk::CommandPool,
     pub(crate) main_command_buffer: vk::CommandBuffer,
     pub(crate) acquire_semaphore: Semaphore,
-    pub(crate) render_fence: Fence,
     pub(crate) scene_set: vk::DescriptorSet,
     pub(crate) gizmo_scene_set: vk::DescriptorSet,
     pub(crate) scene_buffer: AllocatedBuffer,
@@ -1048,12 +1053,10 @@ impl Drop for FrameData {
 }
 
 impl FrameData {
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         command_pool: vk::CommandPool,
         main_command_buffer: vk::CommandBuffer,
         acquire_semaphore: Semaphore,
-        render_fence: Fence,
         scene_set: vk::DescriptorSet,
         gizmo_scene_set: vk::DescriptorSet,
         scene_buffer: AllocatedBuffer,
@@ -1063,7 +1066,6 @@ impl FrameData {
             command_pool,
             main_command_buffer,
             acquire_semaphore,
-            render_fence,
             scene_set,
             gizmo_scene_set,
             scene_buffer,

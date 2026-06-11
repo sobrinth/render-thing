@@ -12,7 +12,7 @@ use crate::resources::{
 };
 use crate::stats::StatsHistory;
 use crate::swapchain::Swapchain;
-use crate::sync::{Fence, Semaphore};
+use crate::sync::{Fence, Semaphore, TimelineSemaphore};
 use crate::ui::UiContext;
 use ash::{Device, vk};
 use itertools::Itertools;
@@ -40,7 +40,7 @@ pub(crate) struct MaterialEntry {
 }
 
 pub(crate) struct RendererResources {
-    pub(crate) frame_number: u32,
+    pub(crate) frame_number: u64,
     pub(crate) window_size: (u32, u32),
     pub(crate) render_scale: f32,
     pub(crate) render_size: (u32, u32),
@@ -49,6 +49,8 @@ pub(crate) struct RendererResources {
     pub(crate) gpu_alloc: Arc<vk_mem::Allocator>,
     pub(crate) swapchain: Swapchain,
     pub(crate) frames: Vec<FrameData>,
+    /// Signaled with value N+1 by frame N's submit; frame pacing waits on it.
+    pub(crate) frame_timeline: TimelineSemaphore,
     pub(crate) frame_descriptor_pool: descriptor::Allocator,
     pub(crate) bindless: crate::bindless::BindlessResources,
     pub(crate) graphics_queue: QueueData,
@@ -304,6 +306,8 @@ impl VulkanRenderer {
         let linear_handle = unsafe { context.device.create_sampler(&sampler, None) }.unwrap();
         let default_sampler_linear = Arc::new(Sampler::new(linear_handle, context.device.clone()));
 
+        let frame_timeline = TimelineSemaphore::new(&context.device);
+
         let mut renderer = Self {
             resources: ManuallyDrop::new(RendererResources {
                 frame_number: 0,
@@ -315,6 +319,7 @@ impl VulkanRenderer {
                 gpu_alloc,
                 swapchain,
                 frames,
+                frame_timeline,
                 frame_descriptor_pool,
                 bindless,
                 graphics_queue,
@@ -655,8 +660,6 @@ impl VulkanRenderer {
 
             let swapchain_semaphore = Semaphore::new(&context.device);
 
-            let render_fence = Fence::new_signaled(&context.device);
-
             let scene_buffer = AllocatedBuffer::create(
                 gpu_alloc,
                 2 * size_of::<GPUSceneData>() as u64,
@@ -695,7 +698,6 @@ impl VulkanRenderer {
                 pool,
                 buffer,
                 swapchain_semaphore,
-                render_fence,
                 scene_set,
                 gizmo_scene_set,
                 scene_buffer,

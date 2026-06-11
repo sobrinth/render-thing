@@ -75,3 +75,48 @@ impl Drop for Semaphore {
         unsafe { self.device.destroy_semaphore(self.handle, None) }
     }
 }
+
+pub(crate) struct TimelineSemaphore {
+    handle: vk::Semaphore,
+    device: Device,
+}
+
+impl TimelineSemaphore {
+    pub(crate) fn new(device: &Device) -> Self {
+        let mut type_info = vk::SemaphoreTypeCreateInfo::default()
+            .semaphore_type(vk::SemaphoreType::TIMELINE)
+            .initial_value(0);
+        let info = vk::SemaphoreCreateInfo::default().push_next(&mut type_info);
+        let handle = unsafe { device.create_semaphore(&info, None) }.unwrap();
+        Self {
+            handle,
+            device: device.clone(),
+        }
+    }
+
+    pub(crate) fn handle(&self) -> vk::Semaphore {
+        self.handle
+    }
+
+    /// Blocks until the semaphore reaches `value`. Non-destructive: unlike a
+    /// fence wait there is no reset, so re-waiting on the same value is fine.
+    #[must_use]
+    pub(crate) fn wait(&self, value: u64, timeout_ns: u64) -> bool {
+        let semaphores = [self.handle];
+        let values = [value];
+        let wait_info = vk::SemaphoreWaitInfo::default()
+            .semaphores(&semaphores)
+            .values(&values);
+        match unsafe { self.device.wait_semaphores(&wait_info, timeout_ns) } {
+            Ok(()) => true,
+            Err(vk::Result::TIMEOUT) => false,
+            Err(e) => panic!("wait_semaphores failed: {e}"),
+        }
+    }
+}
+
+impl Drop for TimelineSemaphore {
+    fn drop(&mut self) {
+        unsafe { self.device.destroy_semaphore(self.handle, None) }
+    }
+}
