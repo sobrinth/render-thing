@@ -1,7 +1,7 @@
 use crate::command_buffer::{BarrierScope, CommandBuffer, Submitted, transition_image};
 use crate::meshes::Bounds;
 use crate::pipeline::ComputePushConstants;
-use crate::primitives::{GPUDrawPushConstants, GPUSceneData};
+use crate::primitives::{GPUDrawPushConstants, GPUObjectData, GPUSceneData};
 use crate::renderer::{FRAME_OVERLAP, VulkanRenderer};
 use crate::resources::AllocatedBuffer;
 use crate::stats::{DrawStats, FrameStats};
@@ -64,6 +64,21 @@ pub(crate) fn is_visible(obj: &RenderObject, view_proj: &glm::Mat4) -> bool {
         }
     }
     true
+}
+
+fn object_record(
+    transform: &glm::Mat4,
+    vertex_buffer: vk::DeviceAddress,
+    material_index: u32,
+) -> GPUObjectData {
+    let normal = glm::mat3_to_mat4(&glm::inverse_transpose(glm::mat4_to_mat3(transform)));
+    GPUObjectData {
+        model: transform.data.0,
+        normal_matrix: normal.data.0,
+        vertex_buffer,
+        material_index,
+        _pad: 0,
+    }
 }
 
 impl VulkanRenderer {
@@ -255,7 +270,13 @@ impl VulkanRenderer {
         let draw_time_ms = t0.elapsed().as_secs_f32() * 1000.0;
         self.resources.draw_ctx = draw_ctx;
 
-        self.draw_dev_overlay(frame_index, cmd.handle(), draw_extent, &camera.view_matrix);
+        self.draw_dev_overlay(
+            frame_index,
+            cmd.handle(),
+            draw_extent,
+            &camera.view_matrix,
+            draw_stats.opaque_count + draw_stats.transparent_count,
+        );
 
         // transition the draw image and the swapchain image into their correct transfer layouts.
         transition_image(
@@ -632,7 +653,38 @@ impl VulkanRenderer {
             );
         }
 
-        let push_draw = |obj: &RenderObject| {
+        // Opaque pass — one pipeline; sort by index buffer to minimise rebinds.
+        ctx.opaque_surfaces
+            .sort_unstable_by_key(|obj| obj.index_buffer.as_raw());
+        // Transparent pass — back-to-front by squared distance from camera.
+        ctx.transparent_surfaces.sort_unstable_by(|a, b| {
+            let t = |m: &glm::Mat4| glm::Vec3::from([m[(0, 3)], m[(1, 3)], m[(2, 3)]]);
+            let da = (t(&a.transform) - cam_pos).norm_squared();
+            let db = (t(&b.transform) - cam_pos).norm_squared();
+            db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let total = ctx.opaque_surfaces.len() + ctx.transparent_surfaces.len();
+        assert!(
+            total <= MAX_DRAWS as usize,
+            "{total} draws submitted, exceeding MAX_DRAWS ({MAX_DRAWS})"
+        );
+        // Draw ID = record index = draw order; each draw passes its ID via first_instance.
+        let object_ptr = self.resources.frames[frame_index]
+            .object_buffer
+            .info
+            .mapped_data as *mut GPUObjectData;
+        for (i, obj) in ctx
+            .opaque_surfaces
+            .iter()
+            .chain(ctx.transparent_surfaces.iter())
+            .enumerate()
+        {
+            let record = object_record(&obj.transform, obj.vertex_buffer_address, obj.material_index);
+            unsafe { object_ptr.add(i).write(record) };
+        }
+
+        let push_draw = |obj: &RenderObject, draw_id: u32| {
             let push = GPUDrawPushConstants {
                 world_matrix: obj.transform.data.0,
                 vertex_buffer: obj.vertex_buffer_address,
@@ -656,14 +708,10 @@ impl VulkanRenderer {
                     1,
                     obj.first_index,
                     0,
-                    0,
+                    draw_id,
                 );
             }
         };
-
-        // Opaque pass — one pipeline; sort by index buffer to minimise rebinds.
-        ctx.opaque_surfaces
-            .sort_unstable_by_key(|obj| obj.index_buffer.as_raw());
 
         stats.opaque_count = ctx.opaque_surfaces.len() as u32;
         stats.culled_count = ctx.culled_count;
@@ -676,7 +724,7 @@ impl VulkanRenderer {
             );
         }
         let mut last_index_buffer = vk::Buffer::null();
-        for obj in &ctx.opaque_surfaces {
+        for (i, obj) in ctx.opaque_surfaces.iter().enumerate() {
             if obj.index_buffer != last_index_buffer {
                 unsafe {
                     self.context.device.cmd_bind_index_buffer(
@@ -688,18 +736,10 @@ impl VulkanRenderer {
                 }
                 last_index_buffer = obj.index_buffer;
             }
-            push_draw(obj);
+            push_draw(obj, i as u32);
             stats.draw_call_count += 1;
             stats.triangle_count += obj.index_count / 3;
         }
-
-        // Transparent pass — back-to-front by squared distance from camera.
-        ctx.transparent_surfaces.sort_unstable_by(|a, b| {
-            let t = |m: &glm::Mat4| glm::Vec3::from([m[(0, 3)], m[(1, 3)], m[(2, 3)]]);
-            let da = (t(&a.transform) - cam_pos).norm_squared();
-            let db = (t(&b.transform) - cam_pos).norm_squared();
-            db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
-        });
 
         stats.transparent_count = ctx.transparent_surfaces.len() as u32;
 
@@ -715,8 +755,9 @@ impl VulkanRenderer {
                 );
             }
         }
+        let opaque_len = ctx.opaque_surfaces.len() as u32;
         last_index_buffer = vk::Buffer::null();
-        for obj in &ctx.transparent_surfaces {
+        for (i, obj) in ctx.transparent_surfaces.iter().enumerate() {
             if obj.index_buffer != last_index_buffer {
                 unsafe {
                     self.context.device.cmd_bind_index_buffer(
@@ -728,7 +769,7 @@ impl VulkanRenderer {
                 }
                 last_index_buffer = obj.index_buffer;
             }
-            push_draw(obj);
+            push_draw(obj, opaque_len + i as u32);
             stats.draw_call_count += 1;
             stats.triangle_count += obj.index_count / 3;
         }
@@ -743,6 +784,7 @@ impl VulkanRenderer {
         cmd: vk::CommandBuffer,
         draw_extent: vk::Extent2D,
         camera_view: &glm::Mat4,
+        base_object_index: u32,
     ) {
         if !self.resources.show_dev_overlay {
             return;
@@ -951,12 +993,22 @@ impl VulkanRenderer {
                 .cmd_bind_index_buffer(cmd, index_buffer, 0, vk::IndexType::UINT32);
         }
 
-        for &(mat_handle, arm_min, arm_max) in &draws {
+        assert!(
+            base_object_index as usize + draws.len() <= MAX_DRAWS as usize,
+            "gizmo draws exceed MAX_DRAWS ({MAX_DRAWS})"
+        );
+        let object_ptr = self.resources.frames[frame_index]
+            .object_buffer
+            .info
+            .mapped_data as *mut GPUObjectData;
+        for (i, &(mat_handle, arm_min, arm_max)) in draws.iter().enumerate() {
+            let center = (arm_min + arm_max) * 0.5;
+            let scale = arm_max - arm_min;
+            let transform = glm::scale(&glm::translate(&glm::Mat4::identity(), &center), &scale);
+            let draw_id = base_object_index + i as u32;
+            let record = object_record(&transform, vertex_buffer_address, mat_handle.0);
             unsafe {
-                let center = (arm_min + arm_max) * 0.5;
-                let scale = arm_max - arm_min;
-                let transform =
-                    glm::scale(&glm::translate(&glm::Mat4::identity(), &center), &scale);
+                object_ptr.add(draw_id as usize).write(record);
                 let push = GPUDrawPushConstants {
                     world_matrix: transform.data.0,
                     vertex_buffer: vertex_buffer_address,
@@ -975,7 +1027,7 @@ impl VulkanRenderer {
                 );
                 self.context
                     .device
-                    .cmd_draw_indexed(cmd, index_count, 1, 0, 0, 0);
+                    .cmd_draw_indexed(cmd, index_count, 1, 0, 0, draw_id);
             }
         }
 
