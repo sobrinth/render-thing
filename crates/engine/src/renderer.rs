@@ -681,8 +681,7 @@ impl VulkanRenderer {
                         | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
                 ),
             );
-            let address_info =
-                vk::BufferDeviceAddressInfo::default().buffer(object_buffer.buffer);
+            let address_info = vk::BufferDeviceAddressInfo::default().buffer(object_buffer.buffer);
             let object_buffer_address =
                 unsafe { context.device.get_buffer_device_address(&address_info) };
 

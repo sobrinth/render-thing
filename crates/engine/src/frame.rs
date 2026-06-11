@@ -136,8 +136,10 @@ impl VulkanRenderer {
         // Wait for the GPU to have finished the last rendering of this frame slot:
         // frame N-2's submit (with FRAME_OVERLAP = 2) signaled timeline value N-1. Frames 0 and 1 wait for
         // value >= 0, which a fresh timeline (initial value 0) already satisfies.
-        let wait_value =
-            self.resources.frame_number.saturating_sub(FRAME_OVERLAP as u64 - 1);
+        let wait_value = self
+            .resources
+            .frame_number
+            .saturating_sub(FRAME_OVERLAP as u64 - 1);
         assert!(
             self.resources.frame_timeline.wait(wait_value, ONE_SECOND),
             "frame timeline wait timed out"
@@ -696,21 +698,23 @@ impl VulkanRenderer {
             .chain(ctx.transparent_surfaces.iter())
             .enumerate()
         {
-            let record = object_record(&obj.transform, obj.vertex_buffer_address, obj.material_index);
+            let record = object_record(
+                &obj.transform,
+                obj.vertex_buffer_address,
+                obj.material_index,
+            );
             unsafe { object_ptr.add(i).write(record) };
         }
 
-        let push_draw = |obj: &RenderObject, draw_id: u32| {
-            unsafe {
-                self.context.device.cmd_draw_indexed(
-                    cmd,
-                    obj.index_count,
-                    1,
-                    obj.first_index,
-                    0,
-                    draw_id,
-                );
-            }
+        let push_draw = |obj: &RenderObject, draw_id: u32| unsafe {
+            self.context.device.cmd_draw_indexed(
+                cmd,
+                obj.index_count,
+                1,
+                obj.first_index,
+                0,
+                draw_id,
+            );
         };
 
         stats.opaque_count = ctx.opaque_surfaces.len() as u32;
@@ -1109,6 +1113,7 @@ impl Drop for FrameData {
 }
 
 impl FrameData {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         command_pool: vk::CommandPool,
         main_command_buffer: vk::CommandBuffer,
