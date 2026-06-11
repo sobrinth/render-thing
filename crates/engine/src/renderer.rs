@@ -2,11 +2,11 @@ use crate::command_buffer::UploadBatch;
 use crate::context::{QueueData, VkContext};
 use crate::descriptor;
 use crate::descriptor::{DescriptorSetLayout, DescriptorWriter, LayoutBuilder, PoolSizeRatio};
-use crate::frame::FrameData;
+use crate::frame::{FrameData, MAX_DRAWS};
 use crate::input::{ElementState, Key, NamedKey};
 use crate::material::GltfMetallicRoughness;
 use crate::pipeline::{ComputeEffect, ComputePushConstants, Pipeline, PipelineLayout};
-use crate::primitives::{GPUSceneData, Vertex};
+use crate::primitives::{GPUObjectData, GPUSceneData, Vertex};
 use crate::resources::{
     AllocatedBuffer, AllocatedImage, ImageCreateInfo, Sampler, upload_mesh_buffers,
 };
@@ -671,6 +671,21 @@ impl VulkanRenderer {
                 ),
             );
 
+            let object_buffer = AllocatedBuffer::create(
+                gpu_alloc,
+                MAX_DRAWS as u64 * size_of::<GPUObjectData>() as u64,
+                vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
+                vk_mem::MemoryUsage::Auto,
+                Some(
+                    vk_mem::AllocationCreateFlags::MAPPED
+                        | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
+                ),
+            );
+            let address_info =
+                vk::BufferDeviceAddressInfo::default().buffer(object_buffer.buffer);
+            let object_buffer_address =
+                unsafe { context.device.get_buffer_device_address(&address_info) };
+
             let scene_set = scene_set_pool.allocate(&context.device, scene_data_layout.layout);
             let gizmo_scene_set =
                 scene_set_pool.allocate(&context.device, scene_data_layout.layout);
@@ -701,6 +716,8 @@ impl VulkanRenderer {
                 scene_set,
                 gizmo_scene_set,
                 scene_buffer,
+                object_buffer,
+                object_buffer_address,
                 context.device.clone(),
             );
             frames.push(frame);

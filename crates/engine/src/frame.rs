@@ -11,6 +11,8 @@ use ash::{Device, vk, vk::Handle};
 use nalgebra_glm as glm;
 use std::time::Instant;
 
+pub(crate) const MAX_DRAWS: u32 = 16384;
+
 #[derive(Default)]
 pub(crate) struct DrawContext {
     pub opaque_surfaces: Vec<RenderObject>,
@@ -1039,12 +1041,14 @@ pub struct FrameData {
     pub(crate) scene_set: vk::DescriptorSet,
     pub(crate) gizmo_scene_set: vk::DescriptorSet,
     pub(crate) scene_buffer: AllocatedBuffer,
+    pub(crate) object_buffer: AllocatedBuffer,
+    pub(crate) object_buffer_address: vk::DeviceAddress,
     device: Device,
 }
 
 impl Drop for FrameData {
     fn drop(&mut self) {
-        // scene_buffer drops automatically via its own Drop;
+        // scene_buffer and object_buffer drop automatically via AllocatedBuffer::Drop;
         // descriptor sets die with the pool owned by the renderer
         unsafe {
             self.device.destroy_command_pool(self.command_pool, None);
@@ -1060,6 +1064,8 @@ impl FrameData {
         scene_set: vk::DescriptorSet,
         gizmo_scene_set: vk::DescriptorSet,
         scene_buffer: AllocatedBuffer,
+        object_buffer: AllocatedBuffer,
+        object_buffer_address: vk::DeviceAddress,
         device: Device,
     ) -> Self {
         Self {
@@ -1069,6 +1075,8 @@ impl FrameData {
             scene_set,
             gizmo_scene_set,
             scene_buffer,
+            object_buffer,
+            object_buffer_address,
             device,
         }
     }

@@ -26,6 +26,20 @@ pub struct GPUDrawPushConstants {
     pub _pad: u32,
 }
 
+/// Per-draw record read by mesh.vert via buffer reference.
+/// Must match ObjectData in assets/shaders/object_structures.glsl.
+#[repr(C)]
+pub struct GPUObjectData {
+    pub model: [[f32; 4]; 4],
+    /// Inverse-transpose of model's upper 3×3; only that part is meaningful.
+    pub normal_matrix: [[f32; 4]; 4],
+    pub vertex_buffer: vk::DeviceAddress,
+    pub material_index: u32,
+    pub _pad: u32,
+}
+
+const _: () = assert!(size_of::<GPUObjectData>() == 144);
+
 #[repr(C)]
 #[derive(Default)]
 pub struct GPUSceneData {
