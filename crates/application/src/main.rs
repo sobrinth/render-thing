@@ -33,6 +33,8 @@ struct Application {
     mouse_pos: (i32, i32),
     scene: Option<scene::SceneGraph>,
     scene_panel: scene::ScenePanel,
+    /// Reused across frames to avoid re-allocating the draw list.
+    draw_buffer: Vec<engine::DrawCall>,
 }
 
 impl Default for Application {
@@ -45,6 +47,7 @@ impl Default for Application {
             mouse_pos: (0, 0),
             scene: None,
             scene_panel: scene::ScenePanel::new(),
+            draw_buffer: Vec::new(),
         }
     }
 }
@@ -166,18 +169,18 @@ impl ApplicationHandler for Application {
                     proj_matrix: proj,
                     position: camera.position,
                 };
-                let draws: Vec<engine::DrawCall> = self
-                    .scene
-                    .as_ref()
-                    .map(|s| s.flatten_visible())
-                    .unwrap_or_default();
+                match &self.scene {
+                    Some(scene) => scene.flatten_visible_into(&mut self.draw_buffer),
+                    None => self.draw_buffer.clear(),
+                }
                 let scene_panel = &mut self.scene_panel;
                 let scene_opt = &mut self.scene;
-                let platform_output = engine.draw(camera_view, &draws, raw_input, |ctx| {
-                    if let Some(scene) = scene_opt {
-                        scene_panel.show(ctx, scene);
-                    }
-                });
+                let platform_output =
+                    engine.draw(camera_view, &self.draw_buffer, raw_input, |ctx| {
+                        if let Some(scene) = scene_opt {
+                            scene_panel.show(ctx, scene);
+                        }
+                    });
                 ui.handle_platform_output(window, platform_output);
                 window.request_redraw();
             }

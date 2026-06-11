@@ -249,7 +249,7 @@ pub(crate) fn before_frame(
     let primitives = ctx.tessellate(shapes, pixels_per_point);
 
     if !textures_delta.free.is_empty() {
-        ui.textures_to_free[frame_index] = Some(textures_delta.free.clone());
+        ui.textures_to_free[frame_index] = Some(textures_delta.free);
     }
 
     if !textures_delta.set.is_empty() {

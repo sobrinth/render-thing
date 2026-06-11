@@ -88,6 +88,8 @@ pub(crate) struct RendererResources {
     pub(crate) gizmo_materials: [crate::MaterialHandle; 7],
     pub(crate) show_dev_overlay: bool,
     pub(crate) last_frame_start: Option<std::time::Instant>,
+    /// Per-frame scratch reused across frames to keep surface vec capacity.
+    pub(crate) draw_ctx: crate::frame::DrawContext,
 }
 
 pub(crate) struct VulkanRenderer {
@@ -356,6 +358,7 @@ impl VulkanRenderer {
                 gizmo_materials: [crate::MaterialHandle(0); 7],
                 show_dev_overlay: false,
                 last_frame_start: None,
+                draw_ctx: crate::frame::DrawContext::default(),
             }),
             context: ManuallyDrop::new(context),
         };

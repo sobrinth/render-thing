@@ -1,14 +1,15 @@
 use crate::graph::{NodeId, SceneGraph};
 use engine::Engine;
 use nalgebra_glm as glm;
+use std::borrow::Cow;
 
 pub fn load_gltf(engine: &mut Engine, path: &str) -> Option<SceneGraph> {
     let (doc, buffers, images) = gltf::import(path).ok()?;
 
     let mut texture_handles: Vec<engine::TextureHandle> = Vec::new();
     for image in &images {
-        let data: Vec<u8> = match image.format {
-            gltf::image::Format::R8G8B8A8 => image.pixels.clone(),
+        let data: Cow<[u8]> = match image.format {
+            gltf::image::Format::R8G8B8A8 => Cow::Borrowed(&image.pixels),
             gltf::image::Format::R8G8B8 => image
                 .pixels
                 .chunks(3)
@@ -114,38 +115,42 @@ fn traverse(
         for (prim_idx, prim) in mesh.primitives().enumerate() {
             let reader = prim.reader(|buf| Some(&buffers[buf.index()]));
 
-            let positions: Vec<[f32; 3]> = reader
+            // Build vertices in one pass: positions establish the vec with
+            // attribute defaults, then each present attribute fills in place.
+            let mut vertices: Vec<engine::Vertex> = reader
                 .read_positions()
-                .map(|p| p.collect())
+                .map(|positions| {
+                    positions
+                        .map(|position| engine::Vertex {
+                            position,
+                            uv_x: 0.0,
+                            normal: [1.0, 0.0, 0.0],
+                            uv_y: 0.0,
+                            color: [1.0, 1.0, 1.0, 1.0],
+                        })
+                        .collect()
+                })
                 .unwrap_or_default();
-            if positions.is_empty() {
+            if vertices.is_empty() {
                 continue;
             }
 
-            let normals: Vec<[f32; 3]> = reader
-                .read_normals()
-                .map(|n| n.collect())
-                .unwrap_or_else(|| vec![[1.0, 0.0, 0.0]; positions.len()]);
-            let uvs: Vec<[f32; 2]> = reader
-                .read_tex_coords(0)
-                .map(|u| u.into_f32().collect())
-                .unwrap_or_else(|| vec![[0.0, 0.0]; positions.len()]);
-            let colors: Vec<[f32; 4]> = reader
-                .read_colors(0)
-                .map(|c| c.into_rgba_f32().collect())
-                .unwrap_or_else(|| vec![[1.0, 1.0, 1.0, 1.0]; positions.len()]);
-
-            let vertices: Vec<engine::Vertex> = positions
-                .iter()
-                .enumerate()
-                .map(|(i, pos)| engine::Vertex {
-                    position: *pos,
-                    uv_x: uvs[i][0],
-                    normal: normals[i],
-                    uv_y: uvs[i][1],
-                    color: colors[i],
-                })
-                .collect();
+            if let Some(normals) = reader.read_normals() {
+                for (vertex, normal) in vertices.iter_mut().zip(normals) {
+                    vertex.normal = normal;
+                }
+            }
+            if let Some(uvs) = reader.read_tex_coords(0) {
+                for (vertex, uv) in vertices.iter_mut().zip(uvs.into_f32()) {
+                    vertex.uv_x = uv[0];
+                    vertex.uv_y = uv[1];
+                }
+            }
+            if let Some(colors) = reader.read_colors(0) {
+                for (vertex, color) in vertices.iter_mut().zip(colors.into_rgba_f32()) {
+                    vertex.color = color;
+                }
+            }
 
             let indices: Vec<u32> = reader
                 .read_indices()

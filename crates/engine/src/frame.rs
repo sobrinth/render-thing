@@ -177,7 +177,10 @@ impl VulkanRenderer {
         );
 
         let t0 = Instant::now();
-        let draw_ctx = self.update_scene(&camera, draws);
+        // Take the persistent scratch context out of resources so it can be
+        // borrowed alongside &mut self; returned below to keep its capacity.
+        let mut draw_ctx = std::mem::take(&mut self.resources.draw_ctx);
+        self.update_scene(&camera, draws, &mut draw_ctx);
         let update_time_ms = t0.elapsed().as_secs_f32() * 1000.0;
 
         // Reset and begin command buffer for the frame
@@ -234,10 +237,11 @@ impl VulkanRenderer {
             frame_index,
             cmd.handle(),
             draw_extent,
-            &draw_ctx,
+            &mut draw_ctx,
             camera.position,
         );
         let draw_time_ms = t0.elapsed().as_secs_f32() * 1000.0;
+        self.resources.draw_ctx = draw_ctx;
 
         self.draw_dev_overlay(frame_index, cmd.handle(), draw_extent, &camera.view_matrix);
 
@@ -473,17 +477,17 @@ impl VulkanRenderer {
         &mut self,
         camera: &crate::CameraView,
         draws: &[crate::DrawCall],
-    ) -> DrawContext {
+        ctx: &mut DrawContext,
+    ) {
+        let view_proj = camera.proj_matrix * camera.view_matrix;
         self.resources.scene_data.view = camera.view_matrix.data.0;
         self.resources.scene_data.proj = camera.proj_matrix.data.0;
-        self.resources.scene_data.view_proj = (camera.proj_matrix * camera.view_matrix).data.0;
+        self.resources.scene_data.view_proj = view_proj.data.0;
         self.resources.scene_data.camera_pos =
             [camera.position.x, camera.position.y, camera.position.z, 1.0];
 
-        let view_proj =
-            glm::Mat4::from_column_slice(self.resources.scene_data.view_proj.as_flattened());
-
-        let mut ctx = DrawContext::default();
+        ctx.opaque_surfaces.clear();
+        ctx.transparent_surfaces.clear();
         let submitted = draws.len() as u32;
         for draw_call in draws {
             let mesh = &self.resources.mesh_registry[draw_call.mesh.0 as usize];
@@ -510,7 +514,6 @@ impl VulkanRenderer {
         }
         let visible = (ctx.opaque_surfaces.len() + ctx.transparent_surfaces.len()) as u32;
         ctx.culled_count = submitted.saturating_sub(visible);
-        ctx
     }
 
     fn draw_geometry(
@@ -518,7 +521,7 @@ impl VulkanRenderer {
         frame_index: usize,
         cmd: vk::CommandBuffer,
         extent: vk::Extent2D,
-        ctx: &DrawContext,
+        ctx: &mut DrawContext,
         cam_pos: glm::Vec3,
     ) -> DrawStats {
         let color_attachment = vk::RenderingAttachmentInfo::default()
@@ -631,10 +634,10 @@ impl VulkanRenderer {
         };
 
         // Opaque pass — one pipeline; sort by index buffer to minimise rebinds.
-        let mut opaque_indices: Vec<usize> = (0..ctx.opaque_surfaces.len()).collect();
-        opaque_indices.sort_unstable_by_key(|&i| ctx.opaque_surfaces[i].index_buffer.as_raw());
+        ctx.opaque_surfaces
+            .sort_unstable_by_key(|obj| obj.index_buffer.as_raw());
 
-        stats.opaque_count = opaque_indices.len() as u32;
+        stats.opaque_count = ctx.opaque_surfaces.len() as u32;
         stats.culled_count = ctx.culled_count;
 
         unsafe {
@@ -645,8 +648,7 @@ impl VulkanRenderer {
             );
         }
         let mut last_index_buffer = vk::Buffer::null();
-        for &i in &opaque_indices {
-            let obj = &ctx.opaque_surfaces[i];
+        for obj in &ctx.opaque_surfaces {
             if obj.index_buffer != last_index_buffer {
                 unsafe {
                     self.context.device.cmd_bind_index_buffer(
@@ -664,17 +666,16 @@ impl VulkanRenderer {
         }
 
         // Transparent pass — back-to-front by squared distance from camera.
-        let mut transparent: Vec<&RenderObject> = ctx.transparent_surfaces.iter().collect();
-        transparent.sort_by(|a, b| {
+        ctx.transparent_surfaces.sort_unstable_by(|a, b| {
             let t = |m: &glm::Mat4| glm::Vec3::from([m[(0, 3)], m[(1, 3)], m[(2, 3)]]);
             let da = (t(&a.transform) - cam_pos).norm_squared();
             let db = (t(&b.transform) - cam_pos).norm_squared();
             db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        stats.transparent_count = transparent.len() as u32;
+        stats.transparent_count = ctx.transparent_surfaces.len() as u32;
 
-        if !transparent.is_empty() {
+        if !ctx.transparent_surfaces.is_empty() {
             unsafe {
                 self.context.device.cmd_bind_pipeline(
                     cmd,
@@ -687,7 +688,7 @@ impl VulkanRenderer {
             }
         }
         last_index_buffer = vk::Buffer::null();
-        for obj in transparent {
+        for obj in &ctx.transparent_surfaces {
             if obj.index_buffer != last_index_buffer {
                 unsafe {
                     self.context.device.cmd_bind_index_buffer(

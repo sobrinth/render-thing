@@ -89,12 +89,12 @@ impl SceneGraph {
     pub fn adopt(&mut self, parent: NodeId, other: SceneGraph) {
         let offset = self.nodes.len() as u32;
         for mut node in other.nodes {
-            node.children = node
-                .children
-                .into_iter()
-                .map(|c| NodeId(c.0 + offset))
-                .collect();
-            node.parent = node.parent.map(|p| NodeId(p.0 + offset));
+            for child in &mut node.children {
+                child.0 += offset;
+            }
+            if let Some(parent) = &mut node.parent {
+                parent.0 += offset;
+            }
             self.nodes.push(node);
         }
         for root_id in other.roots {
@@ -132,10 +132,16 @@ impl SceneGraph {
 
     pub fn flatten_visible(&self) -> Vec<DrawCall> {
         let mut out = Vec::new();
-        for &root in &self.roots {
-            self.collect_draws(root, &glm::Mat4::identity(), &mut out);
-        }
+        self.flatten_visible_into(&mut out);
         out
+    }
+
+    /// Like [`Self::flatten_visible`], but reuses `out`'s capacity. Clears `out` first.
+    pub fn flatten_visible_into(&self, out: &mut Vec<DrawCall>) {
+        out.clear();
+        for &root in &self.roots {
+            self.collect_draws(root, &glm::Mat4::identity(), out);
+        }
     }
 }
 

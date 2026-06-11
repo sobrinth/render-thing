@@ -17,6 +17,15 @@ struct OrbitState {
     angle: f32,
 }
 
+/// Orbit parameters for [`Level::add_orbit`]. `period_secs` is one full revolution.
+pub struct OrbitParams {
+    pub orbit_radius: f32,
+    pub y_offset: f32,
+    pub period_secs: f32,
+    pub mesh_radius: f32,
+    pub mesh_height: f32,
+}
+
 pub struct Level {
     pub scene: SceneGraph,
     pub collision_boxes: Vec<Aabb>,
@@ -32,26 +41,17 @@ impl Level {
         }
     }
 
-    /// Register a platform node to orbit its parent. `period_secs` is one full revolution.
+    /// Register a platform node to orbit its parent.
     /// `aabb_index` must be the index of the platform's entry in `collision_boxes`.
-    pub fn add_orbit(
-        &mut self,
-        node_id: NodeId,
-        aabb_index: usize,
-        orbit_radius: f32,
-        y_offset: f32,
-        period_secs: f32,
-        mesh_radius: f32,
-        mesh_height: f32,
-    ) {
+    pub fn add_orbit(&mut self, node_id: NodeId, aabb_index: usize, params: OrbitParams) {
         self.orbiting.push(OrbitState {
             node_id,
             aabb_index,
-            orbit_radius,
-            y_offset,
-            angular_velocity: 2.0 * PI / period_secs,
-            mesh_radius,
-            mesh_height,
+            orbit_radius: params.orbit_radius,
+            y_offset: params.y_offset,
+            angular_velocity: 2.0 * PI / params.period_secs,
+            mesh_radius: params.mesh_radius,
+            mesh_height: params.mesh_height,
             angle: 0.0,
         });
     }
@@ -73,8 +73,9 @@ impl Level {
         }
     }
 
-    pub fn all_draws(&self) -> Vec<engine::DrawCall> {
-        self.scene.flatten_visible()
+    /// Collects visible draws into `out`, reusing its capacity. Clears `out` first.
+    pub fn all_draws_into(&self, out: &mut Vec<engine::DrawCall>) {
+        self.scene.flatten_visible_into(out);
     }
 }
 

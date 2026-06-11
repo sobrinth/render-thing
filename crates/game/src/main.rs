@@ -5,7 +5,7 @@ mod player;
 
 use engine::input::{self as einput, ElementState};
 use engine::{CameraView, Engine, MaterialConstants, MaterialPass};
-use level::{Level, build_box, build_hex_platform};
+use level::{Level, OrbitParams, build_box, build_hex_platform};
 use nalgebra_glm as glm;
 use player::Player;
 use scene::SceneGraph;
@@ -42,6 +42,8 @@ struct GameApp {
     accumulator: f32,
     cursor_captured: bool,
     scene_panel: scene::ScenePanel,
+    /// Reused across frames to avoid re-allocating the draw list.
+    draw_buffer: Vec<engine::DrawCall>,
 }
 
 impl Default for GameApp {
@@ -57,6 +59,7 @@ impl Default for GameApp {
             accumulator: 0.0,
             cursor_captured: false,
             scene_panel: scene::ScenePanel::new(),
+            draw_buffer: Vec::new(),
         }
     }
 }
@@ -233,14 +236,13 @@ impl GameApp {
         // Render
         let raw_input = ui.take_egui_input(window);
         window.pre_present_notify();
-        let draws = self
-            .level
-            .as_ref()
-            .map(|l| l.all_draws())
-            .unwrap_or_default();
+        match &self.level {
+            Some(level) => level.all_draws_into(&mut self.draw_buffer),
+            None => self.draw_buffer.clear(),
+        }
         let scene_panel = &mut self.scene_panel;
         let level = self.level.as_mut();
-        let platform_output = engine.draw(camera, &draws, raw_input, |ctx| {
+        let platform_output = engine.draw(camera, &self.draw_buffer, raw_input, |ctx| {
             if let Some(l) = level {
                 scene_panel.show(ctx, &mut l.scene);
             }
@@ -443,7 +445,6 @@ fn build_level(engine: &mut Engine) -> Level {
         MaterialConstants {
             color_factors: [1.0, 0.6, 0.0, 1.0],
             metal_rough_factors: [0.3, 1.0, 0.0, 0.0],
-            ..Default::default()
         },
         MaterialPass::MainColor,
     );
@@ -542,7 +543,27 @@ fn build_level(engine: &mut Engine) -> Level {
     }
 
     let mut level = Level::new(scene, collision_boxes);
-    level.add_orbit(p2, p2_aabb_idx, 6.0, 1.0, 10.0, 3.0, 0.5);
-    level.add_orbit(p3, p3_aabb_idx, 6.0, 1.5, 5.0, 2.0, 0.5);
+    level.add_orbit(
+        p2,
+        p2_aabb_idx,
+        OrbitParams {
+            orbit_radius: 6.0,
+            y_offset: 1.0,
+            period_secs: 10.0,
+            mesh_radius: 3.0,
+            mesh_height: 0.5,
+        },
+    );
+    level.add_orbit(
+        p3,
+        p3_aabb_idx,
+        OrbitParams {
+            orbit_radius: 6.0,
+            y_offset: 1.5,
+            period_secs: 5.0,
+            mesh_radius: 2.0,
+            mesh_height: 0.5,
+        },
+    );
     level
 }
