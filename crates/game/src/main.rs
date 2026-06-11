@@ -104,17 +104,6 @@ impl ApplicationHandler for GameApp {
         self.cursor_captured = false;
     }
 
-    fn device_event(&mut self, _: &ActiveEventLoop, _: DeviceId, event: DeviceEvent) {
-        if let DeviceEvent::MouseMotion { delta } = event
-            && self.cursor_captured
-            && let Some(player) = &mut self.player
-        {
-            player.yaw += delta.0 as f32 * LOOK_SENSITIVITY;
-            player.pitch -= delta.1 as f32 * LOOK_SENSITIVITY;
-            player.pitch = player.pitch.clamp(-89f32.to_radians(), 89f32.to_radians());
-        }
-    }
-
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
         if self.engine.is_none() {
             return;
@@ -186,6 +175,17 @@ impl ApplicationHandler for GameApp {
             WindowEvent::RedrawRequested => self.render(),
 
             _ => {}
+        }
+    }
+
+    fn device_event(&mut self, _: &ActiveEventLoop, _: DeviceId, event: DeviceEvent) {
+        if let DeviceEvent::MouseMotion { delta } = event
+            && self.cursor_captured
+            && let Some(player) = &mut self.player
+        {
+            player.yaw += delta.0 as f32 * LOOK_SENSITIVITY;
+            player.pitch -= delta.1 as f32 * LOOK_SENSITIVITY;
+            player.pitch = player.pitch.clamp(-89f32.to_radians(), 89f32.to_radians());
         }
     }
 

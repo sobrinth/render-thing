@@ -56,7 +56,7 @@ impl LayoutBuilder<'_> {
 
     pub(crate) fn build(
         &mut self,
-        device: &ash::Device,
+        device: &Device,
         stage_flags: vk::ShaderStageFlags,
         create_flags: Option<vk::DescriptorSetLayoutCreateFlags>,
     ) -> DescriptorSetLayout {
@@ -76,7 +76,7 @@ impl LayoutBuilder<'_> {
 
     pub(crate) fn build_with_binding_flags(
         &mut self,
-        device: &ash::Device,
+        device: &Device,
         stage_flags: vk::ShaderStageFlags,
         binding_flags: &[vk::DescriptorBindingFlags],
         create_flags: vk::DescriptorSetLayoutCreateFlags,
@@ -110,7 +110,7 @@ pub(crate) struct Allocator {
 
 impl Allocator {
     pub(crate) fn init_pool(
-        device: &ash::Device,
+        device: &Device,
         max_sets: u32,
         pool_ratios: Vec<PoolSizeRatio>,
     ) -> Self {
@@ -138,7 +138,7 @@ impl Allocator {
 
     pub(crate) fn allocate(
         &self,
-        device: &ash::Device,
+        device: &Device,
         layout: vk::DescriptorSetLayout,
     ) -> vk::DescriptorSet {
         let alloc_info = vk::DescriptorSetAllocateInfo::default()
@@ -221,7 +221,7 @@ impl<'a> DescriptorWriter<'a> {
         self.image_infos.clear();
     }
 
-    pub fn update_set(&mut self, device: &ash::Device, desc_set: vk::DescriptorSet) {
+    pub fn update_set(&mut self, device: &Device, desc_set: vk::DescriptorSet) {
         let mut writes = Vec::new();
 
         for (buffer_info, write) in self.buffer_infos.iter_mut() {

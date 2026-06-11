@@ -4,7 +4,7 @@ use nalgebra_glm as glm;
 
 pub fn hex_aabb(center: glm::Vec3, radius: f32, height: f32) -> Aabb {
     let half_h = height * 0.5;
-    let half_z = radius * (3.0_f32).sqrt() * 0.5;
+    let half_z = radius * 3.0_f32.sqrt() * 0.5;
     Aabb {
         min: glm::vec3(center.x - radius, center.y - half_h, center.z - half_z),
         max: glm::vec3(center.x + radius, center.y + half_h, center.z + half_z),
@@ -191,7 +191,7 @@ mod tests {
         assert!((b.max.x - 1.0).abs() < 1e-5);
         assert!((b.min.y - (-0.5)).abs() < 1e-5);
         assert!((b.max.y - 0.5).abs() < 1e-5);
-        let expected_z = (3.0_f32).sqrt() * 0.5;
+        let expected_z = 3.0_f32.sqrt() * 0.5;
         assert!((b.min.z - (-expected_z)).abs() < 1e-5);
         assert!((b.max.z - expected_z).abs() < 1e-5);
     }
@@ -203,7 +203,7 @@ mod tests {
         assert!((b.max.x - 12.0).abs() < 1e-5);
         assert!((b.min.y - 1.5).abs() < 1e-5);
         assert!((b.max.y - 2.5).abs() < 1e-5);
-        let expected_half_z = 2.0 * (3.0_f32).sqrt() * 0.5;
+        let expected_half_z = 2.0 * 3.0_f32.sqrt() * 0.5;
         assert!((b.min.z - (-5.0 - expected_half_z)).abs() < 1e-5);
         assert!((b.max.z - (-5.0 + expected_half_z)).abs() < 1e-5);
     }

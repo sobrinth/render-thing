@@ -100,7 +100,7 @@ impl VkContext {
         // Instance-level dependencies of VK_(KHR|EXT)_swapchain_maintenance1.
         // Hard requirement: drivers are assumed end-of-2025 or newer (see spec).
         let available_extensions =
-            unsafe { vulkan_fn.enumerate_instance_extension_properties(None) }.unwrap();
+            unsafe { vulkan_fn.enumerate_instance_extension_properties(None) }?;
         let has_extension = |name: &CStr| {
             available_extensions.iter().any(|ext| {
                 let ext_name = unsafe { CStr::from_ptr(ext.extension_name.as_ptr()) };

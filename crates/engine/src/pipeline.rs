@@ -63,7 +63,7 @@ impl<'a> PipelineBuilder<'a> {
         }
     }
 
-    pub(crate) fn build(&mut self, device: &ash::Device) -> vk::Pipeline {
+    pub(crate) fn build(&mut self, device: &Device) -> vk::Pipeline {
         // Only a single viewport and scissor is supported
         let viewport_state = vk::PipelineViewportStateCreateInfo::default()
             .scissor_count(1)

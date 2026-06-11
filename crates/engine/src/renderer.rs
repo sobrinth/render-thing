@@ -31,8 +31,8 @@ pub(crate) struct MeshEntry {
 }
 
 pub(crate) struct TextureEntry {
-    pub image: std::sync::Arc<crate::resources::AllocatedImage>,
-    pub sampler: std::sync::Arc<crate::resources::Sampler>,
+    pub image: Arc<AllocatedImage>,
+    pub sampler: Arc<Sampler>,
 }
 
 pub(crate) struct MaterialEntry {
@@ -145,7 +145,7 @@ impl VulkanRenderer {
         let (descriptor_allocator, draw_image_descriptor_layout, draw_image_descriptors) =
             Self::init_descriptors(&context, &draw_image);
 
-        let metal_rough_material = crate::material::GltfMetallicRoughness::build_pipelines(
+        let metal_rough_material = GltfMetallicRoughness::build_pipelines(
             &context,
             draw_image.format,
             depth_image.format,
