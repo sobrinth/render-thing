@@ -35,6 +35,13 @@ pub struct GPUCullPushConstants {
     pub _pad: u32,
 }
 
+/// Must match DrawCountBuffer in assets/shaders/object_structures.glsl.
+#[repr(C)]
+pub struct GPUCullStats {
+    pub draw_count: u32,
+    pub triangle_count: u32,
+}
+
 /// Per-draw record read by mesh.vert and cull.comp via buffer reference.
 /// Must match ObjectData in assets/shaders/object_structures.glsl.
 #[repr(C)]

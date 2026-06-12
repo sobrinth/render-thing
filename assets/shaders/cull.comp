@@ -52,4 +52,5 @@ void main() {
     uint slot = atomicAdd(PushConstants.countBuffer.count, 1u);
     PushConstants.commandBuffer.commands[slot] =
         DrawIndexedIndirectCommand(obj.indexCount, 1u, obj.firstIndex, 0, i);
+    atomicAdd(PushConstants.countBuffer.triangles, obj.indexCount / 3u);
 }

@@ -3,7 +3,9 @@ use crate::command_buffer::{
 };
 use crate::meshes::Bounds;
 use crate::pipeline::ComputePushConstants;
-use crate::primitives::{GPUCullPushConstants, GPUDrawPushConstants, GPUObjectData, GPUSceneData};
+use crate::primitives::{
+    GPUCullPushConstants, GPUCullStats, GPUDrawPushConstants, GPUObjectData, GPUSceneData,
+};
 use crate::renderer::{FRAME_OVERLAP, VulkanRenderer};
 use crate::resources::AllocatedBuffer;
 use crate::stats::{DrawStats, FrameStats};
@@ -623,7 +625,6 @@ impl VulkanRenderer {
         {
             let record = object_record(obj);
             unsafe { object_ptr.add(i).write(record) };
-            stats.triangle_count += obj.index_count / 3;
         }
 
         // CPU-written commands: transparent only. Mapped-buffer slot = draw ID
@@ -643,28 +644,29 @@ impl VulkanRenderer {
                 first_instance: slot as u32,
             };
             unsafe { indirect_ptr.add(slot).write(command) };
+            stats.triangle_count += obj.index_count / 3;
         }
 
         let opaque_count = ctx.opaque_surfaces.len() as u32;
+        let frame = &self.resources.frames[frame_index];
+        let stats_buffer = frame.cull_stats_buffer.buffer;
+        unsafe {
+            self.context
+                .device
+                .cmd_fill_buffer(cmd, stats_buffer, 0, vk::WHOLE_SIZE, 0);
+        }
+        memory_barrier(
+            &self.context.device,
+            cmd,
+            BarrierScope::TRANSFER_WRITE,
+            BarrierScope::COMPUTE_STORAGE_RW,
+        );
         if opaque_count > 0 {
-            let frame = &self.resources.frames[frame_index];
-            let count_buffer = frame.cull_count_buffer.buffer;
-            unsafe {
-                self.context
-                    .device
-                    .cmd_fill_buffer(cmd, count_buffer, 0, vk::WHOLE_SIZE, 0);
-            }
-            memory_barrier(
-                &self.context.device,
-                cmd,
-                BarrierScope::TRANSFER_WRITE,
-                BarrierScope::COMPUTE_STORAGE_RW,
-            );
             let push = GPUCullPushConstants {
                 view_proj: self.resources.scene_data.view_proj,
                 object_buffer: frame.object_buffer_address,
                 command_buffer: frame.opaque_command_buffer_address,
-                count_buffer: frame.cull_count_buffer_address,
+                count_buffer: frame.cull_stats_buffer_address,
                 draw_count: opaque_count,
                 _pad: 0,
             };
@@ -688,11 +690,28 @@ impl VulkanRenderer {
                     .device
                     .cmd_dispatch(cmd, opaque_count.div_ceil(64), 1, 1);
             }
-            memory_barrier(
-                &self.context.device,
+        }
+        // Draw reads the commands, copy reads the stats — both consume the
+        // dispatch's writes; reads need no ordering between themselves.
+        memory_barrier(
+            &self.context.device,
+            cmd,
+            BarrierScope::COMPUTE_STORAGE_RW,
+            BarrierScope {
+                stage: vk::PipelineStageFlags2::DRAW_INDIRECT | vk::PipelineStageFlags2::TRANSFER,
+                access: vk::AccessFlags2::INDIRECT_COMMAND_READ | vk::AccessFlags2::TRANSFER_READ,
+            },
+        );
+        let copy = &[vk::BufferCopy::default()
+            .src_offset(0)
+            .dst_offset(0)
+            .size(size_of::<GPUCullStats>() as u64)];
+        unsafe {
+            self.context.device.cmd_copy_buffer(
                 cmd,
-                BarrierScope::COMPUTE_STORAGE_RW,
-                BarrierScope::INDIRECT_READ,
+                stats_buffer,
+                frame.stats_readback_buffer.buffer,
+                copy,
             );
         }
 
@@ -785,8 +804,17 @@ impl VulkanRenderer {
                 .cmd_bind_index_buffer(cmd, index_pool, 0, vk::IndexType::UINT32);
         }
 
-        stats.opaque_count = ctx.opaque_surfaces.len() as u32;
-        stats.culled_count = ctx.culled_count;
+        // GPU stats come from this slot's previous frame (N-2); the timeline
+        // wait at frame start proves the readback copy completed. Pairing with
+        // opaque_submitted from the same frame keeps culled = submitted - drawn.
+        let frame = &self.resources.frames[frame_index];
+        let readback_ptr = frame.stats_readback_buffer.info.mapped_data as *const GPUCullStats;
+        let gpu_stats = unsafe { readback_ptr.read() };
+        stats.opaque_count = gpu_stats.draw_count;
+        stats.culled_count =
+            ctx.culled_count + frame.opaque_submitted.saturating_sub(gpu_stats.draw_count);
+        stats.triangle_count += gpu_stats.triangle_count;
+        self.resources.frames[frame_index].opaque_submitted = opaque_count;
 
         let indirect_buffer = self.resources.frames[frame_index].indirect_buffer.buffer;
 
@@ -804,7 +832,7 @@ impl VulkanRenderer {
                     cmd,
                     frame.opaque_command_buffer.buffer,
                     0,
-                    frame.cull_count_buffer.buffer,
+                    frame.cull_stats_buffer.buffer,
                     0,
                     ctx.opaque_surfaces.len() as u32,
                     INDIRECT_STRIDE as u32,
@@ -1188,8 +1216,12 @@ pub struct FrameData {
     pub(crate) indirect_buffer: AllocatedBuffer,
     pub(crate) opaque_command_buffer: AllocatedBuffer,
     pub(crate) opaque_command_buffer_address: vk::DeviceAddress,
-    pub(crate) cull_count_buffer: AllocatedBuffer,
-    pub(crate) cull_count_buffer_address: vk::DeviceAddress,
+    pub(crate) cull_stats_buffer: AllocatedBuffer,
+    pub(crate) cull_stats_buffer_address: vk::DeviceAddress,
+    pub(crate) stats_readback_buffer: AllocatedBuffer,
+    /// Opaque candidates submitted when this slot was last recorded; paired
+    /// with the readback (same frame) to compute the GPU-culled count.
+    pub(crate) opaque_submitted: u32,
     device: Device,
 }
 
@@ -1217,8 +1249,9 @@ impl FrameData {
         indirect_buffer: AllocatedBuffer,
         opaque_command_buffer: AllocatedBuffer,
         opaque_command_buffer_address: vk::DeviceAddress,
-        cull_count_buffer: AllocatedBuffer,
-        cull_count_buffer_address: vk::DeviceAddress,
+        cull_stats_buffer: AllocatedBuffer,
+        cull_stats_buffer_address: vk::DeviceAddress,
+        stats_readback_buffer: AllocatedBuffer,
         device: Device,
     ) -> Self {
         Self {
@@ -1233,8 +1266,10 @@ impl FrameData {
             indirect_buffer,
             opaque_command_buffer,
             opaque_command_buffer_address,
-            cull_count_buffer,
-            cull_count_buffer_address,
+            cull_stats_buffer,
+            cull_stats_buffer_address,
+            stats_readback_buffer,
+            opaque_submitted: 0,
             device,
         }
     }

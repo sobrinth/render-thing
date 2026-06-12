@@ -6,7 +6,7 @@ use crate::frame::{FrameData, MAX_DRAWS};
 use crate::input::{ElementState, Key, NamedKey};
 use crate::material::GltfMetallicRoughness;
 use crate::pipeline::{ComputeEffect, ComputePushConstants, Pipeline, PipelineLayout};
-use crate::primitives::{GPUCullPushConstants, GPUObjectData, GPUSceneData, Vertex};
+use crate::primitives::{GPUCullPushConstants, GPUCullStats, GPUObjectData, GPUSceneData, Vertex};
 use crate::resources::{
     AllocatedBuffer, AllocatedImage, ImageCreateInfo, IndexPool, Sampler, upload_mesh_buffers,
 };
@@ -719,9 +719,9 @@ impl VulkanRenderer {
             let opaque_command_buffer_address =
                 unsafe { context.device.get_buffer_device_address(&address_info) };
 
-            let cull_count_buffer = AllocatedBuffer::create(
+            let cull_stats_buffer = AllocatedBuffer::create(
                 gpu_alloc,
-                size_of::<u32>() as u64,
+                size_of::<GPUCullStats>() as u64,
                 vk::BufferUsageFlags::STORAGE_BUFFER
                     | vk::BufferUsageFlags::INDIRECT_BUFFER
                     | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
@@ -730,9 +730,23 @@ impl VulkanRenderer {
                 None,
             );
             let address_info =
-                vk::BufferDeviceAddressInfo::default().buffer(cull_count_buffer.buffer);
-            let cull_count_buffer_address =
+                vk::BufferDeviceAddressInfo::default().buffer(cull_stats_buffer.buffer);
+            let cull_stats_buffer_address =
                 unsafe { context.device.get_buffer_device_address(&address_info) };
+
+            let stats_readback_buffer = AllocatedBuffer::create(
+                gpu_alloc,
+                size_of::<GPUCullStats>() as u64,
+                vk::BufferUsageFlags::TRANSFER_DST,
+                vk_mem::MemoryUsage::AutoPreferHost,
+                Some(
+                    vk_mem::AllocationCreateFlags::MAPPED
+                        | vk_mem::AllocationCreateFlags::HOST_ACCESS_RANDOM,
+                ),
+            );
+            // Frames 0 and 1 read this slot before any GPU copy has landed.
+            let readback_ptr = stats_readback_buffer.info.mapped_data as *mut u8;
+            unsafe { readback_ptr.write_bytes(0, size_of::<GPUCullStats>()) };
 
             let scene_set = scene_set_pool.allocate(&context.device, scene_data_layout.layout);
             let gizmo_scene_set =
@@ -769,8 +783,9 @@ impl VulkanRenderer {
                 indirect_buffer,
                 opaque_command_buffer,
                 opaque_command_buffer_address,
-                cull_count_buffer,
-                cull_count_buffer_address,
+                cull_stats_buffer,
+                cull_stats_buffer_address,
+                stats_readback_buffer,
                 context.device.clone(),
             );
             frames.push(frame);

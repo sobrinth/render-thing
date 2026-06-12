@@ -48,5 +48,6 @@ layout(buffer_reference, std430) writeonly buffer DrawCommandBuffer {
 };
 
 layout(buffer_reference, std430) buffer DrawCountBuffer {
-    uint count;
+    uint count;     // read by vkCmdDrawIndexedIndirectCount at offset 0
+    uint triangles; // drawn-triangle total, stats only
 };
