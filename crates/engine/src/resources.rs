@@ -66,6 +66,41 @@ impl Drop for AllocatedBuffer {
     }
 }
 
+pub(crate) const MAX_POOLED_INDICES: u32 = 4_194_304;
+
+/// All mesh index data lives in one device-local buffer, suballocated
+/// append-only. Offsets never move, so growth (when a scene trips the
+/// alloc assert) is a copy of the old contents to offset 0 of a larger
+/// buffer — every stored first_index stays valid.
+pub(crate) struct IndexPool {
+    pub buffer: AllocatedBuffer,
+    cursor: u32,
+}
+
+impl IndexPool {
+    pub(crate) fn new(gpu_alloc: &Arc<vk_mem::Allocator>) -> Self {
+        let buffer = AllocatedBuffer::create(
+            gpu_alloc,
+            MAX_POOLED_INDICES as u64 * size_of::<u32>() as u64,
+            vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+            vk_mem::MemoryUsage::AutoPreferDevice,
+            None,
+        );
+        Self { buffer, cursor: 0 }
+    }
+
+    /// Reserves room for count indices, returning their pool offset.
+    fn alloc(&mut self, count: u32) -> u32 {
+        let offset = self.cursor;
+        assert!(
+            offset + count <= MAX_POOLED_INDICES,
+            "index pool exhausted ({offset} used + {count} requested > MAX_POOLED_INDICES {MAX_POOLED_INDICES})"
+        );
+        self.cursor += count;
+        offset
+    }
+}
+
 pub(crate) struct ImageCreateInfo {
     pub(crate) resolution: (u32, u32),
     pub(crate) format: vk::Format,
@@ -468,6 +503,7 @@ pub(crate) fn upload_mesh_buffers(
     context: &VkContext,
     batch: &mut UploadBatch,
     graphics_queue: &QueueData,
+    index_pool: &mut IndexPool,
     indices: &[u32],
     vertices: &[Vertex],
 ) -> GPUMeshBuffers {
@@ -483,14 +519,6 @@ pub(crate) fn upload_mesh_buffers(
         vk_mem::MemoryUsage::AutoPreferDevice,
         None,
     );
-    let index_buffer = AllocatedBuffer::create(
-        gpu_alloc,
-        index_buffer_size as u64,
-        vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
-        vk_mem::MemoryUsage::AutoPreferDevice,
-        None,
-    );
-
     let device_address_info = vk::BufferDeviceAddressInfo::default().buffer(vertex_buffer.buffer);
     let device_address = unsafe {
         context
@@ -498,10 +526,13 @@ pub(crate) fn upload_mesh_buffers(
             .get_buffer_device_address(&device_address_info)
     };
 
+    let first_index = index_pool.alloc(indices.len() as u32);
+    let pool_buffer = index_pool.buffer.buffer;
+
     let meshes = GPUMeshBuffers {
         vertex_buffer,
-        index_buffer,
         vertex_buffer_address: device_address,
+        first_index,
     };
 
     let staging = AllocatedBuffer::create(
@@ -540,18 +571,14 @@ pub(crate) fn upload_mesh_buffers(
             )
         }
 
-        let index_copy = &[vk::BufferCopy::default()
-            .dst_offset(0)
+        let pool_copy = &[vk::BufferCopy::default()
+            .dst_offset(first_index as u64 * size_of::<u32>() as u64)
             .src_offset(vertex_buffer_size as u64)
             .size(index_buffer_size as u64)];
-
         unsafe {
-            context.device.cmd_copy_buffer(
-                cmd.handle(),
-                staging_buffer,
-                meshes.index_buffer.buffer,
-                index_copy,
-            )
+            context
+                .device
+                .cmd_copy_buffer(cmd.handle(), staging_buffer, pool_buffer, pool_copy)
         }
     });
 

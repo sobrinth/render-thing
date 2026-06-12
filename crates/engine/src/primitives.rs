@@ -13,9 +13,10 @@ pub struct Vertex {
 
 #[derive(Debug)]
 pub struct GPUMeshBuffers {
-    pub index_buffer: AllocatedBuffer,
     pub vertex_buffer: AllocatedBuffer,
     pub vertex_buffer_address: vk::DeviceAddress,
+    /// Offset of this mesh's indices in the renderer's global index pool.
+    pub first_index: u32,
 }
 
 #[repr(C)]
@@ -23,19 +24,26 @@ pub struct GPUDrawPushConstants {
     pub object_buffer: vk::DeviceAddress,
 }
 
-/// Per-draw record read by mesh.vert via buffer reference.
+/// Per-draw record read by mesh.vert and cull.comp via buffer reference.
 /// Must match ObjectData in assets/shaders/object_structures.glsl.
 #[repr(C)]
 pub struct GPUObjectData {
     pub model: [[f32; 4]; 4],
     /// Inverse-transpose of model's upper 3×3; only that part is meaningful.
     pub normal_matrix: [[f32; 4]; 4],
+    /// Local-space AABB center; w unused.
+    pub bounds_origin: [f32; 4],
+    /// Local-space AABB half-extents; w unused.
+    pub bounds_extents: [f32; 4],
     pub vertex_buffer: vk::DeviceAddress,
     pub material_index: u32,
-    pub _pad: u32,
+    pub index_count: u32,
+    /// Global index-pool offset.
+    pub first_index: u32,
+    pub _pad: [u32; 3],
 }
 
-const _: () = assert!(size_of::<GPUObjectData>() == 144);
+const _: () = assert!(size_of::<GPUObjectData>() == 192);
 
 #[repr(C)]
 #[derive(Default)]

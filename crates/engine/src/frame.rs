@@ -7,7 +7,7 @@ use crate::resources::AllocatedBuffer;
 use crate::stats::{DrawStats, FrameStats};
 use crate::sync::Semaphore;
 use crate::ui::{self, UiState};
-use ash::{Device, vk, vk::Handle};
+use ash::{Device, vk};
 use nalgebra_glm as glm;
 use std::time::Instant;
 
@@ -24,7 +24,6 @@ pub(crate) struct DrawContext {
 pub(crate) struct RenderObject {
     pub index_count: u32,
     pub first_index: u32,
-    pub index_buffer: vk::Buffer,
     pub material_index: u32,
     pub transform: glm::Mat4,
     pub vertex_buffer_address: vk::DeviceAddress,
@@ -67,18 +66,20 @@ pub(crate) fn is_visible(obj: &RenderObject, view_proj: &glm::Mat4) -> bool {
     true
 }
 
-fn object_record(
-    transform: &glm::Mat4,
-    vertex_buffer: vk::DeviceAddress,
-    material_index: u32,
-) -> GPUObjectData {
-    let normal = glm::mat3_to_mat4(&glm::inverse_transpose(glm::mat4_to_mat3(transform)));
+fn object_record(obj: &RenderObject) -> GPUObjectData {
+    let normal = glm::mat3_to_mat4(&glm::inverse_transpose(glm::mat4_to_mat3(&obj.transform)));
+    let o = obj.bounds.origin;
+    let e = obj.bounds.extents;
     GPUObjectData {
-        model: transform.data.0,
+        model: obj.transform.data.0,
         normal_matrix: normal.data.0,
-        vertex_buffer,
-        material_index,
-        _pad: 0,
+        bounds_origin: [o.x, o.y, o.z, 0.0],
+        bounds_extents: [e.x, e.y, e.z, 0.0],
+        vertex_buffer: obj.vertex_buffer_address,
+        material_index: obj.material_index,
+        index_count: obj.index_count,
+        first_index: obj.first_index,
+        _pad: [0; 3],
     }
 }
 
@@ -547,8 +548,7 @@ impl VulkanRenderer {
 
             let obj = RenderObject {
                 index_count: mesh.index_count,
-                first_index: 0,
-                index_buffer: mesh.buffers.index_buffer.buffer,
+                first_index: mesh.buffers.first_index,
                 material_index: draw_call.material.0,
                 transform: draw_call.transform,
                 vertex_buffer_address: mesh.buffers.vertex_buffer_address,
@@ -672,9 +672,13 @@ impl VulkanRenderer {
             );
         }
 
-        // Opaque pass — one pipeline; sort by index buffer to minimise rebinds.
-        ctx.opaque_surfaces
-            .sort_unstable_by_key(|obj| obj.index_buffer.as_raw());
+        let index_pool = self.resources.index_pool.buffer.buffer;
+        unsafe {
+            self.context
+                .device
+                .cmd_bind_index_buffer(cmd, index_pool, 0, vk::IndexType::UINT32);
+        }
+
         // Transparent pass — back-to-front by squared distance from camera.
         ctx.transparent_surfaces.sort_unstable_by(|a, b| {
             let t = |m: &glm::Mat4| glm::Vec3::from([m[(0, 3)], m[(1, 3)], m[(2, 3)]]);
@@ -704,11 +708,7 @@ impl VulkanRenderer {
             .chain(ctx.transparent_surfaces.iter())
             .enumerate()
         {
-            let record = object_record(
-                &obj.transform,
-                obj.vertex_buffer_address,
-                obj.material_index,
-            );
+            let record = object_record(obj);
             let command = vk::DrawIndexedIndirectCommand {
                 index_count: obj.index_count,
                 instance_count: 1,
@@ -735,8 +735,18 @@ impl VulkanRenderer {
                 self.resources.metal_rough_material.opaque_pipeline.pipeline,
             );
         }
-        stats.draw_call_count +=
-            self.record_indirect_runs(cmd, indirect_buffer, &ctx.opaque_surfaces, 0);
+        if !ctx.opaque_surfaces.is_empty() {
+            unsafe {
+                self.context.device.cmd_draw_indexed_indirect(
+                    cmd,
+                    indirect_buffer,
+                    0,
+                    ctx.opaque_surfaces.len() as u32,
+                    INDIRECT_STRIDE as u32,
+                );
+            }
+            stats.draw_call_count += 1;
+        }
 
         stats.transparent_count = ctx.transparent_surfaces.len() as u32;
 
@@ -750,53 +760,19 @@ impl VulkanRenderer {
                         .transparent_pipeline
                         .pipeline,
                 );
-            }
-        }
-        let opaque_len = ctx.opaque_surfaces.len() as u32;
-        stats.draw_call_count +=
-            self.record_indirect_runs(cmd, indirect_buffer, &ctx.transparent_surfaces, opaque_len);
-
-        unsafe { self.context.device.cmd_end_rendering(cmd) }
-        stats
-    }
-
-    /// One cmd_draw_indexed_indirect per run of consecutive objects sharing an
-    /// index buffer; objs[i]'s command lives at indirect-buffer slot
-    /// base_draw_id + i. Returns the number of indirect calls recorded.
-    fn record_indirect_runs(
-        &self,
-        cmd: vk::CommandBuffer,
-        indirect_buffer: vk::Buffer,
-        objs: &[RenderObject],
-        base_draw_id: u32,
-    ) -> u32 {
-        let mut calls = 0;
-        let mut run_start = 0;
-        while run_start < objs.len() {
-            let index_buffer = objs[run_start].index_buffer;
-            let mut run_end = run_start + 1;
-            while run_end < objs.len() && objs[run_end].index_buffer == index_buffer {
-                run_end += 1;
-            }
-            unsafe {
-                self.context.device.cmd_bind_index_buffer(
-                    cmd,
-                    index_buffer,
-                    0,
-                    vk::IndexType::UINT32,
-                );
                 self.context.device.cmd_draw_indexed_indirect(
                     cmd,
                     indirect_buffer,
-                    (base_draw_id as u64 + run_start as u64) * INDIRECT_STRIDE,
-                    (run_end - run_start) as u32,
+                    ctx.opaque_surfaces.len() as u64 * INDIRECT_STRIDE,
+                    ctx.transparent_surfaces.len() as u32,
                     INDIRECT_STRIDE as u32,
                 );
             }
-            calls += 1;
-            run_start = run_end;
+            stats.draw_call_count += 1;
         }
-        calls
+
+        unsafe { self.context.device.cmd_end_rendering(cmd) }
+        stats
     }
 
     fn draw_dev_overlay(
@@ -983,17 +959,18 @@ impl VulkanRenderer {
 
         let gizmo_mesh_idx = self.resources.gizmo_mesh.0 as usize;
         let index_count = self.resources.mesh_registry[gizmo_mesh_idx].index_count;
-        let index_buffer = self.resources.mesh_registry[gizmo_mesh_idx]
+        let first_index = self.resources.mesh_registry[gizmo_mesh_idx]
             .buffers
-            .index_buffer
-            .buffer;
+            .first_index;
         let vertex_buffer_address = self.resources.mesh_registry[gizmo_mesh_idx]
             .buffers
             .vertex_buffer_address;
+        let bounds = self.resources.mesh_registry[gizmo_mesh_idx].bounds;
 
         // All gizmo materials are MainColor, so the opaque pipeline covers every draw.
         let bindless_set = self.resources.bindless.set;
         let layout = self.resources.metal_rough_material.pipeline_layout.layout;
+        let index_pool = self.resources.index_pool.buffer.buffer;
 
         unsafe {
             self.context.device.cmd_bind_pipeline(
@@ -1011,7 +988,7 @@ impl VulkanRenderer {
             );
             self.context
                 .device
-                .cmd_bind_index_buffer(cmd, index_buffer, 0, vk::IndexType::UINT32);
+                .cmd_bind_index_buffer(cmd, index_pool, 0, vk::IndexType::UINT32);
         }
 
         let push = GPUDrawPushConstants {
@@ -1045,13 +1022,20 @@ impl VulkanRenderer {
         for (i, &(mat_handle, arm_min, arm_max)) in draws.iter().enumerate() {
             let center = (arm_min + arm_max) * 0.5;
             let scale = arm_max - arm_min;
-            let transform = glm::scale(&glm::translate(&glm::Mat4::identity(), &center), &scale);
+            let obj = RenderObject {
+                index_count,
+                first_index,
+                material_index: mat_handle.0,
+                transform: glm::scale(&glm::translate(&glm::Mat4::identity(), &center), &scale),
+                vertex_buffer_address,
+                bounds,
+            };
             let draw_id = base_object_index + i as u32;
-            let record = object_record(&transform, vertex_buffer_address, mat_handle.0);
+            let record = object_record(&obj);
             let command = vk::DrawIndexedIndirectCommand {
                 index_count,
                 instance_count: 1,
-                first_index: 0,
+                first_index,
                 vertex_offset: 0,
                 first_instance: draw_id,
             };
@@ -1137,6 +1121,10 @@ pub struct FrameData {
     pub(crate) object_buffer: AllocatedBuffer,
     pub(crate) object_buffer_address: vk::DeviceAddress,
     pub(crate) indirect_buffer: AllocatedBuffer,
+    pub(crate) opaque_command_buffer: AllocatedBuffer,
+    pub(crate) opaque_command_buffer_address: vk::DeviceAddress,
+    pub(crate) cull_count_buffer: AllocatedBuffer,
+    pub(crate) cull_count_buffer_address: vk::DeviceAddress,
     device: Device,
 }
 
@@ -1162,6 +1150,10 @@ impl FrameData {
         object_buffer: AllocatedBuffer,
         object_buffer_address: vk::DeviceAddress,
         indirect_buffer: AllocatedBuffer,
+        opaque_command_buffer: AllocatedBuffer,
+        opaque_command_buffer_address: vk::DeviceAddress,
+        cull_count_buffer: AllocatedBuffer,
+        cull_count_buffer_address: vk::DeviceAddress,
         device: Device,
     ) -> Self {
         Self {
@@ -1174,6 +1166,10 @@ impl FrameData {
             object_buffer,
             object_buffer_address,
             indirect_buffer,
+            opaque_command_buffer,
+            opaque_command_buffer_address,
+            cull_count_buffer,
+            cull_count_buffer_address,
             device,
         }
     }

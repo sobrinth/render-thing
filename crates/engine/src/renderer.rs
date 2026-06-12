@@ -8,7 +8,7 @@ use crate::material::GltfMetallicRoughness;
 use crate::pipeline::{ComputeEffect, ComputePushConstants, Pipeline, PipelineLayout};
 use crate::primitives::{GPUObjectData, GPUSceneData, Vertex};
 use crate::resources::{
-    AllocatedBuffer, AllocatedImage, ImageCreateInfo, Sampler, upload_mesh_buffers,
+    AllocatedBuffer, AllocatedImage, ImageCreateInfo, IndexPool, Sampler, upload_mesh_buffers,
 };
 use crate::stats::StatsHistory;
 use crate::swapchain::Swapchain;
@@ -56,6 +56,7 @@ pub(crate) struct RendererResources {
     pub(crate) graphics_queue: QueueData,
     pub(crate) descriptor_allocator: descriptor::Allocator,
     pub(crate) upload_batch: UploadBatch,
+    pub(crate) index_pool: IndexPool,
     pub(crate) draw_image: AllocatedImage,
     pub(crate) draw_image_descriptors: vk::DescriptorSet,
     pub(crate) draw_image_descriptor_layout: DescriptorSetLayout,
@@ -308,6 +309,8 @@ impl VulkanRenderer {
 
         let frame_timeline = TimelineSemaphore::new(&context.device);
 
+        let index_pool = IndexPool::new(&gpu_alloc);
+
         let mut renderer = Self {
             resources: ManuallyDrop::new(RendererResources {
                 frame_number: 0,
@@ -325,6 +328,7 @@ impl VulkanRenderer {
                 graphics_queue,
                 descriptor_allocator,
                 upload_batch,
+                index_pool,
                 draw_image,
                 draw_image_descriptors,
                 draw_image_descriptor_layout,
@@ -493,6 +497,7 @@ impl VulkanRenderer {
             &self.context,
             &mut resources.upload_batch,
             &resources.graphics_queue,
+            &mut resources.index_pool,
             indices,
             vertices,
         );
@@ -696,6 +701,35 @@ impl VulkanRenderer {
                 ),
             );
 
+            let opaque_command_buffer = AllocatedBuffer::create(
+                gpu_alloc,
+                MAX_DRAWS as u64 * size_of::<vk::DrawIndexedIndirectCommand>() as u64,
+                vk::BufferUsageFlags::STORAGE_BUFFER
+                    | vk::BufferUsageFlags::INDIRECT_BUFFER
+                    | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
+                vk_mem::MemoryUsage::AutoPreferDevice,
+                None,
+            );
+            let address_info =
+                vk::BufferDeviceAddressInfo::default().buffer(opaque_command_buffer.buffer);
+            let opaque_command_buffer_address =
+                unsafe { context.device.get_buffer_device_address(&address_info) };
+
+            let cull_count_buffer = AllocatedBuffer::create(
+                gpu_alloc,
+                size_of::<u32>() as u64,
+                vk::BufferUsageFlags::STORAGE_BUFFER
+                    | vk::BufferUsageFlags::INDIRECT_BUFFER
+                    | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                    | vk::BufferUsageFlags::TRANSFER_DST,
+                vk_mem::MemoryUsage::AutoPreferDevice,
+                None,
+            );
+            let address_info =
+                vk::BufferDeviceAddressInfo::default().buffer(cull_count_buffer.buffer);
+            let cull_count_buffer_address =
+                unsafe { context.device.get_buffer_device_address(&address_info) };
+
             let scene_set = scene_set_pool.allocate(&context.device, scene_data_layout.layout);
             let gizmo_scene_set =
                 scene_set_pool.allocate(&context.device, scene_data_layout.layout);
@@ -729,6 +763,10 @@ impl VulkanRenderer {
                 object_buffer,
                 object_buffer_address,
                 indirect_buffer,
+                opaque_command_buffer,
+                opaque_command_buffer_address,
+                cull_count_buffer,
+                cull_count_buffer_address,
                 context.device.clone(),
             );
             frames.push(frame);

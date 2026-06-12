@@ -217,7 +217,8 @@ impl VkContext {
             .descriptor_indexing(true)
             .descriptor_binding_partially_bound(true)
             .descriptor_binding_sampled_image_update_after_bind(true)
-            .timeline_semaphore(true);
+            .timeline_semaphore(true)
+            .draw_indirect_count(true);
 
         let mut device_features13 = vk::PhysicalDeviceVulkan13Features::default()
             .dynamic_rendering(true)

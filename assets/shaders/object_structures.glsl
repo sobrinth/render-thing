@@ -19,11 +19,34 @@ layout(buffer_reference, std430) readonly buffer VertexBuffer {
 struct ObjectData {
     mat4 model;
     mat4 normalMatrix;
+    vec4 boundsOrigin;
+    vec4 boundsExtents;
     VertexBuffer vertexBuffer;
     uint materialIndex;
-    uint _pad;
+    uint indexCount;
+    uint firstIndex;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
 };
 
 layout(buffer_reference, std430) readonly buffer ObjectBuffer {
     ObjectData objects[];
+};
+
+// Must match VkDrawIndexedIndirectCommand.
+struct DrawIndexedIndirectCommand {
+    uint indexCount;
+    uint instanceCount;
+    uint firstIndex;
+    int vertexOffset;
+    uint firstInstance;
+};
+
+layout(buffer_reference, std430) writeonly buffer DrawCommandBuffer {
+    DrawIndexedIndirectCommand commands[];
+};
+
+layout(buffer_reference, std430) buffer DrawCountBuffer {
+    uint count;
 };
