@@ -1,0 +1,55 @@
+#version 450
+#extension GL_EXT_buffer_reference : require
+#extension GL_GOOGLE_include_directive : require
+#include "object_structures.glsl"
+
+layout(local_size_x = 64) in;
+
+// Must match GPUCullPushConstants in crates/engine/src/primitives.rs.
+layout(push_constant) uniform constants {
+    mat4 viewProj;
+    ObjectBuffer objectBuffer;
+    DrawCommandBuffer commandBuffer;
+    DrawCountBuffer countBuffer;
+    uint drawCount;
+} PushConstants;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= PushConstants.drawCount) {
+        return;
+    }
+    ObjectData obj = PushConstants.objectBuffer.objects[i];
+
+    mat4 mvp = PushConstants.viewProj * obj.model;
+    vec3 o = obj.boundsOrigin.xyz;
+    vec3 e = obj.boundsExtents.xyz;
+
+    // Must match is_visible in crates/engine/src/frame.rs: reject only if all
+    // 8 AABB corners fall outside the same half-space (near plane at z = 0).
+    uint outside = 0x3Fu;
+    for (uint c = 0u; c < 8u; ++c) {
+        vec3 s = vec3(
+            (c & 1u) != 0u ? 1.0 : -1.0,
+            (c & 2u) != 0u ? 1.0 : -1.0,
+            (c & 4u) != 0u ? 1.0 : -1.0);
+        vec4 p = mvp * vec4(o + e * s, 1.0);
+        uint mask = 0u;
+        if (p.x > p.w) mask |= 1u;
+        if (p.x < -p.w) mask |= 2u;
+        if (p.y > p.w) mask |= 4u;
+        if (p.y < -p.w) mask |= 8u;
+        if (p.z > p.w) mask |= 16u;
+        if (p.z < 0.0) mask |= 32u;
+        outside &= mask;
+    }
+    if (outside != 0u) {
+        return;
+    }
+
+    // first_instance = object index i: compaction reorders commands, never
+    // draw IDs (the step-1 contract gl_InstanceIndex relies on).
+    uint slot = atomicAdd(PushConstants.countBuffer.count, 1u);
+    PushConstants.commandBuffer.commands[slot] =
+        DrawIndexedIndirectCommand(obj.indexCount, 1u, obj.firstIndex, 0, i);
+}

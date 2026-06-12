@@ -1,7 +1,9 @@
-use crate::command_buffer::{BarrierScope, CommandBuffer, Submitted, transition_image};
+use crate::command_buffer::{
+    BarrierScope, CommandBuffer, Submitted, memory_barrier, transition_image,
+};
 use crate::meshes::Bounds;
 use crate::pipeline::ComputePushConstants;
-use crate::primitives::{GPUDrawPushConstants, GPUObjectData, GPUSceneData};
+use crate::primitives::{GPUCullPushConstants, GPUDrawPushConstants, GPUObjectData, GPUSceneData};
 use crate::renderer::{FRAME_OVERLAP, VulkanRenderer};
 use crate::resources::AllocatedBuffer;
 use crate::stats::{DrawStats, FrameStats};
@@ -541,7 +543,7 @@ impl VulkanRenderer {
 
         ctx.opaque_surfaces.clear();
         ctx.transparent_surfaces.clear();
-        let submitted = draws.len() as u32;
+        let mut culled = 0u32;
         for draw_call in draws {
             let mesh = &self.resources.mesh_registry[draw_call.mesh.0 as usize];
             let pass = self.resources.material_registry[draw_call.material.0 as usize].pass_type;
@@ -555,17 +557,20 @@ impl VulkanRenderer {
                 bounds: mesh.bounds,
             };
 
-            if is_visible(&obj, &view_proj) {
-                match pass {
-                    crate::material::MaterialPass::MainColor => ctx.opaque_surfaces.push(obj),
-                    crate::material::MaterialPass::Transparent => {
+            // Opaque is culled on the GPU (cull.comp); only the order-dependent
+            // transparent pass still uses CPU is_visible.
+            match pass {
+                crate::material::MaterialPass::MainColor => ctx.opaque_surfaces.push(obj),
+                crate::material::MaterialPass::Transparent => {
+                    if is_visible(&obj, &view_proj) {
                         ctx.transparent_surfaces.push(obj)
+                    } else {
+                        culled += 1;
                     }
                 }
             }
         }
-        let visible = (ctx.opaque_surfaces.len() + ctx.transparent_surfaces.len()) as u32;
-        ctx.culled_count = submitted.saturating_sub(visible);
+        ctx.culled_count = culled;
     }
 
     fn draw_geometry(
@@ -576,6 +581,121 @@ impl VulkanRenderer {
         ctx: &mut DrawContext,
         cam_pos: glm::Vec3,
     ) -> DrawStats {
+        // Write scene data into the per-frame UBO; set 0 was written once at startup
+        let scene_mem_ptr = self.resources.frames[frame_index]
+            .scene_buffer
+            .info
+            .mapped_data;
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                (&self.resources.scene_data as *const GPUSceneData).cast::<u8>(),
+                scene_mem_ptr.cast::<u8>(),
+                size_of::<GPUSceneData>(),
+            )
+        }
+
+        let mut stats = DrawStats::default();
+
+        // Transparent pass — back-to-front by squared distance from camera.
+        ctx.transparent_surfaces.sort_unstable_by(|a, b| {
+            let t = |m: &glm::Mat4| glm::Vec3::from([m[(0, 3)], m[(1, 3)], m[(2, 3)]]);
+            let da = (t(&a.transform) - cam_pos).norm_squared();
+            let db = (t(&b.transform) - cam_pos).norm_squared();
+            db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let total = ctx.opaque_surfaces.len() + ctx.transparent_surfaces.len();
+        assert!(
+            total <= MAX_DRAWS as usize,
+            "{total} draws submitted, exceeding MAX_DRAWS ({MAX_DRAWS})"
+        );
+        // Draw ID = record index; opaque commands are produced by cull.comp,
+        // their first_instance set to the record index it read.
+        let object_ptr = self.resources.frames[frame_index]
+            .object_buffer
+            .info
+            .mapped_data as *mut GPUObjectData;
+        for (i, obj) in ctx
+            .opaque_surfaces
+            .iter()
+            .chain(ctx.transparent_surfaces.iter())
+            .enumerate()
+        {
+            let record = object_record(obj);
+            unsafe { object_ptr.add(i).write(record) };
+            stats.triangle_count += obj.index_count / 3;
+        }
+
+        // CPU-written commands: transparent only. Mapped-buffer slot = draw ID
+        // keeps the gizmo path unchanged.
+        let indirect_ptr = self.resources.frames[frame_index]
+            .indirect_buffer
+            .info
+            .mapped_data as *mut vk::DrawIndexedIndirectCommand;
+        let opaque_len = ctx.opaque_surfaces.len();
+        for (i, obj) in ctx.transparent_surfaces.iter().enumerate() {
+            let slot = opaque_len + i;
+            let command = vk::DrawIndexedIndirectCommand {
+                index_count: obj.index_count,
+                instance_count: 1,
+                first_index: obj.first_index,
+                vertex_offset: 0,
+                first_instance: slot as u32,
+            };
+            unsafe { indirect_ptr.add(slot).write(command) };
+        }
+
+        let opaque_count = ctx.opaque_surfaces.len() as u32;
+        if opaque_count > 0 {
+            let frame = &self.resources.frames[frame_index];
+            let count_buffer = frame.cull_count_buffer.buffer;
+            unsafe {
+                self.context
+                    .device
+                    .cmd_fill_buffer(cmd, count_buffer, 0, vk::WHOLE_SIZE, 0);
+            }
+            memory_barrier(
+                &self.context.device,
+                cmd,
+                BarrierScope::TRANSFER_WRITE,
+                BarrierScope::COMPUTE_STORAGE_RW,
+            );
+            let push = GPUCullPushConstants {
+                view_proj: self.resources.scene_data.view_proj,
+                object_buffer: frame.object_buffer_address,
+                command_buffer: frame.opaque_command_buffer_address,
+                count_buffer: frame.cull_count_buffer_address,
+                draw_count: opaque_count,
+                _pad: 0,
+            };
+            unsafe {
+                self.context.device.cmd_bind_pipeline(
+                    cmd,
+                    vk::PipelineBindPoint::COMPUTE,
+                    self.resources.cull_pipeline.pipeline,
+                );
+                self.context.device.cmd_push_constants(
+                    cmd,
+                    self.resources.cull_pipeline.layout,
+                    vk::ShaderStageFlags::COMPUTE,
+                    0,
+                    std::slice::from_raw_parts(
+                        (&push as *const GPUCullPushConstants).cast::<u8>(),
+                        size_of::<GPUCullPushConstants>(),
+                    ),
+                );
+                self.context
+                    .device
+                    .cmd_dispatch(cmd, opaque_count.div_ceil(64), 1, 1);
+            }
+            memory_barrier(
+                &self.context.device,
+                cmd,
+                BarrierScope::COMPUTE_STORAGE_RW,
+                BarrierScope::INDIRECT_READ,
+            );
+        }
+
         let color_attachment = vk::RenderingAttachmentInfo::default()
             .image_view(self.resources.draw_image.view)
             .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
@@ -605,8 +725,6 @@ impl VulkanRenderer {
 
         unsafe { self.context.device.cmd_begin_rendering(cmd, &render_info) }
 
-        let mut stats = DrawStats::default();
-
         let viewport = vk::Viewport {
             x: 0.0,
             y: 0.0,
@@ -627,18 +745,6 @@ impl VulkanRenderer {
             );
         }
 
-        // Write scene data into the per-frame UBO; set 0 was written once at startup
-        let scene_mem_ptr = self.resources.frames[frame_index]
-            .scene_buffer
-            .info
-            .mapped_data;
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                (&self.resources.scene_data as *const GPUSceneData).cast::<u8>(),
-                scene_mem_ptr.cast::<u8>(),
-                size_of::<GPUSceneData>(),
-            )
-        }
         let scene_set = self.resources.frames[frame_index].scene_set;
 
         let bindless_set = self.resources.bindless.set;
@@ -679,50 +785,6 @@ impl VulkanRenderer {
                 .cmd_bind_index_buffer(cmd, index_pool, 0, vk::IndexType::UINT32);
         }
 
-        // Transparent pass — back-to-front by squared distance from camera.
-        ctx.transparent_surfaces.sort_unstable_by(|a, b| {
-            let t = |m: &glm::Mat4| glm::Vec3::from([m[(0, 3)], m[(1, 3)], m[(2, 3)]]);
-            let da = (t(&a.transform) - cam_pos).norm_squared();
-            let db = (t(&b.transform) - cam_pos).norm_squared();
-            db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
-        });
-
-        let total = ctx.opaque_surfaces.len() + ctx.transparent_surfaces.len();
-        assert!(
-            total <= MAX_DRAWS as usize,
-            "{total} draws submitted, exceeding MAX_DRAWS ({MAX_DRAWS})"
-        );
-        // Draw ID = record index = indirect command index = draw order; each
-        // command's first_instance carries its ID into gl_InstanceIndex.
-        let object_ptr = self.resources.frames[frame_index]
-            .object_buffer
-            .info
-            .mapped_data as *mut GPUObjectData;
-        let indirect_ptr = self.resources.frames[frame_index]
-            .indirect_buffer
-            .info
-            .mapped_data as *mut vk::DrawIndexedIndirectCommand;
-        for (i, obj) in ctx
-            .opaque_surfaces
-            .iter()
-            .chain(ctx.transparent_surfaces.iter())
-            .enumerate()
-        {
-            let record = object_record(obj);
-            let command = vk::DrawIndexedIndirectCommand {
-                index_count: obj.index_count,
-                instance_count: 1,
-                first_index: obj.first_index,
-                vertex_offset: 0,
-                first_instance: i as u32,
-            };
-            unsafe {
-                object_ptr.add(i).write(record);
-                indirect_ptr.add(i).write(command);
-            }
-            stats.triangle_count += obj.index_count / 3;
-        }
-
         stats.opaque_count = ctx.opaque_surfaces.len() as u32;
         stats.culled_count = ctx.culled_count;
 
@@ -736,10 +798,13 @@ impl VulkanRenderer {
             );
         }
         if !ctx.opaque_surfaces.is_empty() {
+            let frame = &self.resources.frames[frame_index];
             unsafe {
-                self.context.device.cmd_draw_indexed_indirect(
+                self.context.device.cmd_draw_indexed_indirect_count(
                     cmd,
-                    indirect_buffer,
+                    frame.opaque_command_buffer.buffer,
+                    0,
+                    frame.cull_count_buffer.buffer,
                     0,
                     ctx.opaque_surfaces.len() as u32,
                     INDIRECT_STRIDE as u32,

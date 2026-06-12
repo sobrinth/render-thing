@@ -6,7 +6,7 @@ use crate::frame::{FrameData, MAX_DRAWS};
 use crate::input::{ElementState, Key, NamedKey};
 use crate::material::GltfMetallicRoughness;
 use crate::pipeline::{ComputeEffect, ComputePushConstants, Pipeline, PipelineLayout};
-use crate::primitives::{GPUObjectData, GPUSceneData, Vertex};
+use crate::primitives::{GPUCullPushConstants, GPUObjectData, GPUSceneData, Vertex};
 use crate::resources::{
     AllocatedBuffer, AllocatedImage, ImageCreateInfo, IndexPool, Sampler, upload_mesh_buffers,
 };
@@ -64,6 +64,7 @@ pub(crate) struct RendererResources {
     pub(crate) effect_pipeline_layout: PipelineLayout,
     pub(crate) background_effects: Vec<ComputeEffect>,
     pub(crate) active_background_effect: usize,
+    pub(crate) cull_pipeline: Pipeline,
     pub(crate) scene_data: GPUSceneData,
     pub(crate) scene_data_layout: DescriptorSetLayout,
     pub(crate) default_sampler_nearest: Arc<Sampler>,
@@ -183,6 +184,8 @@ impl VulkanRenderer {
                 .device
                 .destroy_shader_module(gradient_color_shader_module, None);
         };
+
+        let cull_pipeline = Self::init_cull_pipeline(&context);
 
         // default data
         const WHITE: u32 = u32::from_le_bytes([255, 255, 255, 255]);
@@ -336,6 +339,7 @@ impl VulkanRenderer {
                 effect_pipeline_layout,
                 background_effects: effects,
                 active_background_effect: 0,
+                cull_pipeline,
                 scene_data: GPUSceneData {
                     ambient_color: [0.5, 0.5, 0.5, 1.0],
                     sunlight_direction: [0.667, 0.667, 0.333, 1.0],
@@ -872,6 +876,35 @@ impl VulkanRenderer {
                 .collect_vec(),
             PipelineLayout::new(layout, context.device.clone()),
         )
+    }
+
+    fn init_cull_pipeline(context: &VkContext) -> Pipeline {
+        let push_range = &[vk::PushConstantRange::default()
+            .offset(0)
+            .size(size_of::<GPUCullPushConstants>() as u32)
+            .stage_flags(vk::ShaderStageFlags::COMPUTE)];
+        let layout_info = vk::PipelineLayoutCreateInfo::default().push_constant_ranges(push_range);
+        let layout = unsafe { context.device.create_pipeline_layout(&layout_info, None) }.unwrap();
+
+        let module = Self::create_shader_module(&context.device, "assets/shaders/cull.comp.spv");
+        let shader_stage_info = vk::PipelineShaderStageCreateInfo::default()
+            .stage(vk::ShaderStageFlags::COMPUTE)
+            .module(module)
+            .name(c"main");
+        let pipeline_info = &[vk::ComputePipelineCreateInfo::default()
+            .layout(layout)
+            .stage(shader_stage_info)];
+        let pipeline = unsafe {
+            context
+                .device
+                .create_compute_pipelines(vk::PipelineCache::null(), pipeline_info, None)
+        }
+        .unwrap()[0];
+        unsafe { context.device.destroy_shader_module(module, None) };
+
+        // Owns its layout (unlike the effect pipelines' shared one), so
+        // Pipeline::drop destroying both is correct.
+        Pipeline::new(pipeline, layout, context.device.clone())
     }
 
     fn initialize_shader_pipeline(

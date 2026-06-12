@@ -24,6 +24,17 @@ pub struct GPUDrawPushConstants {
     pub object_buffer: vk::DeviceAddress,
 }
 
+/// Must match the push_constant block in assets/shaders/cull.comp.
+#[repr(C)]
+pub struct GPUCullPushConstants {
+    pub view_proj: [[f32; 4]; 4],
+    pub object_buffer: vk::DeviceAddress,
+    pub command_buffer: vk::DeviceAddress,
+    pub count_buffer: vk::DeviceAddress,
+    pub draw_count: u32,
+    pub _pad: u32,
+}
+
 /// Per-draw record read by mesh.vert and cull.comp via buffer reference.
 /// Must match ObjectData in assets/shaders/object_structures.glsl.
 #[repr(C)]

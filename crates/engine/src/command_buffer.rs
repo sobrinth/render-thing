@@ -256,6 +256,10 @@ impl BarrierScope {
         stage: vk::PipelineStageFlags2::FRAGMENT_SHADER,
         access: vk::AccessFlags2::SHADER_SAMPLED_READ,
     };
+    pub(crate) const INDIRECT_READ: Self = Self {
+        stage: vk::PipelineStageFlags2::DRAW_INDIRECT,
+        access: vk::AccessFlags2::INDIRECT_COMMAND_READ,
+    };
 }
 
 pub(crate) fn transition_image(
@@ -295,4 +299,20 @@ pub(crate) fn transition_image(
     let dependency_info = vk::DependencyInfo::default().image_memory_barriers(&barriers);
 
     unsafe { device.cmd_pipeline_barrier2(cmd, &dependency_info) }
+}
+
+pub(crate) fn memory_barrier(
+    device: &Device,
+    cmd: vk::CommandBuffer,
+    src: BarrierScope,
+    dst: BarrierScope,
+) {
+    let barrier = vk::MemoryBarrier2::default()
+        .src_stage_mask(src.stage)
+        .src_access_mask(src.access)
+        .dst_stage_mask(dst.stage)
+        .dst_access_mask(dst.access);
+    let barriers = [barrier];
+    let dependency_info = vk::DependencyInfo::default().memory_barriers(&barriers);
+    unsafe { device.cmd_pipeline_barrier2(cmd, &dependency_info) };
 }

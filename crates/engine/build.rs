@@ -14,6 +14,7 @@ fn main() {
     println!("cargo::rerun-if-changed=../../assets/shaders/gradient.comp");
     println!("cargo::rerun-if-changed=../../assets/shaders/gradient_color.comp");
     println!("cargo::rerun-if-changed=../../assets/shaders/sky.comp");
+    println!("cargo::rerun-if-changed=../../assets/shaders/cull.comp");
     println!("cargo::rerun-if-changed=../../assets/shaders/input_structures.glsl");
     println!("cargo::rerun-if-changed=../../assets/shaders/object_structures.glsl");
     println!("cargo::rerun-if-changed=../../assets/shaders/mesh.vert");
