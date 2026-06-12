@@ -207,7 +207,10 @@ impl VkContext {
             .map(|ext| ext.as_ptr())
             .collect_vec();
 
-        let device_features = vk::PhysicalDeviceFeatures::default().sampler_anisotropy(true);
+        let device_features = vk::PhysicalDeviceFeatures::default()
+            .sampler_anisotropy(true)
+            .multi_draw_indirect(true)
+            .draw_indirect_first_instance(true);
 
         let mut device_features12 = vk::PhysicalDeviceVulkan12Features::default()
             .buffer_device_address(true)
@@ -270,6 +273,8 @@ impl VkContext {
             && extension_support
             && is_swapchain_usable
             && features.sampler_anisotropy == vk::TRUE
+            && features.multi_draw_indirect == vk::TRUE
+            && features.draw_indirect_first_instance == vk::TRUE
     }
 
     /// Device extensions to enable, or None if the device is missing any.

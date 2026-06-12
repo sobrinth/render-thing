@@ -12,6 +12,7 @@ use nalgebra_glm as glm;
 use std::time::Instant;
 
 pub(crate) const MAX_DRAWS: u32 = 16384;
+const INDIRECT_STRIDE: u64 = size_of::<vk::DrawIndexedIndirectCommand>() as u64;
 
 #[derive(Default)]
 pub(crate) struct DrawContext {
@@ -687,11 +688,16 @@ impl VulkanRenderer {
             total <= MAX_DRAWS as usize,
             "{total} draws submitted, exceeding MAX_DRAWS ({MAX_DRAWS})"
         );
-        // Draw ID = record index = draw order; each draw passes its ID via first_instance.
+        // Draw ID = record index = indirect command index = draw order; each
+        // command's first_instance carries its ID into gl_InstanceIndex.
         let object_ptr = self.resources.frames[frame_index]
             .object_buffer
             .info
             .mapped_data as *mut GPUObjectData;
+        let indirect_ptr = self.resources.frames[frame_index]
+            .indirect_buffer
+            .info
+            .mapped_data as *mut vk::DrawIndexedIndirectCommand;
         for (i, obj) in ctx
             .opaque_surfaces
             .iter()
@@ -703,22 +709,24 @@ impl VulkanRenderer {
                 obj.vertex_buffer_address,
                 obj.material_index,
             );
-            unsafe { object_ptr.add(i).write(record) };
+            let command = vk::DrawIndexedIndirectCommand {
+                index_count: obj.index_count,
+                instance_count: 1,
+                first_index: obj.first_index,
+                vertex_offset: 0,
+                first_instance: i as u32,
+            };
+            unsafe {
+                object_ptr.add(i).write(record);
+                indirect_ptr.add(i).write(command);
+            }
+            stats.triangle_count += obj.index_count / 3;
         }
-
-        let push_draw = |obj: &RenderObject, draw_id: u32| unsafe {
-            self.context.device.cmd_draw_indexed(
-                cmd,
-                obj.index_count,
-                1,
-                obj.first_index,
-                0,
-                draw_id,
-            );
-        };
 
         stats.opaque_count = ctx.opaque_surfaces.len() as u32;
         stats.culled_count = ctx.culled_count;
+
+        let indirect_buffer = self.resources.frames[frame_index].indirect_buffer.buffer;
 
         unsafe {
             self.context.device.cmd_bind_pipeline(
@@ -727,23 +735,8 @@ impl VulkanRenderer {
                 self.resources.metal_rough_material.opaque_pipeline.pipeline,
             );
         }
-        let mut last_index_buffer = vk::Buffer::null();
-        for (i, obj) in ctx.opaque_surfaces.iter().enumerate() {
-            if obj.index_buffer != last_index_buffer {
-                unsafe {
-                    self.context.device.cmd_bind_index_buffer(
-                        cmd,
-                        obj.index_buffer,
-                        0,
-                        vk::IndexType::UINT32,
-                    );
-                }
-                last_index_buffer = obj.index_buffer;
-            }
-            push_draw(obj, i as u32);
-            stats.draw_call_count += 1;
-            stats.triangle_count += obj.index_count / 3;
-        }
+        stats.draw_call_count +=
+            self.record_indirect_runs(cmd, indirect_buffer, &ctx.opaque_surfaces, 0);
 
         stats.transparent_count = ctx.transparent_surfaces.len() as u32;
 
@@ -760,26 +753,50 @@ impl VulkanRenderer {
             }
         }
         let opaque_len = ctx.opaque_surfaces.len() as u32;
-        last_index_buffer = vk::Buffer::null();
-        for (i, obj) in ctx.transparent_surfaces.iter().enumerate() {
-            if obj.index_buffer != last_index_buffer {
-                unsafe {
-                    self.context.device.cmd_bind_index_buffer(
-                        cmd,
-                        obj.index_buffer,
-                        0,
-                        vk::IndexType::UINT32,
-                    );
-                }
-                last_index_buffer = obj.index_buffer;
-            }
-            push_draw(obj, opaque_len + i as u32);
-            stats.draw_call_count += 1;
-            stats.triangle_count += obj.index_count / 3;
-        }
+        stats.draw_call_count +=
+            self.record_indirect_runs(cmd, indirect_buffer, &ctx.transparent_surfaces, opaque_len);
 
         unsafe { self.context.device.cmd_end_rendering(cmd) }
         stats
+    }
+
+    /// One cmd_draw_indexed_indirect per run of consecutive objects sharing an
+    /// index buffer; objs[i]'s command lives at indirect-buffer slot
+    /// base_draw_id + i. Returns the number of indirect calls recorded.
+    fn record_indirect_runs(
+        &self,
+        cmd: vk::CommandBuffer,
+        indirect_buffer: vk::Buffer,
+        objs: &[RenderObject],
+        base_draw_id: u32,
+    ) -> u32 {
+        let mut calls = 0;
+        let mut run_start = 0;
+        while run_start < objs.len() {
+            let index_buffer = objs[run_start].index_buffer;
+            let mut run_end = run_start + 1;
+            while run_end < objs.len() && objs[run_end].index_buffer == index_buffer {
+                run_end += 1;
+            }
+            unsafe {
+                self.context.device.cmd_bind_index_buffer(
+                    cmd,
+                    index_buffer,
+                    0,
+                    vk::IndexType::UINT32,
+                );
+                self.context.device.cmd_draw_indexed_indirect(
+                    cmd,
+                    indirect_buffer,
+                    (base_draw_id as u64 + run_start as u64) * INDIRECT_STRIDE,
+                    (run_end - run_start) as u32,
+                    INDIRECT_STRIDE as u32,
+                );
+            }
+            calls += 1;
+            run_start = run_end;
+        }
+        calls
     }
 
     fn draw_dev_overlay(
@@ -1021,18 +1038,38 @@ impl VulkanRenderer {
             .object_buffer
             .info
             .mapped_data as *mut GPUObjectData;
+        let indirect_ptr = self.resources.frames[frame_index]
+            .indirect_buffer
+            .info
+            .mapped_data as *mut vk::DrawIndexedIndirectCommand;
         for (i, &(mat_handle, arm_min, arm_max)) in draws.iter().enumerate() {
             let center = (arm_min + arm_max) * 0.5;
             let scale = arm_max - arm_min;
             let transform = glm::scale(&glm::translate(&glm::Mat4::identity(), &center), &scale);
             let draw_id = base_object_index + i as u32;
             let record = object_record(&transform, vertex_buffer_address, mat_handle.0);
+            let command = vk::DrawIndexedIndirectCommand {
+                index_count,
+                instance_count: 1,
+                first_index: 0,
+                vertex_offset: 0,
+                first_instance: draw_id,
+            };
             unsafe {
                 object_ptr.add(draw_id as usize).write(record);
-                self.context
-                    .device
-                    .cmd_draw_indexed(cmd, index_count, 1, 0, 0, draw_id);
+                indirect_ptr.add(draw_id as usize).write(command);
             }
+        }
+
+        // All arms share the gizmo index buffer (bound above) — one call draws them all.
+        unsafe {
+            self.context.device.cmd_draw_indexed_indirect(
+                cmd,
+                self.resources.frames[frame_index].indirect_buffer.buffer,
+                base_object_index as u64 * INDIRECT_STRIDE,
+                draws.len() as u32,
+                INDIRECT_STRIDE as u32,
+            );
         }
 
         unsafe { self.context.device.cmd_end_rendering(cmd) }
@@ -1099,6 +1136,7 @@ pub struct FrameData {
     pub(crate) scene_buffer: AllocatedBuffer,
     pub(crate) object_buffer: AllocatedBuffer,
     pub(crate) object_buffer_address: vk::DeviceAddress,
+    pub(crate) indirect_buffer: AllocatedBuffer,
     device: Device,
 }
 
@@ -1123,6 +1161,7 @@ impl FrameData {
         scene_buffer: AllocatedBuffer,
         object_buffer: AllocatedBuffer,
         object_buffer_address: vk::DeviceAddress,
+        indirect_buffer: AllocatedBuffer,
         device: Device,
     ) -> Self {
         Self {
@@ -1134,6 +1173,7 @@ impl FrameData {
             scene_buffer,
             object_buffer,
             object_buffer_address,
+            indirect_buffer,
             device,
         }
     }

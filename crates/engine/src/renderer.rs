@@ -685,6 +685,17 @@ impl VulkanRenderer {
             let object_buffer_address =
                 unsafe { context.device.get_buffer_device_address(&address_info) };
 
+            let indirect_buffer = AllocatedBuffer::create(
+                gpu_alloc,
+                MAX_DRAWS as u64 * size_of::<vk::DrawIndexedIndirectCommand>() as u64,
+                vk::BufferUsageFlags::INDIRECT_BUFFER,
+                vk_mem::MemoryUsage::Auto,
+                Some(
+                    vk_mem::AllocationCreateFlags::MAPPED
+                        | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
+                ),
+            );
+
             let scene_set = scene_set_pool.allocate(&context.device, scene_data_layout.layout);
             let gizmo_scene_set =
                 scene_set_pool.allocate(&context.device, scene_data_layout.layout);
@@ -717,6 +728,7 @@ impl VulkanRenderer {
                 scene_buffer,
                 object_buffer,
                 object_buffer_address,
+                indirect_buffer,
                 context.device.clone(),
             );
             frames.push(frame);
