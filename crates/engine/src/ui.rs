@@ -1,4 +1,5 @@
 use crate::context::QueueData;
+use crate::egui_renderer::{DynamicRendering, Options, Renderer};
 use crate::frame::FrameData;
 use crate::pipeline::ComputeEffect;
 use crate::renderer::FRAME_OVERLAP;
@@ -7,7 +8,6 @@ use crate::swapchain::SwapchainProperties;
 use ash::Device;
 use ash::vk::{CommandBuffer, Extent2D};
 use egui::{ClippedPrimitive, Context, TextureId};
-use egui_ash_renderer::Renderer;
 use std::sync::Arc;
 use vk_mem::Allocator;
 
@@ -37,14 +37,14 @@ impl UiContext {
         allocator: &Arc<Allocator>,
         swapchain_properties: SwapchainProperties,
     ) -> Self {
-        let egui_renderer = Renderer::with_vk_mem_allocator(
+        let egui_renderer = Renderer::new(
             allocator.clone(),
             device.clone(),
-            egui_ash_renderer::DynamicRendering {
+            DynamicRendering {
                 color_attachment_format: swapchain_properties.format.format,
                 depth_attachment_format: None,
             },
-            egui_ash_renderer::Options {
+            Options {
                 in_flight_frames: FRAME_OVERLAP as usize,
                 ..Default::default()
             },

@@ -164,7 +164,7 @@ impl ApplicationHandler for GameApp {
                 button: winit::event::MouseButton::Left,
                 state: winit::event::ElementState::Pressed,
                 ..
-            } if !self.cursor_captured && !engine.egui_context().wants_pointer_input() => {
+            } if !self.cursor_captured && !engine.wants_pointer_input() => {
                 let _ = window
                     .set_cursor_grab(CursorGrabMode::Locked)
                     .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));

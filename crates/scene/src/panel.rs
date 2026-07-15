@@ -31,9 +31,9 @@ impl ScenePanel {
             .show(ctx, |ui| {
                 // Claim bottom space first so the scroll area gets what remains.
                 if let Some(selected) = self.selected {
-                    egui::TopBottomPanel::bottom("scene_inspector")
+                    egui::Panel::bottom("scene_inspector")
                         .frame(egui::Frame::NONE)
-                        .show_inside(ui, |ui| {
+                        .show(ui, |ui| {
                             ui.separator();
                             Self::show_inspector(ui, scene, selected);
                         });

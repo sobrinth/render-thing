@@ -119,13 +119,13 @@ impl ApplicationHandler for Application {
                     winit::event::ElementState::Pressed => einput::ElementState::Pressed,
                     winit::event::ElementState::Released => einput::ElementState::Released,
                 };
-                if !engine.egui_context().wants_pointer_input() {
+                if !engine.wants_pointer_input() {
                     camera.handle_mouse_button_event(button, state);
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
                 let new_pos: (i32, i32) = position.into();
-                if !engine.egui_context().wants_pointer_input() {
+                if !engine.wants_pointer_input() {
                     camera.handle_mouse_event(self.mouse_pos, new_pos);
                 }
                 self.mouse_pos = new_pos;
@@ -148,7 +148,7 @@ impl ApplicationHandler for Application {
                     _ => einput::Key::Other,
                 };
                 engine.on_key_press((state, key.clone()));
-                if !engine.egui_context().wants_keyboard_input() {
+                if !engine.egui_context().egui_wants_keyboard_input() {
                     camera.handle_key_event((state, key));
                 }
             }

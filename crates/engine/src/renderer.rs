@@ -458,7 +458,7 @@ impl VulkanRenderer {
     }
 
     pub(crate) fn on_key_event(&mut self, key_event: (ElementState, Key)) {
-        if !self.resources.ui_context.ctx.wants_keyboard_input() {
+        if !self.resources.ui_context.ctx.egui_wants_keyboard_input() {
             if matches!(key_event, (ElementState::Pressed, Key::Named(NamedKey::F2))) {
                 self.resources.show_controls = !self.resources.show_controls;
                 return;

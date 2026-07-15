@@ -41,6 +41,7 @@ mod command_buffer;
 mod context;
 mod debug;
 mod descriptor;
+mod egui_renderer;
 pub mod input;
 mod material;
 mod meshes;
@@ -89,6 +90,28 @@ impl Engine {
 
     pub fn egui_context(&self) -> egui::Context {
         self.renderer.egui_context()
+    }
+
+    /// True if egui wants the pointer: it's dragging/using a widget, or hovering a
+    /// floating `Window`/`Panel` while no button is held.
+    ///
+    /// `egui::Context::egui_wants_pointer_input` can't be used here: its background-layer
+    /// case only special-cases `root_ui_available_rect`, which is only ever populated by
+    /// `Context::run`. This engine drives egui via the lower-level `begin_pass`/`end_pass`
+    /// pair (see `ui.rs`), so that state stays `None` forever and the upstream method
+    /// always answers `true`, permanently blocking camera/game input.
+    pub fn wants_pointer_input(&self) -> bool {
+        let ctx = self.egui_context();
+        if ctx.egui_is_using_pointer() {
+            return true;
+        }
+        let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) else {
+            return false;
+        };
+        let over_floating_layer = ctx
+            .layer_id_at(pos)
+            .is_some_and(|layer| layer.order != egui::Order::Background);
+        over_floating_layer && !ctx.input(|i| i.pointer.any_down())
     }
 
     pub fn upload_mesh(&mut self, indices: &[u32], vertices: &[Vertex]) -> MeshHandle {

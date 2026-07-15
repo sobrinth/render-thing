@@ -102,7 +102,8 @@ allow = [
     "ISC",
     "BSL-1.0",
     "OFL-1.1",
-    "Ubuntu-font-1.0"
+    "Ubuntu-font-1.0",
+    "Zlib"
 ]
 # The confidence threshold for detecting a license from license text.
 # The higher the value, the more closely the license text must be to the
