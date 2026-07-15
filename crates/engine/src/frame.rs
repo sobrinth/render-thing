@@ -278,12 +278,15 @@ impl VulkanRenderer {
         let draw_time_ms = t0.elapsed().as_secs_f32() * 1000.0;
         self.resources.draw_ctx = draw_ctx;
 
+        let gizmo_base_index = (self.resources.draw_ctx.opaque_surfaces.len()
+            + self.resources.draw_ctx.transparent_surfaces.len())
+            as u32;
         self.draw_dev_overlay(
             frame_index,
             cmd.handle(),
             draw_extent,
             &camera.view_matrix,
-            draw_stats.opaque_count + draw_stats.transparent_count,
+            gizmo_base_index,
         );
 
         // transition the draw image and the swapchain image into their correct transfer layouts.
