@@ -15,3 +15,6 @@ log.workspace = true
 thiserror.workspace = true
 vk-mem.workspace = true
 nalgebra-glm.workspace = true
+
+[build-dependencies]
+shaderc.workspace = true
