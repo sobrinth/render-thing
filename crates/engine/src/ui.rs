@@ -6,7 +6,7 @@ use crate::renderer::FRAME_OVERLAP;
 use crate::stats::StatsHistory;
 use crate::swapchain::SwapchainProperties;
 use ash::Device;
-use ash::vk::{CommandBuffer, Extent2D};
+use ash::vk::{self, CommandBuffer, Extent2D};
 use egui::{ClippedPrimitive, Context, TextureId};
 use eros::Context as _;
 use std::sync::Arc;
@@ -47,6 +47,8 @@ impl UiContext {
             },
             Options {
                 in_flight_frames: FRAME_OVERLAP as usize,
+                srgb_framebuffer: swapchain_properties.format.format
+                    == vk::Format::B8G8R8A8_SRGB,
                 ..Default::default()
             },
         )

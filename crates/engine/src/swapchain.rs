@@ -200,14 +200,13 @@ impl SwapchainSupportDetails {
 
     /// Choose the swapchain surface format.
     ///
-    /// Will choose B8G8R8A8_UNORM/SRGB_NONLINEAR if possible or
-    /// the first available otherwise.
+    /// Prefers B8G8R8A8_SRGB/SRGB_NONLINEAR; falls back to UNORM, then first available.
     fn choose_swapchain_surface_format(
         available_formats: &[vk::SurfaceFormatKHR],
     ) -> vk::SurfaceFormatKHR {
         if available_formats.len() == 1 && available_formats[0].format == vk::Format::UNDEFINED {
             return vk::SurfaceFormatKHR {
-                format: vk::Format::B8G8R8A8_UNORM,
+                format: vk::Format::B8G8R8A8_SRGB,
                 color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
             };
         }
@@ -215,8 +214,14 @@ impl SwapchainSupportDetails {
         *available_formats
             .iter()
             .find(|f| {
-                f.format == vk::Format::B8G8R8A8_UNORM
+                f.format == vk::Format::B8G8R8A8_SRGB
                     && f.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
+            })
+            .or_else(|| {
+                available_formats.iter().find(|f| {
+                    f.format == vk::Format::B8G8R8A8_UNORM
+                        && f.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
+                })
             })
             .unwrap_or(&available_formats[0])
     }

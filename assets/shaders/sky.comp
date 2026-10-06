@@ -1,6 +1,6 @@
 ﻿#version 450
 layout (local_size_x = 16, local_size_y = 16) in;
-layout (rgba16f, set = 0, binding = 0) uniform image2D image;
+layout (rgba8, set = 0, binding = 0) uniform image2D image;
 
 // License Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.
 
@@ -76,6 +76,10 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord)
 
 
 
+vec3 linear_to_srgb(vec3 c) {
+    return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c));
+}
+
 void main()
 {
     ivec2 texelCoord = ivec2(gl_GlobalInvocationID.xy);
@@ -84,7 +88,7 @@ void main()
     {
         vec4 color;
         mainImage(color, texelCoord);
-
+        color.rgb = linear_to_srgb(color.rgb);
         imageStore(image, texelCoord, color);
     }
 }

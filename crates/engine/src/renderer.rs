@@ -133,7 +133,7 @@ impl VulkanRenderer {
             &context,
             &gpu_alloc,
             config.max_render_resolution,
-            vk::Format::R16G16B16A16_SFLOAT,
+            vk::Format::B8G8R8A8_SRGB,
             vk::ImageUsageFlags::TRANSFER_SRC
                 | vk::ImageUsageFlags::TRANSFER_DST
                 | vk::ImageUsageFlags::STORAGE
@@ -354,9 +354,9 @@ impl VulkanRenderer {
                 active_background_effect: 0,
                 cull_pipeline,
                 scene_data: GPUSceneData {
-                    ambient_color: [0.5, 0.5, 0.5, 1.0],
+                    ambient_color: [0.1, 0.1, 0.1, 1.0],
                     sunlight_direction: [0.667, 0.667, 0.333, 1.0],
-                    sunlight_color: [1.0, 1.0, 1.0, 2.5],
+                    sunlight_color: [1.0, 1.0, 1.0, 1.0],
                     ..Default::default()
                 },
                 scene_data_layout,
