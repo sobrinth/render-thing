@@ -5,6 +5,7 @@ mod player;
 
 use engine::input::{self as einput, ElementState};
 use engine::{CameraView, Engine, MaterialConstants, MaterialPass};
+use eros::Context;
 use level::{Level, OrbitParams, build_box, build_hex_platform};
 use nalgebra_glm as glm;
 use player::Player;
@@ -27,76 +28,55 @@ fn main() -> eros::Result<()> {
     env_logger::init();
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
-    let mut app = GameApp::default();
+    let mut app = GameApp::Starting;
     event_loop.run_app(&mut app)?;
-    match app.init_error.take() {
-        Some(err) => Err(err),
-        None => Ok(()),
+    match app {
+        GameApp::Failed(err) => Err(err),
+        _ => Ok(()),
     }
 }
 
-struct GameApp {
-    window: Option<Window>,
-    engine: Option<Engine>,
-    /// Set when engine or level setup fails; reported from `main` after the loop exits.
-    init_error: Option<eros::ErrorUnion>,
-    ui: Option<egui_winit::State>,
-    player: Option<Player>,
-    level: Option<Level>,
+enum GameApp {
+    Starting,
+    Running(Game),
+    Stopped,
+    Failed(eros::ErrorUnion),
+}
+
+struct Game {
+    engine: Engine,
+    ui: egui_winit::State,
+    player: Player,
+    level: Level,
     held_keys: HashSet<einput::Key>,
-    last_frame: Option<Instant>,
+    last_frame: Instant,
     accumulator: f32,
     cursor_captured: bool,
     scene_panel: scene::ScenePanel,
     /// Reused across frames to avoid re-allocating the draw list.
     draw_buffer: Vec<engine::DrawCall>,
+    window: Window,
 }
 
-impl Default for GameApp {
-    fn default() -> Self {
-        Self {
-            window: None,
-            engine: None,
-            init_error: None,
-            ui: None,
-            player: None,
-            level: None,
-            held_keys: HashSet::new(),
-            last_frame: None,
-            accumulator: 0.0,
-            cursor_captured: false,
-            scene_panel: scene::ScenePanel::new(),
-            draw_buffer: Vec::new(),
-        }
-    }
-}
-
-impl ApplicationHandler for GameApp {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+impl Game {
+    fn start(event_loop: &ActiveEventLoop) -> eros::Result<Self> {
         let window = event_loop
             .create_window(
                 Window::default_attributes()
                     .with_title("Game")
                     .with_inner_size(PhysicalSize::new(WIDTH, HEIGHT)),
             )
-            .unwrap();
+            .context("Creating window")?;
 
         let window_size = (window.inner_size().width, window.inner_size().height);
-        let mut engine = match Engine::initialize(
+        let mut engine = Engine::initialize(
             &window,
             window_size,
             engine::EngineConfig {
                 app_name: "Game".to_string(),
                 ..Default::default()
             },
-        ) {
-            Ok(engine) => engine,
-            Err(err) => {
-                self.init_error = Some(err);
-                event_loop.exit();
-                return;
-            }
-        };
+        )?;
 
         let ui = egui_winit::State::new(
             engine.egui_context(),
@@ -110,36 +90,33 @@ impl ApplicationHandler for GameApp {
         let level = match build_level(&mut engine) {
             Ok(level) => level,
             Err(err) => {
-                self.init_error = Some(err);
                 engine.stop();
-                event_loop.exit();
-                return;
+                return Err(err);
             }
         };
 
-        self.engine = Some(engine);
-        self.ui = Some(ui);
-        self.window = Some(window);
-        self.player = Some(Player::new());
-        self.level = Some(level);
-        self.last_frame = Some(Instant::now());
-        self.cursor_captured = false;
+        Ok(Game {
+            engine,
+            ui,
+            player: Player::new(),
+            level,
+            held_keys: HashSet::new(),
+            last_frame: Instant::now(),
+            accumulator: 0.0,
+            cursor_captured: false,
+            scene_panel: scene::ScenePanel::new(),
+            draw_buffer: Vec::new(),
+            window,
+        })
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
-        if self.engine.is_none() {
-            return;
-        }
-        let window = self.window.as_ref().unwrap();
-        let ui = self.ui.as_mut().unwrap();
-        let engine = self.engine.as_mut().unwrap();
-
-        let _ = ui.on_window_event(window, &event);
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, event: WindowEvent) {
+        let _ = self.ui.on_window_event(&self.window, &event);
 
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
 
-            WindowEvent::Resized(size) => engine.resize(size.into()),
+            WindowEvent::Resized(size) => self.engine.resize(size.into()),
 
             WindowEvent::KeyboardInput {
                 event: key_event, ..
@@ -152,8 +129,8 @@ impl ApplicationHandler for GameApp {
                     winit::keyboard::Key::Named(winit::keyboard::NamedKey::Escape)
                 ) && key_event.state == winit::event::ElementState::Pressed
                 {
-                    let _ = window.set_cursor_grab(CursorGrabMode::None);
-                    window.set_cursor_visible(true);
+                    let _ = self.window.set_cursor_grab(CursorGrabMode::None);
+                    self.window.set_cursor_visible(true);
                     self.cursor_captured = false;
                     return;
                 }
@@ -179,18 +156,19 @@ impl ApplicationHandler for GameApp {
                 } else {
                     self.held_keys.remove(&key);
                 }
-                engine.on_key_press((state, key));
+                self.engine.on_key_press((state, key));
             }
 
             WindowEvent::MouseInput {
                 button: winit::event::MouseButton::Left,
                 state: winit::event::ElementState::Pressed,
                 ..
-            } if !self.cursor_captured && !engine.wants_pointer_input() => {
-                let _ = window
+            } if !self.cursor_captured && !self.engine.wants_pointer_input() => {
+                let _ = self
+                    .window
                     .set_cursor_grab(CursorGrabMode::Locked)
-                    .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
-                window.set_cursor_visible(false);
+                    .or_else(|_| self.window.set_cursor_grab(CursorGrabMode::Confined));
+                self.window.set_cursor_visible(false);
                 self.cursor_captured = true;
             }
 
@@ -200,84 +178,97 @@ impl ApplicationHandler for GameApp {
         }
     }
 
-    fn device_event(&mut self, _: &ActiveEventLoop, _: DeviceId, event: DeviceEvent) {
+    fn device_event(&mut self, event: DeviceEvent) {
         if let DeviceEvent::MouseMotion { delta } = event
             && self.cursor_captured
-            && let Some(player) = &mut self.player
         {
-            player.yaw += delta.0 as f32 * LOOK_SENSITIVITY;
-            player.pitch -= delta.1 as f32 * LOOK_SENSITIVITY;
-            player.pitch = player.pitch.clamp(-89f32.to_radians(), 89f32.to_radians());
+            self.player.yaw += delta.0 as f32 * LOOK_SENSITIVITY;
+            self.player.pitch -= delta.1 as f32 * LOOK_SENSITIVITY;
+            self.player.pitch = self
+                .player
+                .pitch
+                .clamp(-89f32.to_radians(), 89f32.to_radians());
         }
     }
 
-    fn exiting(&mut self, _: &ActiveEventLoop) {
-        if let Some(mut engine) = self.engine.take() {
-            engine.stop();
-            drop(engine);
-        }
-    }
-}
-
-impl GameApp {
     fn render(&mut self) {
-        let window = self.window.as_ref().unwrap();
-        let ui = self.ui.as_mut().unwrap();
-        let engine = self.engine.as_mut().unwrap();
-        let player = self.player.as_mut().unwrap();
-
-        // Delta time — cap at 0.1 s to avoid spiral of death on long frames
         let now = Instant::now();
-        let frame_dt = self
-            .last_frame
-            .replace(now)
-            .map(|t| t.elapsed().as_secs_f32())
-            .unwrap_or(0.0)
-            .min(0.1);
+        let frame_dt = now.duration_since(self.last_frame).as_secs_f32().min(0.1);
+        self.last_frame = now;
 
         // Fixed-timestep physics (60 TPS)
         self.accumulator += frame_dt;
         while self.accumulator >= PHYSICS_DT {
-            player.update(PHYSICS_DT, &self.held_keys);
-            if let Some(level) = &mut self.level {
-                level.tick(PHYSICS_DT);
-                player.resolve_collision(&level.collision_boxes);
-            }
+            self.player.update(PHYSICS_DT, &self.held_keys);
+            self.level.tick(PHYSICS_DT);
+            self.player.resolve_collision(&self.level.collision_boxes);
             self.accumulator -= PHYSICS_DT;
         }
 
         // Build camera from current player state
-        let aspect = window.inner_size().width as f32 / window.inner_size().height as f32;
+        let size = self.window.inner_size();
+        let aspect = size.width as f32 / size.height as f32;
         let mut proj = glm::perspective_rh_zo(aspect, 70f32.to_radians(), 10000f32, 0.1f32);
         proj[(1, 1)] *= -1.0;
         let camera = CameraView {
-            view_matrix: player.view_matrix(),
+            view_matrix: self.player.view_matrix(),
             proj_matrix: proj,
-            position: player.eye_position(),
+            position: self.player.eye_position(),
         };
 
         // Render
-        let raw_input = ui.take_egui_input(window);
-        window.pre_present_notify();
-        match &self.level {
-            Some(level) => level.all_draws_into(&mut self.draw_buffer),
-            None => self.draw_buffer.clear(),
-        }
+        let raw_input = self.ui.take_egui_input(&self.window);
+        self.window.pre_present_notify();
+        self.level.all_draws_into(&mut self.draw_buffer);
         let scene_panel = &mut self.scene_panel;
-        let level = self.level.as_mut();
-        let platform_output = engine.draw(camera, &self.draw_buffer, raw_input, |ctx| {
-            if let Some(l) = level {
-                scene_panel.show(ctx, &mut l.scene);
-            }
-        });
-        ui.handle_platform_output(window, platform_output);
+        let level = &mut self.level;
+        let platform_output = self
+            .engine
+            .draw(camera, &self.draw_buffer, raw_input, |ctx| {
+                scene_panel.show(ctx, &mut level.scene);
+            });
+        self.ui
+            .handle_platform_output(&self.window, platform_output);
 
         let elapsed = now.elapsed();
         if elapsed < TARGET_FRAME_TIME {
             std::thread::sleep(TARGET_FRAME_TIME - elapsed);
         }
 
-        window.request_redraw();
+        self.window.request_redraw();
+    }
+}
+
+impl ApplicationHandler for GameApp {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if let GameApp::Starting = self {
+            *self = match Game::start(event_loop) {
+                Ok(game) => GameApp::Running(game),
+                Err(err) => {
+                    event_loop.exit();
+                    GameApp::Failed(err)
+                }
+            };
+        }
+    }
+
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
+        if let GameApp::Running(game) = self {
+            game.window_event(event_loop, event);
+        }
+    }
+
+    fn device_event(&mut self, _: &ActiveEventLoop, _: DeviceId, event: DeviceEvent) {
+        if let GameApp::Running(game) = self {
+            game.device_event(event);
+        }
+    }
+
+    fn exiting(&mut self, _: &ActiveEventLoop) {
+        if let GameApp::Running(game) = self {
+            game.engine.stop();
+            *self = GameApp::Stopped;
+        }
     }
 }
 

@@ -1,5 +1,6 @@
 use engine::input::{self as einput};
 use engine::{CameraView, Engine};
+use eros::Context;
 use nalgebra_glm as glm;
 use winit::application::ApplicationHandler;
 
@@ -21,70 +22,52 @@ fn main() -> eros::Result<()> {
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(Poll);
 
-    let mut app = Application::default();
+    let mut app = Application::Starting;
     event_loop.run_app(&mut app)?;
-    match app.init_error.take() {
-        Some(err) => Err(err),
-        None => Ok(()),
+    match app {
+        Application::Failed(err) => Err(err),
+        _ => Ok(()),
     }
 }
 
-struct Application {
-    window: Option<Window>,
-    engine: Option<Engine>,
-    /// Set when engine initialization fails; reported from `main` after the loop exits.
-    init_error: Option<eros::ErrorUnion>,
-    ui: Option<egui_winit::State>,
-    camera: Option<Camera>,
+enum Application {
+    Starting,
+    Running(Viewer),
+    Stopped,
+    Failed(eros::ErrorUnion),
+}
+
+struct Viewer {
+    engine: Engine,
+    ui: egui_winit::State,
+    camera: Camera,
     mouse_pos: (i32, i32),
     scene: Option<scene::SceneGraph>,
     scene_panel: scene::ScenePanel,
     /// Reused across frames to avoid re-allocating the draw list.
     draw_buffer: Vec<engine::DrawCall>,
+    window: Window,
 }
 
-impl Default for Application {
-    fn default() -> Self {
-        Self {
-            window: None,
-            engine: None,
-            init_error: None,
-            ui: None,
-            camera: None,
-            mouse_pos: (0, 0),
-            scene: None,
-            scene_panel: scene::ScenePanel::new(),
-            draw_buffer: Vec::new(),
-        }
-    }
-}
-
-impl ApplicationHandler for Application {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+impl Viewer {
+    fn start(event_loop: &ActiveEventLoop) -> eros::Result<Self> {
         let window = event_loop
             .create_window(
                 Window::default_attributes()
                     .with_title("Render Thing")
                     .with_inner_size(PhysicalSize::new(WIDTH, HEIGHT)),
             )
-            .unwrap();
+            .context("Creating window")?;
 
         let window_size = (window.inner_size().width, window.inner_size().height);
-        let mut engine = match Engine::initialize(
+        let mut engine = Engine::initialize(
             &window,
             window_size,
             engine::EngineConfig {
                 app_name: "Render Thing".to_string(),
                 ..Default::default()
             },
-        ) {
-            Ok(engine) => engine,
-            Err(err) => {
-                self.init_error = Some(err);
-                event_loop.exit();
-                return;
-            }
-        };
+        )?;
 
         let ui = egui_winit::State::new(
             engine.egui_context(),
@@ -95,41 +78,35 @@ impl ApplicationHandler for Application {
             None,
         );
 
-        self.scene = match scene::load_gltf(&mut engine, "assets/models/downloaded/abbey.glb") {
+        let scene = match scene::load_gltf(&mut engine, "assets/models/downloaded/abbey.glb") {
             Ok(scene) => Some(scene),
             Err(err) => {
                 log::error!("Starting without a scene: {err:?}");
                 None
             }
         };
-        self.engine = Some(engine);
-        self.ui = Some(ui);
-        self.window = Some(window);
-        self.camera = Some(Camera::new());
+
+        Ok(Viewer {
+            engine,
+            ui,
+            camera: Camera::new(),
+            mouse_pos: (0, 0),
+            scene,
+            scene_panel: scene::ScenePanel::new(),
+            draw_buffer: Vec::new(),
+            window,
+        })
     }
 
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        _window_id: WindowId,
-        event: WindowEvent,
-    ) {
-        if self.engine.is_none() {
-            return;
-        }
-        let window = self.window.as_ref().unwrap();
-        let ui = self.ui.as_mut().unwrap();
-        let engine = self.engine.as_mut().unwrap();
-        let camera = self.camera.as_mut().unwrap();
-
-        let _ = ui.on_window_event(window, &event);
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, event: WindowEvent) {
+        let _ = self.ui.on_window_event(&self.window, &event);
 
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
             }
             WindowEvent::Resized(size) => {
-                engine.resize(size.into());
+                self.engine.resize(size.into());
             }
             WindowEvent::MouseInput { button, state, .. } => {
                 let button = match button {
@@ -142,14 +119,14 @@ impl ApplicationHandler for Application {
                     winit::event::ElementState::Pressed => einput::ElementState::Pressed,
                     winit::event::ElementState::Released => einput::ElementState::Released,
                 };
-                if !engine.wants_pointer_input() {
-                    camera.handle_mouse_button_event(button, state);
+                if !self.engine.wants_pointer_input() {
+                    self.camera.handle_mouse_button_event(button, state);
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
                 let new_pos: (i32, i32) = position.into();
-                if !engine.wants_pointer_input() {
-                    camera.handle_mouse_event(self.mouse_pos, new_pos);
+                if !self.engine.wants_pointer_input() {
+                    self.camera.handle_mouse_event(self.mouse_pos, new_pos);
                 }
                 self.mouse_pos = new_pos;
             }
@@ -170,9 +147,9 @@ impl ApplicationHandler for Application {
                     }),
                     _ => einput::Key::Other,
                 };
-                engine.on_key_press((state, key.clone()));
-                if !engine.egui_context().egui_wants_keyboard_input() {
-                    camera.handle_key_event((state, key));
+                self.engine.on_key_press((state, key.clone()));
+                if !self.engine.egui_context().egui_wants_keyboard_input() {
+                    self.camera.handle_key_event((state, key));
                 }
             }
             WindowEvent::MouseWheel {
@@ -180,17 +157,18 @@ impl ApplicationHandler for Application {
                 ..
             } => {}
             WindowEvent::RedrawRequested => {
-                let raw_input = ui.take_egui_input(window);
-                window.pre_present_notify();
-                camera.update();
-                let view = camera.get_view_matrix();
-                let aspect = window.inner_size().width as f32 / window.inner_size().height as f32;
+                let raw_input = self.ui.take_egui_input(&self.window);
+                self.window.pre_present_notify();
+                self.camera.update();
+                let view = self.camera.get_view_matrix();
+                let aspect =
+                    self.window.inner_size().width as f32 / self.window.inner_size().height as f32;
                 let mut proj = glm::perspective_rh_zo(aspect, 70f32.to_radians(), 10000f32, 0.1f32);
                 proj[(1, 1)] *= -1.0;
                 let camera_view = CameraView {
                     view_matrix: view,
                     proj_matrix: proj,
-                    position: camera.position,
+                    position: self.camera.position,
                 };
                 match &self.scene {
                     Some(scene) => scene.flatten_visible_into(&mut self.draw_buffer),
@@ -199,25 +177,51 @@ impl ApplicationHandler for Application {
                 let scene_panel = &mut self.scene_panel;
                 let scene_opt = &mut self.scene;
                 let platform_output =
-                    engine.draw(camera_view, &self.draw_buffer, raw_input, |ctx| {
-                        if let Some(scene) = scene_opt {
-                            scene_panel.show(ctx, scene);
-                        }
-                    });
-                ui.handle_platform_output(window, platform_output);
-                window.request_redraw();
+                    self.engine
+                        .draw(camera_view, &self.draw_buffer, raw_input, |ctx| {
+                            if let Some(scene) = scene_opt {
+                                scene_panel.show(ctx, scene);
+                            }
+                        });
+                self.ui
+                    .handle_platform_output(&self.window, platform_output);
+                self.window.request_redraw();
             }
             _ => (),
         }
     }
+}
+
+impl ApplicationHandler for Application {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if let Application::Starting = self {
+            *self = match Viewer::start(event_loop) {
+                Ok(viewer) => Application::Running(viewer),
+                Err(err) => {
+                    event_loop.exit();
+                    Application::Failed(err)
+                }
+            };
+        }
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _window_id: WindowId,
+        event: WindowEvent,
+    ) {
+        if let Application::Running(viewer) = self {
+            viewer.window_event(event_loop, event);
+        }
+    }
 
     fn exiting(&mut self, _: &ActiveEventLoop) {
-        // This is guaranteed to be the last code run before the event-loop will exit, so the engine
-        // is dropped here because it needs to be gone before the event-loop exits.
-        if let Some(mut engine) = self.engine.take() {
-            engine.stop();
-            // This drop is not needed but makes the intention here explicit
-            drop(engine)
+        // This is guaranteed to be the last code run before the event-loop will exit, so the
+        // viewer (and with it the engine) is dropped here, before the event-loop goes away.
+        if let Application::Running(viewer) = self {
+            viewer.engine.stop();
+            *self = Application::Stopped;
         }
     }
 }

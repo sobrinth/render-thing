@@ -26,7 +26,7 @@ pub(crate) struct UiState<'a> {
 }
 
 pub(crate) struct UiContext {
-    renderer: Option<Renderer>,
+    renderer: Renderer,
     pub ctx: Context,
     scale_factor: f32,
     textures_to_free: [Option<Vec<TextureId>>; FRAME_OVERLAP as usize],
@@ -53,7 +53,7 @@ impl UiContext {
         .context("Creating egui renderer")?;
 
         Ok(UiContext {
-            renderer: Some(egui_renderer),
+            renderer: egui_renderer,
             ctx: Context::default(),
             scale_factor: 1.0,
             textures_to_free: Default::default(),
@@ -70,10 +70,7 @@ pub(crate) fn before_frame(
     frame_index: usize,
     build_ui: impl FnOnce(&Context),
 ) -> (Vec<ClippedPrimitive>, egui::PlatformOutput) {
-    let renderer = ui
-        .renderer
-        .as_mut()
-        .expect("UI pre-draw call with renderer: 'None'");
+    let renderer = &mut ui.renderer;
 
     let ctx = ui.ctx.clone();
 
@@ -273,8 +270,6 @@ pub(crate) fn render(
     primitives: Vec<ClippedPrimitive>,
 ) {
     egui.renderer
-        .as_mut()
-        .expect("UI draw call with renderer: 'None'")
         .cmd_draw(cmd, extent, egui.scale_factor, &primitives)
         .unwrap();
 }
@@ -286,10 +281,6 @@ pub(crate) fn after_frame(ui: &mut UiContext, frame_index: usize) {
             textures.len(),
             frame_index
         );
-        ui.renderer
-            .as_mut()
-            .unwrap()
-            .free_textures(textures.as_slice())
-            .unwrap();
+        ui.renderer.free_textures(textures.as_slice()).unwrap();
     }
 }

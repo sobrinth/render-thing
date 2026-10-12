@@ -206,16 +206,16 @@ impl Renderer {
             return Ok(());
         }
 
-        if self.frames.is_none() {
-            self.frames.replace(Frames::new(
+        let frames = match self.frames.take() {
+            Some(frames) => frames,
+            None => Frames::new(
                 &self.device,
                 &mut self.allocator,
                 primitives,
                 self.options.in_flight_frames,
-            )?);
-        }
-
-        let mesh = self.frames.as_mut().unwrap().next();
+            )?,
+        };
+        let mesh = self.frames.insert(frames).next();
         mesh.update(&self.device, &mut self.allocator, primitives)?;
 
         unsafe {

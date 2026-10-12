@@ -113,6 +113,8 @@ impl UploadBatch {
     /// Bounds peak host memory held by pending staging buffers.
     const FLUSH_THRESHOLD_BYTES: vk::DeviceSize = 64 * 1024 * 1024;
 
+    const CMD_TAKEN: &str = "UploadBatch command buffer missing: a previous transition panicked";
+
     pub(crate) fn new(
         command_pool: vk::CommandPool,
         command_buffer: vk::CommandBuffer,
@@ -143,7 +145,7 @@ impl UploadBatch {
     ) where
         F: FnOnce(&CommandBuffer<Recording>),
     {
-        let cmd = match self.cmd.take().unwrap() {
+        let cmd = match self.cmd.take().expect(Self::CMD_TAKEN) {
             BatchCmd::Recording(cmd) => cmd,
             BatchCmd::Idle(cmd) => cmd
                 .reset(gpu)
@@ -163,7 +165,7 @@ impl UploadBatch {
 
     /// Submits pending uploads and waits for completion; no-op when idle.
     pub(crate) fn flush(&mut self, gpu: &Device, graphics_queue: &QueueData) {
-        let cmd = match self.cmd.take().unwrap() {
+        let cmd = match self.cmd.take().expect(Self::CMD_TAKEN) {
             BatchCmd::Recording(cmd) => cmd,
             idle @ BatchCmd::Idle(_) => {
                 self.cmd = Some(idle);
