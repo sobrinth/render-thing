@@ -10,10 +10,18 @@ edition = "2024"
 publish = false
 authors = ["Dominik Baumann <hey@sobrinth.com>"]
 
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unreachable = "deny"
+todo = "deny"
+unimplemented = "deny"
+
 [workspace.dependencies]
 
 #
-# Workspace member crates 
+# Workspace member crates
 #
 
 engine = { path = "crates/engine" }
@@ -25,7 +33,7 @@ scene = { path = "crates/scene" }
 
 ash = "0.38"
 ash-window = "0.13"
-raw-window-handle = "0.6"
+raw-window-handle = { version = "0.6", features = ["std"] }
 winit = "0.30"
 log = "0.4"
 env_logger = "0.11"

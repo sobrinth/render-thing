@@ -290,7 +290,7 @@ impl VulkanRenderer {
             draw_extent,
             &mut draw_ctx,
             camera.position,
-        );
+        )?;
         let draw_time_ms = t0.elapsed().as_secs_f32() * 1000.0;
         self.resources.draw_ctx = draw_ctx;
 
@@ -303,7 +303,7 @@ impl VulkanRenderer {
             draw_extent,
             &camera.view_matrix,
             gizmo_base_index,
-        );
+        )?;
 
         // transition the draw image and the swapchain image into their correct transfer layouts.
         transition_image(
@@ -600,7 +600,7 @@ impl VulkanRenderer {
         extent: vk::Extent2D,
         ctx: &mut DrawContext,
         cam_pos: glm::Vec3,
-    ) -> DrawStats {
+    ) -> eros::Result<DrawStats> {
         // Write scene data into the per-frame UBO; set 0 was written once at startup
         let scene_mem_ptr = self.resources.frames[frame_index]
             .scene_buffer
@@ -625,7 +625,7 @@ impl VulkanRenderer {
         });
 
         let total = ctx.opaque_surfaces.len() + ctx.transparent_surfaces.len();
-        assert!(
+        ensure!(
             total <= MAX_DRAWS as usize,
             "{total} draws submitted, exceeding MAX_DRAWS ({MAX_DRAWS})"
         );
@@ -883,7 +883,7 @@ impl VulkanRenderer {
         }
 
         unsafe { self.context.device.cmd_end_rendering(cmd) }
-        stats
+        Ok(stats)
     }
 
     fn draw_dev_overlay(
@@ -893,9 +893,9 @@ impl VulkanRenderer {
         draw_extent: vk::Extent2D,
         camera_view: &glm::Mat4,
         base_object_index: u32,
-    ) {
+    ) -> eros::Result<()> {
         if !self.resources.show_dev_overlay {
-            return;
+            return Ok(());
         }
 
         const GIZMO_SIZE: u32 = 180;
@@ -1118,9 +1118,9 @@ impl VulkanRenderer {
             );
         }
 
-        assert!(
+        ensure!(
             base_object_index as usize + draws.len() <= MAX_DRAWS as usize,
-            "gizmo draws exceed MAX_DRAWS ({MAX_DRAWS})"
+            "Gizmo draws exceed MAX_DRAWS ({MAX_DRAWS})"
         );
         let object_ptr = self.resources.frames[frame_index]
             .object_buffer
@@ -1168,6 +1168,7 @@ impl VulkanRenderer {
         }
 
         unsafe { self.context.device.cmd_end_rendering(cmd) }
+        Ok(())
     }
 
     fn copy_image_to_image(

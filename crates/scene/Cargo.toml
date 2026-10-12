@@ -8,6 +8,9 @@ publish.workspace = true
 [features]
 egui = ["dep:egui"]
 
+[lints]
+workspace = true
+
 [dependencies]
 engine.workspace = true
 gltf.workspace = true

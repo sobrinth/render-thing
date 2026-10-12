@@ -90,14 +90,14 @@ impl IndexPool {
     }
 
     /// Reserves room for count indices, returning their pool offset.
-    fn alloc(&mut self, count: u32) -> u32 {
+    fn alloc(&mut self, count: u32) -> eros::Result<u32> {
         let offset = self.cursor;
-        assert!(
+        eros::ensure!(
             offset + count <= MAX_POOLED_INDICES,
-            "index pool exhausted ({offset} used + {count} requested > MAX_POOLED_INDICES {MAX_POOLED_INDICES})"
+            "Index pool is full ({offset} used + {count} requested > MAX_POOLED_INDICES = {MAX_POOLED_INDICES})"
         );
         self.cursor += count;
-        offset
+        Ok(offset)
     }
 }
 
@@ -531,7 +531,7 @@ pub(crate) fn upload_mesh_buffers(
             .get_buffer_device_address(&device_address_info)
     };
 
-    let first_index = index_pool.alloc(indices.len() as u32);
+    let first_index = index_pool.alloc(indices.len() as u32)?;
     let pool_buffer = index_pool.buffer.buffer;
 
     let meshes = GPUMeshBuffers {

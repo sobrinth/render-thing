@@ -399,11 +399,11 @@ impl VulkanRenderer {
         let linear = Arc::clone(&renderer.resources.default_sampler_linear);
         let nearest = Arc::clone(&renderer.resources.default_sampler_nearest);
 
-        let wh = renderer.register_texture(white_img, Arc::clone(&linear));
-        let gr = renderer.register_texture(grey_img, Arc::clone(&linear));
-        let bl = renderer.register_texture(black_img, Arc::clone(&linear));
-        let cb = renderer.register_texture(cb_img, nearest);
-        let mr = renderer.register_texture(mr_img, linear);
+        let wh = renderer.register_texture(white_img, Arc::clone(&linear))?;
+        let gr = renderer.register_texture(grey_img, Arc::clone(&linear))?;
+        let bl = renderer.register_texture(black_img, Arc::clone(&linear))?;
+        let cb = renderer.register_texture(cb_img, nearest)?;
+        let mr = renderer.register_texture(mr_img, linear)?;
         renderer.resources.default_white_texture = wh;
         renderer.resources.default_grey_texture = gr;
         renderer.resources.default_black_texture = bl;
@@ -416,20 +416,21 @@ impl VulkanRenderer {
             .upload_mesh(&gizmo_idx, &gizmo_verts)
             .context("Uploading gizmo mesh")?;
 
-        let make_gizmo_mat = |r: &mut VulkanRenderer, color: [f32; 4]| -> crate::MaterialHandle {
-            let c = crate::material::MaterialConstants {
-                color_factors: color,
-                metal_rough_factors: [0.0, 1.0, 0.0, 0.0],
+        let make_gizmo_mat =
+            |r: &mut VulkanRenderer, color: [f32; 4]| -> eros::Result<crate::MaterialHandle> {
+                let c = crate::material::MaterialConstants {
+                    color_factors: color,
+                    metal_rough_factors: [0.0, 1.0, 0.0, 0.0],
+                };
+                r.create_material_colored(c, crate::material::MaterialPass::MainColor)
             };
-            r.create_material_colored(c, crate::material::MaterialPass::MainColor)
-        };
-        let x_pos = make_gizmo_mat(&mut renderer, [1.00, 0.00, 0.00, 1.0]);
-        let y_pos = make_gizmo_mat(&mut renderer, [0.00, 1.00, 0.00, 1.0]);
-        let z_pos = make_gizmo_mat(&mut renderer, [0.00, 0.00, 1.00, 1.0]);
-        let x_neg = make_gizmo_mat(&mut renderer, [0.35, 0.00, 0.00, 1.0]);
-        let y_neg = make_gizmo_mat(&mut renderer, [0.00, 0.35, 0.00, 1.0]);
-        let z_neg = make_gizmo_mat(&mut renderer, [0.00, 0.00, 0.35, 1.0]);
-        let origin = make_gizmo_mat(&mut renderer, [0.2, 0.2, 0.2, 1.0]);
+        let x_pos = make_gizmo_mat(&mut renderer, [1.00, 0.00, 0.00, 1.0])?;
+        let y_pos = make_gizmo_mat(&mut renderer, [0.00, 1.00, 0.00, 1.0])?;
+        let z_pos = make_gizmo_mat(&mut renderer, [0.00, 0.00, 1.00, 1.0])?;
+        let x_neg = make_gizmo_mat(&mut renderer, [0.35, 0.00, 0.00, 1.0])?;
+        let y_neg = make_gizmo_mat(&mut renderer, [0.00, 0.35, 0.00, 1.0])?;
+        let z_neg = make_gizmo_mat(&mut renderer, [0.00, 0.00, 0.35, 1.0])?;
+        let origin = make_gizmo_mat(&mut renderer, [0.2, 0.2, 0.2, 1.0])?;
         renderer.resources.gizmo_mesh = gizmo_mesh;
         renderer.resources.gizmo_materials = [x_pos, y_pos, z_pos, x_neg, y_neg, z_neg, origin];
 
@@ -492,15 +493,15 @@ impl VulkanRenderer {
         &mut self,
         image: Arc<AllocatedImage>,
         sampler: Arc<Sampler>,
-    ) -> crate::TextureHandle {
+    ) -> eros::Result<crate::TextureHandle> {
         let idx = self.resources.texture_registry.len() as u32;
         self.resources
             .bindless
-            .write_texture(idx, image.view, sampler.sampler);
+            .write_texture(idx, image.view, sampler.sampler)?;
         self.resources
             .texture_registry
             .push(TextureEntry { image, sampler });
-        crate::TextureHandle(idx)
+        Ok(crate::TextureHandle(idx))
     }
 
     pub(crate) fn upload_mesh(
@@ -586,7 +587,7 @@ impl VulkanRenderer {
             .max_anisotropy(self.resources.max_sampler_anisotropy);
         let vk_sampler = unsafe { self.context.device.create_sampler(&sampler_info, None) }?;
         let sampler = Arc::new(Sampler::new(vk_sampler, self.context.device.clone()));
-        Ok(self.register_texture(Arc::new(image), sampler))
+        self.register_texture(Arc::new(image), sampler)
     }
 
     pub(crate) fn create_material(
@@ -595,7 +596,7 @@ impl VulkanRenderer {
         metal_rough: crate::TextureHandle,
         constants: crate::material::MaterialConstants,
         pass: crate::material::MaterialPass,
-    ) -> crate::MaterialHandle {
+    ) -> eros::Result<crate::MaterialHandle> {
         let idx = self.resources.material_registry.len() as u32;
         self.resources.bindless.write_material(
             idx,
@@ -606,18 +607,18 @@ impl VulkanRenderer {
                 metal_rough_tex_index: metal_rough.0,
                 _pad: [0; 2],
             },
-        );
+        )?;
         self.resources
             .material_registry
             .push(MaterialEntry { pass_type: pass });
-        crate::MaterialHandle(idx)
+        Ok(crate::MaterialHandle(idx))
     }
 
     pub(crate) fn create_material_colored(
         &mut self,
         constants: crate::material::MaterialConstants,
         pass: crate::material::MaterialPass,
-    ) -> crate::MaterialHandle {
+    ) -> eros::Result<crate::MaterialHandle> {
         let white = self.resources.default_white_texture;
         let metal_rough = self.resources.default_metal_rough_texture;
         self.create_material(white, metal_rough, constants, pass)

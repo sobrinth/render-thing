@@ -55,7 +55,7 @@ pub fn load_gltf(engine: &mut Engine, path: &str) -> eros::Result<SceneGraph> {
         } else {
             engine::MaterialPass::MainColor
         };
-        material_handles.push(engine.create_material(color_tex, mr_tex, constants, pass));
+        material_handles.push(engine.create_material(color_tex, mr_tex, constants, pass)?);
     }
 
     let default_material = engine.create_material(
@@ -63,7 +63,7 @@ pub fn load_gltf(engine: &mut Engine, path: &str) -> eros::Result<SceneGraph> {
         white,
         engine::MaterialConstants::default(),
         engine::MaterialPass::MainColor,
-    );
+    )?;
 
     let mut scene = SceneGraph::new();
 

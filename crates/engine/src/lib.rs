@@ -138,7 +138,7 @@ impl Engine {
         metal_rough: TextureHandle,
         constants: MaterialConstants,
         pass: MaterialPass,
-    ) -> MaterialHandle {
+    ) -> eros::Result<MaterialHandle> {
         self.renderer
             .create_material(color, metal_rough, constants, pass)
     }
@@ -167,7 +167,7 @@ impl Engine {
         &mut self,
         constants: MaterialConstants,
         pass: MaterialPass,
-    ) -> MaterialHandle {
+    ) -> eros::Result<MaterialHandle> {
         self.renderer.create_material_colored(constants, pass)
     }
 

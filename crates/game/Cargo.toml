@@ -9,6 +9,9 @@ publish.workspace = true
 name = "game"
 path = "src/main.rs"
 
+[lints]
+workspace = true
+
 [dependencies]
 engine.workspace = true
 scene = { workspace = true, features = ["egui"] }

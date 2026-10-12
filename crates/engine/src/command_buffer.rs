@@ -148,11 +148,12 @@ impl UploadBatch {
     where
         F: FnOnce(&CommandBuffer<Recording>),
     {
-        let cmd = match self.cmd.take().expect(Self::CMD_TAKEN) {
-            BatchCmd::Recording(cmd) => cmd,
-            BatchCmd::Idle(cmd) => cmd
+        let cmd = match self.cmd.take() {
+            Some(BatchCmd::Recording(cmd)) => cmd,
+            Some(BatchCmd::Idle(cmd)) => cmd
                 .reset(gpu)?
                 .begin(gpu, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)?,
+            None => eros::bail!("{}", Self::CMD_TAKEN),
         };
 
         func(&cmd);
@@ -169,12 +170,13 @@ impl UploadBatch {
 
     /// Submits pending uploads and waits for completion; no-op when idle.
     pub(crate) fn flush(&mut self, gpu: &Device, graphics_queue: &QueueData) -> eros::Result<()> {
-        let cmd = match self.cmd.take().expect(Self::CMD_TAKEN) {
-            BatchCmd::Recording(cmd) => cmd,
-            idle @ BatchCmd::Idle(_) => {
+        let cmd = match self.cmd.take() {
+            Some(BatchCmd::Recording(cmd)) => cmd,
+            Some(idle @ BatchCmd::Idle(_)) => {
                 self.cmd = Some(idle);
                 return Ok(());
             }
+            None => eros::bail!("{}", Self::CMD_TAKEN),
         };
 
         let cmd = cmd.end(gpu)?;

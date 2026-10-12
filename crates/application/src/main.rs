@@ -32,7 +32,7 @@ fn main() -> eros::Result<()> {
 
 enum Application {
     Starting,
-    Running(Viewer),
+    Running(Box<Viewer>),
     Stopped,
     Failed(eros::ErrorUnion),
 }
@@ -201,7 +201,7 @@ impl ApplicationHandler for Application {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if let Application::Starting = self {
             *self = match Viewer::start(event_loop) {
-                Ok(viewer) => Application::Running(viewer),
+                Ok(viewer) => Application::Running(Box::new(viewer)),
                 Err(err) => {
                     event_loop.exit();
                     Application::Failed(err)

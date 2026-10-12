@@ -38,7 +38,7 @@ fn main() -> eros::Result<()> {
 
 enum GameApp {
     Starting,
-    Running(Game),
+    Running(Box<Game>),
     Stopped,
     Failed(eros::ErrorUnion),
 }
@@ -251,7 +251,7 @@ impl ApplicationHandler for GameApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if let GameApp::Starting = self {
             *self = match Game::start(event_loop) {
-                Ok(game) => GameApp::Running(game),
+                Ok(game) => GameApp::Running(Box::new(game)),
                 Err(err) => {
                     event_loop.exit();
                     GameApp::Failed(err)
@@ -474,13 +474,13 @@ fn build_level(engine: &mut Engine) -> eros::Result<Level> {
             metal_rough_factors: [0.3, 1.0, 0.0, 0.0],
         },
         MaterialPass::MainColor,
-    );
+    )?;
     let checkerboard_material = engine.create_material(
         engine.checkerboard_texture(),
         engine.metal_rough_texture(),
         MaterialConstants::default(),
         MaterialPass::MainColor,
-    );
+    )?;
 
     let mut scene = SceneGraph::new();
     let mut collision_boxes = Vec::new();

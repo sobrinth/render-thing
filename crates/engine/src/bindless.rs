@@ -1,6 +1,7 @@
 use crate::descriptor::{DescriptorSetLayout, LayoutBuilder};
 use crate::resources::AllocatedBuffer;
 use ash::{Device, vk};
+use eros::ensure;
 use std::sync::Arc;
 
 /// Must match the array size in assets/shaders/input_structures.glsl.
@@ -102,10 +103,15 @@ impl BindlessResources {
     /// Write texture `index` into the global array. Safe to call while the set is
     /// bound in in-flight command buffers (UPDATE_AFTER_BIND): fresh slots are never
     /// referenced by pending draws.
-    pub(crate) fn write_texture(&self, index: u32, view: vk::ImageView, sampler: vk::Sampler) {
-        assert!(
+    pub(crate) fn write_texture(
+        &self,
+        index: u32,
+        view: vk::ImageView,
+        sampler: vk::Sampler,
+    ) -> eros::Result<()> {
+        ensure!(
             index < MAX_TEXTURES,
-            "texture registry exceeded MAX_TEXTURES ({MAX_TEXTURES})"
+            "Texture registry is full (MAX_TEXTURES = {MAX_TEXTURES})"
         );
         let image_info = vk::DescriptorImageInfo {
             sampler,
@@ -122,20 +128,22 @@ impl BindlessResources {
             self.device
                 .update_descriptor_sets(core::slice::from_ref(&write), &[])
         };
+        Ok(())
     }
 
     /// Write material record `index` into the mapped SSBO. Materials are immutable
     /// after creation, so fresh slots are never read by in-flight frames.
-    pub(crate) fn write_material(&self, index: u32, material: GPUMaterial) {
-        assert!(
+    pub(crate) fn write_material(&self, index: u32, material: GPUMaterial) -> eros::Result<()> {
+        ensure!(
             index < MAX_MATERIALS,
-            "material registry exceeded MAX_MATERIALS ({MAX_MATERIALS})"
+            "Material registry is full (MAX_MATERIALS = {MAX_MATERIALS})"
         );
         unsafe {
             let dst =
                 (self.material_buffer.info.mapped_data as *mut GPUMaterial).add(index as usize);
             dst.write(material);
         }
+        Ok(())
     }
 }
 
