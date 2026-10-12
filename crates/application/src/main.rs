@@ -98,7 +98,11 @@ impl Viewer {
         })
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, event: WindowEvent) {
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        event: WindowEvent,
+    ) -> eros::Result<()> {
         let _ = self.ui.on_window_event(&self.window, &event);
 
         match event {
@@ -182,13 +186,14 @@ impl Viewer {
                             if let Some(scene) = scene_opt {
                                 scene_panel.show(ctx, scene);
                             }
-                        });
+                        })?;
                 self.ui
                     .handle_platform_output(&self.window, platform_output);
                 self.window.request_redraw();
             }
             _ => (),
         }
+        Ok(())
     }
 }
 
@@ -211,8 +216,11 @@ impl ApplicationHandler for Application {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
-        if let Application::Running(viewer) = self {
-            viewer.window_event(event_loop, event);
+        if let Application::Running(viewer) = self
+            && let Err(err) = viewer.window_event(event_loop, event)
+        {
+            event_loop.exit();
+            *self = Application::Failed(err);
         }
     }
 
@@ -220,7 +228,9 @@ impl ApplicationHandler for Application {
         // This is guaranteed to be the last code run before the event-loop will exit, so the
         // viewer (and with it the engine) is dropped here, before the event-loop goes away.
         if let Application::Running(viewer) = self {
-            viewer.engine.stop();
+            if let Err(err) = viewer.engine.stop() {
+                log::error!("Stopping the engine failed: {err:?}");
+            }
             *self = Application::Stopped;
         }
     }

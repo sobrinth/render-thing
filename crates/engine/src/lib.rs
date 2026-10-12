@@ -177,7 +177,7 @@ impl Engine {
         draws: &[DrawCall],
         raw_input: egui::RawInput,
         build_ui: impl FnOnce(&egui::Context),
-    ) -> egui::PlatformOutput {
+    ) -> eros::Result<egui::PlatformOutput> {
         self.renderer.draw(camera, draws, raw_input, build_ui)
     }
 
@@ -189,7 +189,7 @@ impl Engine {
         self.renderer.on_key_event(key_event);
     }
 
-    pub fn stop(&mut self) {
-        self.renderer.wait_gpu_idle();
+    pub fn stop(&mut self) -> eros::Result<()> {
+        self.renderer.wait_gpu_idle()
     }
 }

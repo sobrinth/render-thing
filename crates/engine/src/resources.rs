@@ -386,7 +386,7 @@ impl AllocatedImage {
                     BarrierScope::FRAGMENT_SAMPLED_READ,
                 );
             }
-        });
+        })?;
 
         Ok(new_image)
     }
@@ -480,7 +480,7 @@ impl AllocatedImage {
                     BarrierScope::FRAGMENT_SAMPLED_READ,
                 );
             }
-        });
+        })?;
 
         Ok(new_image)
     }
@@ -585,7 +585,7 @@ pub(crate) fn upload_mesh_buffers(
                 .device
                 .cmd_copy_buffer(cmd.handle(), staging_buffer, pool_buffer, pool_copy)
         }
-    });
+    })?;
 
     Ok(meshes)
 }

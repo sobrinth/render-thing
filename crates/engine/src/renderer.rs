@@ -45,6 +45,7 @@ pub(crate) struct RendererResources {
     pub(crate) render_scale: f32,
     pub(crate) render_size: (u32, u32),
     pub(crate) resize_requested: bool,
+    pub(crate) frame_lost: bool,
     pub(crate) ui_context: UiContext,
     pub(crate) gpu_alloc: Arc<vk_mem::Allocator>,
     pub(crate) swapchain: Swapchain,
@@ -332,6 +333,7 @@ impl VulkanRenderer {
                 render_scale: config.initial_render_scale,
                 render_size: (0, 0),
                 resize_requested: false,
+                frame_lost: false,
                 ui_context: ui,
                 gpu_alloc,
                 swapchain,
@@ -806,8 +808,8 @@ impl VulkanRenderer {
         Ok((frames, scene_set_pool))
     }
 
-    pub(crate) fn wait_gpu_idle(&self) {
-        unsafe { self.context.device.device_wait_idle() }.unwrap();
+    pub(crate) fn wait_gpu_idle(&self) -> eros::Result<()> {
+        Ok(unsafe { self.context.device.device_wait_idle() }?)
     }
 
     pub(crate) fn resize(&mut self, size: (u32, u32)) {
@@ -970,9 +972,9 @@ impl VulkanRenderer {
         ))
     }
 
-    pub(crate) fn resize_swapchain(&mut self) -> bool {
+    pub(crate) fn resize_swapchain(&mut self) -> eros::Result<bool> {
         if self.resources.window_size.0 == 0 || self.resources.window_size.1 == 0 {
-            return true;
+            return Ok(true);
         }
 
         let old_handle = self.resources.swapchain.swapchain;
@@ -983,11 +985,10 @@ impl VulkanRenderer {
             &self.context,
             [self.resources.window_size.0, self.resources.window_size.1],
             old_handle,
-        )
-        .expect("Failed to recreate swapchain");
+        )?;
 
         self.resources.resize_requested = false;
-        false
+        Ok(false)
     }
 
     fn init_scene_data(context: &VkContext) -> eros::Result<DescriptorSetLayout> {
@@ -1005,7 +1006,9 @@ impl Drop for VulkanRenderer {
     fn drop(&mut self) {
         log::trace!("Start: Dropping renderer");
         unsafe {
-            self.context.device.device_wait_idle().unwrap();
+            if let Err(err) = self.context.device.device_wait_idle() {
+                log::error!("device_wait_idle failed while dropping the renderer: {err}");
+            }
             ManuallyDrop::drop(&mut self.resources);
             ManuallyDrop::drop(&mut self.context); // device + instance destroyed last
         }

@@ -39,13 +39,14 @@ impl CommandBuffer<Submitted> {
         }
     }
 
-    pub(crate) fn reset(self, device: &Device) -> CommandBuffer<Initial> {
-        unsafe { device.reset_command_buffer(self.handle, vk::CommandBufferResetFlags::default()) }
-            .unwrap();
-        CommandBuffer {
+    pub(crate) fn reset(self, device: &Device) -> eros::Result<CommandBuffer<Initial>> {
+        unsafe {
+            device.reset_command_buffer(self.handle, vk::CommandBufferResetFlags::default())
+        }?;
+        Ok(CommandBuffer {
             handle: self.handle,
             _state: PhantomData,
-        }
+        })
     }
 }
 
@@ -54,13 +55,13 @@ impl CommandBuffer<Initial> {
         self,
         device: &Device,
         flags: vk::CommandBufferUsageFlags,
-    ) -> CommandBuffer<Recording> {
+    ) -> eros::Result<CommandBuffer<Recording>> {
         let begin_info = vk::CommandBufferBeginInfo::default().flags(flags);
-        unsafe { device.begin_command_buffer(self.handle, &begin_info) }.unwrap();
-        CommandBuffer {
+        unsafe { device.begin_command_buffer(self.handle, &begin_info) }?;
+        Ok(CommandBuffer {
             handle: self.handle,
             _state: PhantomData,
-        }
+        })
     }
 }
 
@@ -69,12 +70,12 @@ impl CommandBuffer<Recording> {
         self.handle
     }
 
-    pub(crate) fn end(self, device: &Device) -> CommandBuffer<Executable> {
-        unsafe { device.end_command_buffer(self.handle) }.unwrap();
-        CommandBuffer {
+    pub(crate) fn end(self, device: &Device) -> eros::Result<CommandBuffer<Executable>> {
+        unsafe { device.end_command_buffer(self.handle) }?;
+        Ok(CommandBuffer {
             handle: self.handle,
             _state: PhantomData,
-        }
+        })
     }
 }
 
@@ -113,7 +114,8 @@ impl UploadBatch {
     /// Bounds peak host memory held by pending staging buffers.
     const FLUSH_THRESHOLD_BYTES: vk::DeviceSize = 64 * 1024 * 1024;
 
-    const CMD_TAKEN: &str = "UploadBatch command buffer missing: a previous transition panicked";
+    const CMD_TAKEN: &str =
+        "UploadBatch command buffer missing: a previous transition panicked or failed";
 
     pub(crate) fn new(
         command_pool: vk::CommandPool,
@@ -142,14 +144,15 @@ impl UploadBatch {
         graphics_queue: &QueueData,
         staging: AllocatedBuffer,
         func: F,
-    ) where
+    ) -> eros::Result<()>
+    where
         F: FnOnce(&CommandBuffer<Recording>),
     {
         let cmd = match self.cmd.take().expect(Self::CMD_TAKEN) {
             BatchCmd::Recording(cmd) => cmd,
             BatchCmd::Idle(cmd) => cmd
-                .reset(gpu)
-                .begin(gpu, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+                .reset(gpu)?
+                .begin(gpu, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)?,
         };
 
         func(&cmd);
@@ -159,23 +162,24 @@ impl UploadBatch {
         self.staging.push(staging);
 
         if self.staging_bytes >= Self::FLUSH_THRESHOLD_BYTES {
-            self.flush(gpu, graphics_queue);
+            self.flush(gpu, graphics_queue)?;
         }
+        Ok(())
     }
 
     /// Submits pending uploads and waits for completion; no-op when idle.
-    pub(crate) fn flush(&mut self, gpu: &Device, graphics_queue: &QueueData) {
+    pub(crate) fn flush(&mut self, gpu: &Device, graphics_queue: &QueueData) -> eros::Result<()> {
         let cmd = match self.cmd.take().expect(Self::CMD_TAKEN) {
             BatchCmd::Recording(cmd) => cmd,
             idle @ BatchCmd::Idle(_) => {
                 self.cmd = Some(idle);
-                return;
+                return Ok(());
             }
         };
 
-        let cmd = cmd.end(gpu);
+        let cmd = cmd.end(gpu)?;
 
-        self.fence.reset();
+        self.fence.reset()?;
 
         let cmd_info = &[vk::CommandBufferSubmitInfo::default()
             .command_buffer(cmd.handle())
@@ -183,18 +187,15 @@ impl UploadBatch {
 
         let submit_info = &[vk::SubmitInfo2::default().command_buffer_infos(cmd_info)];
 
-        unsafe { gpu.queue_submit2(graphics_queue.queue, submit_info, self.fence.handle()) }
-            .unwrap();
+        unsafe { gpu.queue_submit2(graphics_queue.queue, submit_info, self.fence.handle()) }?;
 
         self.cmd = Some(BatchCmd::Idle(cmd.into_submitted()));
 
-        assert!(
-            self.fence.wait(1_000_000_000),
-            "upload batch fence timed out"
-        );
+        self.fence.wait(1_000_000_000)?;
 
         self.staging.clear();
         self.staging_bytes = 0;
+        Ok(())
     }
 }
 

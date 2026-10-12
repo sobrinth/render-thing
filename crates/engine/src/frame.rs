@@ -12,6 +12,7 @@ use crate::stats::{DrawStats, FrameStats};
 use crate::sync::Semaphore;
 use crate::ui::{self, UiState};
 use ash::{Device, vk};
+use eros::{Context, ensure};
 use nalgebra_glm as glm;
 use std::time::Instant;
 
@@ -94,7 +95,28 @@ impl VulkanRenderer {
         draws: &[crate::DrawCall],
         raw_input: egui::RawInput,
         build_ui: impl FnOnce(&egui::Context),
-    ) -> egui::PlatformOutput {
+    ) -> eros::Result<egui::PlatformOutput> {
+        ensure!(
+            !self.resources.frame_lost,
+            "Renderer is lost after a failed frame; it must be dropped, not drawn"
+        );
+        let frame_number = self.resources.frame_number;
+        let result = self
+            .draw_frame(camera, draws, raw_input, build_ui)
+            .with_context(|| format!("Drawing frame {frame_number}"));
+        if result.is_err() {
+            self.resources.frame_lost = true;
+        }
+        result
+    }
+
+    fn draw_frame(
+        &mut self,
+        camera: crate::CameraView,
+        draws: &[crate::DrawCall],
+        raw_input: egui::RawInput,
+        build_ui: impl FnOnce(&egui::Context),
+    ) -> eros::Result<egui::PlatformOutput> {
         let frame_start = Instant::now();
         let frametime_ms = self
             .resources
@@ -103,9 +125,9 @@ impl VulkanRenderer {
             .map(|prev| prev.elapsed().as_secs_f32() * 1000.0)
             .unwrap_or(0.0);
         if self.resources.resize_requested {
-            let minimized = Self::resize_swapchain(self);
+            let minimized = self.resize_swapchain()?;
             if minimized {
-                return egui::PlatformOutput::default();
+                return Ok(egui::PlatformOutput::default());
             }
         }
 
@@ -114,7 +136,7 @@ impl VulkanRenderer {
             let resources = &mut *self.resources;
             resources
                 .upload_batch
-                .flush(&self.context.device, &resources.graphics_queue);
+                .flush(&self.context.device, &resources.graphics_queue)?;
         }
 
         let draw_extent = (
@@ -146,15 +168,12 @@ impl VulkanRenderer {
             .resources
             .frame_number
             .saturating_sub(FRAME_OVERLAP as u64 - 1);
-        assert!(
-            self.resources.frame_timeline.wait(wait_value, ONE_SECOND),
-            "frame timeline wait timed out"
-        );
+        self.resources.frame_timeline.wait(wait_value, ONE_SECOND)?;
         // Safe: the timeline wait above guarantees the GPU has finished all commands from the
         // previous use of this slot (frame N-2). By then frame N-3's GPU work is also done
         // (confirmed at start of frame N-1), so textures marked free in slot N%2 two frames
         // ago are no longer referenced by any in-flight GPU work.
-        ui::after_frame(&mut self.resources.ui_context, frame_index);
+        ui::after_frame(&mut self.resources.ui_context, frame_index)?;
 
         let res = unsafe {
             self.resources.swapchain.swapchain_fn.acquire_next_image(
@@ -171,18 +190,15 @@ impl VulkanRenderer {
             Ok((image_index, _)) => image_index as usize,
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
                 self.resources.resize_requested = true;
-                return egui::PlatformOutput::default();
+                return Ok(egui::PlatformOutput::default());
             }
-            Err(err) => panic!("Failed to acquire next image. Cause: {err}"),
+            Err(err) => return Err(err.into()),
         };
 
         // semaphores[image_index] is re-signaled at submit below; the present
         // fence proves the previous present waiting on it is done with it
         // (fix for the semaphore-reuse gap worked around in cbf18cc).
-        assert!(
-            self.resources.swapchain.present_fences[image_index].wait(ONE_SECOND),
-            "present fence timed out"
-        );
+        self.resources.swapchain.present_fences[image_index].wait(ONE_SECOND)?;
 
         // BEFORE FRAME
         // Extract values needed to avoid simultaneous borrow conflicts through ManuallyDrop
@@ -208,7 +224,7 @@ impl VulkanRenderer {
             },
             frame_index,
             build_ui,
-        );
+        )?;
 
         let t0 = Instant::now();
         // Take the persistent scratch context out of resources so it can be
@@ -221,11 +237,11 @@ impl VulkanRenderer {
         // SAFETY: the frame timeline wait above proves the GPU is done with this
         // slot's previous submit; no other wrapper exists for this handle.
         let cmd = unsafe { CommandBuffer::<Submitted>::wrap(raw_cmd) };
-        let cmd = cmd.reset(&self.context.device);
+        let cmd = cmd.reset(&self.context.device)?;
         let cmd = cmd.begin(
             &self.context.device,
             vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
-        );
+        )?;
 
         // transition the main draw image to Layout::GENERAL so we can draw into it.
         // we will overwrite the contents, so we don't care about the old layout.
@@ -361,7 +377,7 @@ impl VulkanRenderer {
             cmd.handle(),
             swapchain_extent,
             ui_primitives,
-        );
+        )?;
 
         unsafe { self.context.device.cmd_end_rendering(cmd.handle()) }
 
@@ -379,7 +395,7 @@ impl VulkanRenderer {
         );
 
         // finalize command buffer
-        let cmd = cmd.end(&self.context.device);
+        let cmd = cmd.end(&self.context.device)?;
 
         // Prepare queue submission
         // we want to wait on the present_semaphore, as that is signaled when the swapchain is ready,
@@ -428,8 +444,7 @@ impl VulkanRenderer {
                 &[submit_info],
                 vk::Fence::null(),
             )
-        }
-        .unwrap();
+        }?;
         cmd.into_submitted(); // type-level marker: buffer is now pending, no Vulkan call
 
         // Prepare presentation
@@ -441,7 +456,7 @@ impl VulkanRenderer {
 
         // Reset only right before the present that re-signals it — the fence
         // signals even if the present returns OUT_OF_DATE, so this cannot deadlock.
-        self.resources.swapchain.present_fences[image_index].reset();
+        self.resources.swapchain.present_fences[image_index].reset()?;
         let present_fence = self.resources.swapchain.present_fences[image_index].handle();
         let present_fences = [present_fence];
         let mut present_fence_info =
@@ -465,7 +480,7 @@ impl VulkanRenderer {
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
                 self.resources.resize_requested = true;
             }
-            Err(e) => panic!("Failed to present swapchain image: {:?}", e),
+            Err(err) => return Err(err.into()),
         }
 
         self.resources.stats.push(FrameStats {
@@ -481,7 +496,7 @@ impl VulkanRenderer {
         // increase the number of frames drawn
         self.resources.frame_number += 1;
 
-        platform_output
+        Ok(platform_output)
     }
 
     fn draw_background(&self, cmd: vk::CommandBuffer, gpu: &Device, extent: vk::Extent2D) {

@@ -69,7 +69,7 @@ pub(crate) fn before_frame(
     state: UiState<'_>,
     frame_index: usize,
     build_ui: impl FnOnce(&Context),
-) -> (Vec<ClippedPrimitive>, egui::PlatformOutput) {
+) -> eros::Result<(Vec<ClippedPrimitive>, egui::PlatformOutput)> {
     let renderer = &mut ui.renderer;
 
     let ctx = ui.ctx.clone();
@@ -251,16 +251,14 @@ pub(crate) fn before_frame(
     }
 
     if !textures_delta.set.is_empty() {
-        renderer
-            .set_textures(
-                graphics_queue.queue,
-                frame.command_pool,
-                textures_delta.set.as_slice(),
-            )
-            .unwrap();
+        renderer.set_textures(
+            graphics_queue.queue,
+            frame.command_pool,
+            textures_delta.set.as_slice(),
+        )?;
     }
 
-    (primitives, platform_output)
+    Ok((primitives, platform_output))
 }
 
 pub(crate) fn render(
@@ -268,19 +266,19 @@ pub(crate) fn render(
     cmd: CommandBuffer,
     extent: Extent2D,
     primitives: Vec<ClippedPrimitive>,
-) {
+) -> eros::Result<()> {
     egui.renderer
         .cmd_draw(cmd, extent, egui.scale_factor, &primitives)
-        .unwrap();
 }
 
-pub(crate) fn after_frame(ui: &mut UiContext, frame_index: usize) {
+pub(crate) fn after_frame(ui: &mut UiContext, frame_index: usize) -> eros::Result<()> {
     if let Some(textures) = ui.textures_to_free[frame_index].take() {
         log::trace!(
             "Freeing {} textures from frame slot {}",
             textures.len(),
             frame_index
         );
-        ui.renderer.free_textures(textures.as_slice()).unwrap();
+        ui.renderer.free_textures(textures.as_slice())?;
     }
+    Ok(())
 }

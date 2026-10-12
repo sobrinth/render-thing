@@ -90,7 +90,9 @@ impl Game {
         let level = match build_level(&mut engine) {
             Ok(level) => level,
             Err(err) => {
-                engine.stop();
+                if let Err(stop_err) = engine.stop() {
+                    log::error!("Stopping the engine after a failed start: {stop_err:?}");
+                }
                 return Err(err);
             }
         };
@@ -110,7 +112,11 @@ impl Game {
         })
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, event: WindowEvent) {
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        event: WindowEvent,
+    ) -> eros::Result<()> {
         let _ = self.ui.on_window_event(&self.window, &event);
 
         match event {
@@ -132,7 +138,7 @@ impl Game {
                     let _ = self.window.set_cursor_grab(CursorGrabMode::None);
                     self.window.set_cursor_visible(true);
                     self.cursor_captured = false;
-                    return;
+                    return Ok(());
                 }
 
                 let state = match key_event.state {
@@ -172,10 +178,11 @@ impl Game {
                 self.cursor_captured = true;
             }
 
-            WindowEvent::RedrawRequested => self.render(),
+            WindowEvent::RedrawRequested => self.render()?,
 
             _ => {}
         }
+        Ok(())
     }
 
     fn device_event(&mut self, event: DeviceEvent) {
@@ -191,7 +198,7 @@ impl Game {
         }
     }
 
-    fn render(&mut self) {
+    fn render(&mut self) -> eros::Result<()> {
         let now = Instant::now();
         let frame_dt = now.duration_since(self.last_frame).as_secs_f32().min(0.1);
         self.last_frame = now;
@@ -226,7 +233,7 @@ impl Game {
             .engine
             .draw(camera, &self.draw_buffer, raw_input, |ctx| {
                 scene_panel.show(ctx, &mut level.scene);
-            });
+            })?;
         self.ui
             .handle_platform_output(&self.window, platform_output);
 
@@ -236,6 +243,7 @@ impl Game {
         }
 
         self.window.request_redraw();
+        Ok(())
     }
 }
 
@@ -253,8 +261,11 @@ impl ApplicationHandler for GameApp {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
-        if let GameApp::Running(game) = self {
-            game.window_event(event_loop, event);
+        if let GameApp::Running(game) = self
+            && let Err(err) = game.window_event(event_loop, event)
+        {
+            event_loop.exit();
+            *self = GameApp::Failed(err);
         }
     }
 
@@ -266,7 +277,9 @@ impl ApplicationHandler for GameApp {
 
     fn exiting(&mut self, _: &ActiveEventLoop) {
         if let GameApp::Running(game) = self {
-            game.engine.stop();
+            if let Err(err) = game.engine.stop() {
+                log::error!("Stopping the engine failed: {err:?}");
+            }
             *self = GameApp::Stopped;
         }
     }

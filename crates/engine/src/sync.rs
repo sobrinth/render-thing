@@ -27,20 +27,15 @@ impl Fence {
         self.handle
     }
 
-    #[must_use]
-    pub(crate) fn wait(&self, timeout_ns: u64) -> bool {
-        match unsafe {
+    pub(crate) fn wait(&self, timeout_ns: u64) -> eros::Result<()> {
+        Ok(unsafe {
             self.device
                 .wait_for_fences(&[self.handle], true, timeout_ns)
-        } {
-            Ok(()) => true,
-            Err(vk::Result::TIMEOUT) => false,
-            Err(e) => panic!("wait_for_fences failed: {e}"),
-        }
+        }?)
     }
 
-    pub(crate) fn reset(&self) {
-        unsafe { self.device.reset_fences(&[self.handle]) }.unwrap();
+    pub(crate) fn reset(&self) -> eros::Result<()> {
+        Ok(unsafe { self.device.reset_fences(&[self.handle]) }?)
     }
 }
 
@@ -100,18 +95,13 @@ impl TimelineSemaphore {
 
     /// Blocks until the semaphore reaches `value`. Non-destructive: unlike a
     /// fence wait there is no reset, so re-waiting on the same value is fine.
-    #[must_use]
-    pub(crate) fn wait(&self, value: u64, timeout_ns: u64) -> bool {
+    pub(crate) fn wait(&self, value: u64, timeout_ns: u64) -> eros::Result<()> {
         let semaphores = [self.handle];
         let values = [value];
         let wait_info = vk::SemaphoreWaitInfo::default()
             .semaphores(&semaphores)
             .values(&values);
-        match unsafe { self.device.wait_semaphores(&wait_info, timeout_ns) } {
-            Ok(()) => true,
-            Err(vk::Result::TIMEOUT) => false,
-            Err(e) => panic!("wait_semaphores failed: {e}"),
-        }
+        Ok(unsafe { self.device.wait_semaphores(&wait_info, timeout_ns) }?)
     }
 }
 

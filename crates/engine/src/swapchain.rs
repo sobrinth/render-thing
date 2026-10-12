@@ -137,10 +137,9 @@ impl Drop for Swapchain {
         // device_wait_idle does not cover the presentation engine; these fences
         // are the only signal that presents using the images/semaphores are done.
         for fence in &self.present_fences {
-            assert!(
-                fence.wait(PRESENT_FENCE_TIMEOUT_NS),
-                "present fence timed out while destroying swapchain"
-            );
+            if let Err(err) = fence.wait(PRESENT_FENCE_TIMEOUT_NS) {
+                log::error!("Present fence wait failed while destroying swapchain: {err:?}");
+            }
         }
         unsafe {
             self.image_views
