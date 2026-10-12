@@ -1,10 +1,7 @@
 use super::{DynamicRendering, Options, RendererResult};
 use ash::{Device, vk};
 pub(crate) use buffer::*;
-use std::{
-    ffi::CString,
-    mem::{self, size_of},
-};
+use std::mem::{self, size_of};
 pub(crate) use texture::*;
 
 pub(crate) unsafe fn any_as_u8_slice<T: Sized>(any: &T) -> &[u8] {
@@ -53,7 +50,7 @@ pub(crate) fn create_vulkan_pipeline(
     dynamic_rendering: DynamicRendering,
     options: Options,
 ) -> RendererResult<vk::Pipeline> {
-    let entry_point_name = CString::new("main").unwrap();
+    let entry_point_name = c"main";
 
     let vertex_shader_source = std::include_bytes!("shaders/shader.vert.spv");
     let fragment_shader_source = std::include_bytes!("shaders/shader.frag.spv");
@@ -81,12 +78,12 @@ pub(crate) fn create_vulkan_pipeline(
         vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::VERTEX)
             .module(vertex_module)
-            .name(&entry_point_name),
+            .name(entry_point_name),
         vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::FRAGMENT)
             .module(fragment_module)
             .specialization_info(&specialization_info)
-            .name(&entry_point_name),
+            .name(entry_point_name),
     ];
 
     let binding_desc = [vk::VertexInputBindingDescription::default()

@@ -4,7 +4,6 @@
 //! and dynamic rendering.
 
 mod allocator;
-mod error;
 mod vulkan;
 
 use std::collections::HashMap;
@@ -16,12 +15,11 @@ use egui::{
     ClippedPrimitive, ImageData, TextureId,
     epaint::{ImageDelta, Primitive},
 };
-pub(crate) use error::RendererError;
 use mesh::*;
 use vk_mem::Allocator as VkMemAllocator;
 use vulkan::*;
 
-pub(crate) type RendererResult<T> = Result<T, RendererError>;
+pub(crate) type RendererResult<T> = eros::Result<T>;
 
 const MAX_TEXTURE_COUNT: u32 = 1024;
 
@@ -76,11 +74,10 @@ impl Renderer {
     ) -> RendererResult<Self> {
         log::debug!("Creating egui renderer with options {options:?}");
 
-        if options.in_flight_frames == 0 {
-            return Err(RendererError::Init(String::from(
-                "'in_flight_frames' parameter should be at least one",
-            )));
-        }
+        eros::ensure!(
+            options.in_flight_frames > 0,
+            "'in_flight_frames' parameter should be at least one"
+        );
 
         let allocator = Allocator::new(vk_mem_allocator);
 
@@ -131,7 +128,7 @@ impl Renderer {
                 let texture = self
                     .managed_textures
                     .get_mut(id)
-                    .ok_or(RendererError::BadTexture(*id))?;
+                    .ok_or_else(|| eros::error!("Bad egui texture id: {:?}", id))?;
 
                 texture.update(
                     &self.device,
@@ -308,10 +305,10 @@ impl Renderer {
                     }
 
                     if Some(m.texture_id) != current_texture_id {
-                        let descriptor_set = *self
-                            .textures
-                            .get(&m.texture_id)
-                            .ok_or(RendererError::BadTexture(m.texture_id))?;
+                        let descriptor_set =
+                            *self.textures.get(&m.texture_id).ok_or_else(|| {
+                                eros::error!("Bad egui texture id: {:?}", m.texture_id)
+                            })?;
 
                         unsafe {
                             self.device.cmd_bind_descriptor_sets(

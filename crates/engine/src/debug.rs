@@ -1,9 +1,10 @@
 use ash::ext::debug_utils;
 use ash::{Entry, Instance, vk};
+use eros::{Context, context, ensure};
 use itertools::Itertools;
-use std::ffi::{CStr, CString, c_char, c_void};
+use std::ffi::{CStr, c_char, c_void};
 
-pub(crate) const REQUIRED_LAYERS: [&str; 1] = ["VK_LAYER_KHRONOS_validation"];
+pub(crate) const REQUIRED_LAYERS: [&CStr; 1] = [c"VK_LAYER_KHRONOS_validation"];
 
 unsafe extern "system" fn vulkan_debug_callback(
     flag: vk::DebugUtilsMessageSeverityFlagsEXT,
@@ -22,45 +23,33 @@ unsafe extern "system" fn vulkan_debug_callback(
     }
     vk::FALSE
 }
-/// Get the pointers to the validation layers names.
-/// Also return the corresponding `CString` to avoid dangling pointers.
-pub(crate) fn get_layer_names_and_pointers() -> (Vec<CString>, Vec<*const c_char>) {
-    let layer_names = REQUIRED_LAYERS
-        .iter()
-        .map(|n| CString::new(*n).unwrap())
-        .collect_vec();
-    let layer_names_ptrs = layer_names.iter().map(|n| n.as_ptr()).collect::<Vec<_>>();
-    (layer_names, layer_names_ptrs)
+
+/// Pointers to the validation layer names; they point into `'static` C strings.
+pub(crate) fn layer_name_pointers() -> Vec<*const c_char> {
+    REQUIRED_LAYERS.iter().map(|n| n.as_ptr()).collect_vec()
 }
 
-/// Check if the required validation set in `REQUIRED_LAYERS`
-/// are supported by the Vulkan instance.
-///
-/// # Panics
-///
-/// Panic if at least one of the layers is not supported.
-pub(crate) fn check_validation_layer_support(entry: &Entry) {
-    let supported_layers = unsafe { entry.enumerate_instance_layer_properties().unwrap() };
-    for required in REQUIRED_LAYERS.iter() {
+/// Check that every layer in `REQUIRED_LAYERS` is supported by the Vulkan instance.
+#[context("Checking validation layer support")]
+pub(crate) fn check_validation_layer_support(entry: &Entry) -> eros::Result<()> {
+    let supported_layers = unsafe { entry.enumerate_instance_layer_properties() }?;
+    for required in REQUIRED_LAYERS {
         let found = supported_layers.iter().any(|l| {
             let name = unsafe { CStr::from_ptr(l.layer_name.as_ptr()) };
-            let name = name.to_str().expect("Failed to get layer name pointer.");
-            required == &name
+            name == required
         });
-
-        if !found {
-            panic!("Validation layer not supported: {}", required);
-        }
+        ensure!(found, "Validation layer not supported: {:?}", required);
     }
+    Ok(())
 }
 
-/// Set up the debug message if validation layers are enabled
+/// Set up the debug messenger if validation layers are enabled
 pub(crate) fn setup_debug_messenger(
     entry: &Entry,
     instance: &Instance,
-) -> Option<(debug_utils::Instance, vk::DebugUtilsMessengerEXT)> {
+) -> eros::Result<Option<(debug_utils::Instance, vk::DebugUtilsMessengerEXT)>> {
     if !cfg!(debug_assertions) {
-        return None;
+        return Ok(None);
     }
 
     let create_info = vk::DebugUtilsMessengerCreateInfoEXT::default()
@@ -78,7 +67,8 @@ pub(crate) fn setup_debug_messenger(
         .pfn_user_callback(Some(vulkan_debug_callback));
     let debug_utils = debug_utils::Instance::new(entry, instance);
     let debug_utils_messenger =
-        unsafe { debug_utils.create_debug_utils_messenger(&create_info, None) }.unwrap();
+        unsafe { debug_utils.create_debug_utils_messenger(&create_info, None) }
+            .context("Creating debug utils messenger")?;
 
-    Some((debug_utils, debug_utils_messenger))
+    Ok(Some((debug_utils, debug_utils_messenger)))
 }

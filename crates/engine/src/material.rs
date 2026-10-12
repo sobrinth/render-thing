@@ -1,6 +1,7 @@
 use crate::context::VkContext;
 use crate::pipeline::{Pipeline, PipelineBuilder, PipelineLayout};
 use ash::vk;
+use eros::Context;
 use std::mem::size_of;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,16 +46,9 @@ impl GltfMetallicRoughness {
         depth_image_format: vk::Format,
         scene_data_layout: &vk::DescriptorSetLayout,
         bindless_layout: &vk::DescriptorSetLayout,
-    ) -> Self {
-        let load_spv = |path: &str, device: &ash::Device| -> vk::ShaderModule {
-            let bytes = std::fs::read(path).unwrap_or_else(|_| panic!("missing spv: {path}"));
-            let mut cursor = std::io::Cursor::new(bytes);
-            let words = ash::util::read_spv(&mut cursor).expect("invalid SPIR-V");
-            let info = vk::ShaderModuleCreateInfo::default().code(&words);
-            unsafe { device.create_shader_module(&info, None) }.unwrap()
-        };
-        let vert_module = load_spv("assets/shaders/mesh.vert.spv", &context.device);
-        let frag_module = load_spv("assets/shaders/mesh.frag.spv", &context.device);
+    ) -> eros::Result<Self> {
+        let vert_module = load_spv("assets/shaders/mesh.vert.spv", &context.device)?;
+        let frag_module = load_spv("assets/shaders/mesh.frag.spv", &context.device)?;
 
         let push_range = vk::PushConstantRange::default()
             .offset(0)
@@ -66,8 +60,7 @@ impl GltfMetallicRoughness {
             .set_layouts(&set_layouts)
             .push_constant_ranges(std::slice::from_ref(&push_range));
 
-        let pipeline_layout =
-            unsafe { context.device.create_pipeline_layout(&layout_info, None) }.unwrap();
+        let pipeline_layout = unsafe { context.device.create_pipeline_layout(&layout_info, None) }?;
 
         let opaque_vk_pipeline = {
             let mut builder = PipelineBuilder::init();
@@ -81,7 +74,9 @@ impl GltfMetallicRoughness {
             builder.enable_depth_test(true, vk::CompareOp::GREATER_OR_EQUAL);
             builder.set_color_attachment_format(draw_image_format);
             builder.set_depth_format(depth_image_format);
-            builder.build(&context.device)
+            builder
+                .build(&context.device)
+                .context("Building opaque pipeline")?
         };
 
         let transparent_vk_pipeline = {
@@ -96,7 +91,9 @@ impl GltfMetallicRoughness {
             builder.enable_depth_test(false, vk::CompareOp::GREATER_OR_EQUAL);
             builder.set_color_attachment_format(draw_image_format);
             builder.set_depth_format(depth_image_format);
-            builder.build(&context.device)
+            builder
+                .build(&context.device)
+                .context("Building transparent pipeline")?
         };
 
         unsafe {
@@ -106,7 +103,7 @@ impl GltfMetallicRoughness {
 
         // The pipelines share one layout owned by `pipeline_layout`; passing null
         // here so Pipeline::drop skips layout destruction (no-op per Vulkan spec).
-        GltfMetallicRoughness {
+        Ok(GltfMetallicRoughness {
             opaque_pipeline: Pipeline::new(
                 opaque_vk_pipeline,
                 vk::PipelineLayout::null(),
@@ -118,6 +115,16 @@ impl GltfMetallicRoughness {
                 context.device.clone(),
             ),
             pipeline_layout: PipelineLayout::new(pipeline_layout, context.device.clone()),
-        }
+        })
     }
+}
+
+/// Reads a SPIR-V file and wraps it in a shader module. The caller owns the module.
+fn load_spv(path: &str, device: &ash::Device) -> eros::Result<vk::ShaderModule> {
+    let bytes = std::fs::read(path).with_context(|| format!("Reading shader {path}"))?;
+    let mut cursor = std::io::Cursor::new(bytes);
+    let words =
+        ash::util::read_spv(&mut cursor).with_context(|| format!("Parsing SPIR-V in {path}"))?;
+    let info = vk::ShaderModuleCreateInfo::default().code(&words);
+    Ok(unsafe { device.create_shader_module(&info, None) }?)
 }

@@ -28,7 +28,7 @@ impl AllocatedBuffer {
         usage: vk::BufferUsageFlags,
         memory_usage: vk_mem::MemoryUsage,
         flags: Option<vk_mem::AllocationCreateFlags>,
-    ) -> Self {
+    ) -> eros::Result<Self> {
         let buffer_info = vk::BufferCreateInfo::default().size(size).usage(usage);
 
         let alloc_create_info = if let Some(flags) = flags {
@@ -45,15 +45,15 @@ impl AllocatedBuffer {
         };
 
         let (buffer, allocation) =
-            unsafe { allocator.create_buffer(&buffer_info, &alloc_create_info) }.unwrap();
+            unsafe { allocator.create_buffer(&buffer_info, &alloc_create_info) }?;
         let info = allocator.get_allocation_info(&allocation);
 
-        AllocatedBuffer {
+        Ok(AllocatedBuffer {
             buffer,
             allocation,
             info,
             allocator: Arc::clone(allocator),
-        }
+        })
     }
 }
 
@@ -78,15 +78,15 @@ pub(crate) struct IndexPool {
 }
 
 impl IndexPool {
-    pub(crate) fn new(gpu_alloc: &Arc<vk_mem::Allocator>) -> Self {
+    pub(crate) fn new(gpu_alloc: &Arc<vk_mem::Allocator>) -> eros::Result<Self> {
         let buffer = AllocatedBuffer::create(
             gpu_alloc,
             MAX_POOLED_INDICES as u64 * size_of::<u32>() as u64,
             vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
             vk_mem::MemoryUsage::AutoPreferDevice,
             None,
-        );
-        Self { buffer, cursor: 0 }
+        )?;
+        Ok(Self { buffer, cursor: 0 })
     }
 
     /// Reserves room for count indices, returning their pool offset.
@@ -139,7 +139,7 @@ impl AllocatedImage {
         usage: vk::ImageUsageFlags,
         aspect_flags: vk::ImageAspectFlags,
         mip_mapped: bool,
-    ) -> AllocatedImage {
+    ) -> eros::Result<AllocatedImage> {
         let extent = vk::Extent3D {
             width: image_resolution.0,
             height: image_resolution.1,
@@ -168,8 +168,7 @@ impl AllocatedImage {
             ..Default::default()
         };
 
-        let (image, allocation) =
-            unsafe { gpu_alloc.create_image(&create_info, &alloc_info) }.unwrap();
+        let (image, mut allocation) = unsafe { gpu_alloc.create_image(&create_info, &alloc_info) }?;
 
         let view_create_info = vk::ImageViewCreateInfo::default()
             .view_type(vk::ImageViewType::TYPE_2D)
@@ -184,9 +183,15 @@ impl AllocatedImage {
                     .aspect_mask(aspect_flags),
             );
 
-        let view = unsafe { context.device.create_image_view(&view_create_info, None) }.unwrap();
+        let view = match unsafe { context.device.create_image_view(&view_create_info, None) } {
+            Ok(view) => view,
+            Err(err) => {
+                unsafe { gpu_alloc.destroy_image(image, &mut allocation) };
+                return Err(err.into());
+            }
+        };
 
-        AllocatedImage {
+        Ok(AllocatedImage {
             image,
             view,
             allocation,
@@ -195,7 +200,7 @@ impl AllocatedImage {
             mip_levels,
             device: context.device.clone(),
             allocator: Arc::clone(gpu_alloc),
-        }
+        })
     }
 }
 
@@ -301,7 +306,7 @@ impl AllocatedImage {
         graphics_queue: &QueueData,
         data: &[u32],
         info: ImageCreateInfo,
-    ) -> AllocatedImage {
+    ) -> eros::Result<AllocatedImage> {
         let extent = vk::Extent3D {
             width: info.resolution.0,
             height: info.resolution.1,
@@ -319,7 +324,7 @@ impl AllocatedImage {
                 vk_mem::AllocationCreateFlags::MAPPED
                     | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
             ),
-        );
+        )?;
 
         let new_image = AllocatedImage::create(
             context,
@@ -329,7 +334,7 @@ impl AllocatedImage {
             info.usage,
             info.aspect_flags,
             info.mip_mapped,
-        );
+        )?;
 
         let dst_data = upload_buffer.info.mapped_data as *mut u8;
         unsafe { std::ptr::copy_nonoverlapping(data.as_ptr() as *const u8, dst_data, data_size) };
@@ -383,7 +388,7 @@ impl AllocatedImage {
             }
         });
 
-        new_image
+        Ok(new_image)
     }
 }
 
@@ -397,7 +402,7 @@ impl AllocatedImage {
         graphics_queue: &QueueData,
         data: &[u8],
         info: ImageCreateInfo,
-    ) -> AllocatedImage {
+    ) -> eros::Result<AllocatedImage> {
         let extent = vk::Extent3D {
             width: info.resolution.0,
             height: info.resolution.1,
@@ -413,7 +418,7 @@ impl AllocatedImage {
                 vk_mem::AllocationCreateFlags::MAPPED
                     | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
             ),
-        );
+        )?;
 
         let new_image = AllocatedImage::create(
             context,
@@ -423,7 +428,7 @@ impl AllocatedImage {
             info.usage,
             info.aspect_flags,
             info.mip_mapped,
-        );
+        )?;
 
         let dst_data = upload_buffer.info.mapped_data as *mut u8;
         unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), dst_data, data.len()) };
@@ -477,7 +482,7 @@ impl AllocatedImage {
             }
         });
 
-        new_image
+        Ok(new_image)
     }
 }
 
@@ -506,7 +511,7 @@ pub(crate) fn upload_mesh_buffers(
     index_pool: &mut IndexPool,
     indices: &[u32],
     vertices: &[Vertex],
-) -> GPUMeshBuffers {
+) -> eros::Result<GPUMeshBuffers> {
     let vertex_buffer_size = size_of_val(vertices);
     let index_buffer_size = size_of_val(indices);
 
@@ -518,7 +523,7 @@ pub(crate) fn upload_mesh_buffers(
             | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
         vk_mem::MemoryUsage::AutoPreferDevice,
         None,
-    );
+    )?;
     let device_address_info = vk::BufferDeviceAddressInfo::default().buffer(vertex_buffer.buffer);
     let device_address = unsafe {
         context
@@ -544,7 +549,7 @@ pub(crate) fn upload_mesh_buffers(
             vk_mem::AllocationCreateFlags::MAPPED
                 | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
         ),
-    );
+    )?;
 
     let dst_data = staging.info.mapped_data as *mut u8;
     unsafe {
@@ -582,5 +587,5 @@ pub(crate) fn upload_mesh_buffers(
         }
     });
 
-    meshes
+    Ok(meshes)
 }

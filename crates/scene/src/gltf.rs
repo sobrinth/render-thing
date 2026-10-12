@@ -1,10 +1,13 @@
 use crate::graph::{NodeId, SceneGraph};
 use engine::Engine;
+use eros::context;
 use nalgebra_glm as glm;
 use std::borrow::Cow;
 
-pub fn load_gltf(engine: &mut Engine, path: &str) -> Option<SceneGraph> {
-    let (doc, buffers, images) = gltf::import(path).ok()?;
+/// Imports a glTF/GLB file and uploads its textures, materials and meshes to `engine`.
+#[context("Loading glTF scene from {}", path)]
+pub fn load_gltf(engine: &mut Engine, path: &str) -> eros::Result<SceneGraph> {
+    let (doc, buffers, images) = gltf::import(path)?;
 
     let mut texture_handles: Vec<engine::TextureHandle> = Vec::new();
     for image in &images {
@@ -25,7 +28,7 @@ pub fn load_gltf(engine: &mut Engine, path: &str) -> Option<SceneGraph> {
             image.width,
             image.height,
             engine::SamplerType::Linear,
-        );
+        )?;
         texture_handles.push(handle);
     }
 
@@ -74,11 +77,11 @@ pub fn load_gltf(engine: &mut Engine, path: &str) -> Option<SceneGraph> {
                 engine,
                 &material_handles,
                 default_material,
-            );
+            )?;
         }
     }
 
-    Some(scene)
+    Ok(scene)
 }
 
 // gltf's transform().matrix() returns [[f32; 4]; 4] in column-major order (m[col][row]).
@@ -99,7 +102,7 @@ fn traverse(
     engine: &mut Engine,
     material_handles: &[engine::MaterialHandle],
     default_material: engine::MaterialHandle,
-) {
+) -> eros::Result<()> {
     let local = node_to_mat4(gltf_node);
     let name = gltf_node.name().unwrap_or("node").to_string();
 
@@ -160,7 +163,7 @@ fn traverse(
                 continue;
             }
 
-            let mesh_handle = engine.upload_mesh(&indices, &vertices);
+            let mesh_handle = engine.upload_mesh(&indices, &vertices)?;
             let mat_handle = prim
                 .material()
                 .index()
@@ -191,6 +194,7 @@ fn traverse(
             engine,
             material_handles,
             default_material,
-        );
+        )?;
     }
+    Ok(())
 }

@@ -83,9 +83,9 @@ impl Engine {
         window: &(impl HasDisplayHandle + HasWindowHandle),
         window_size: (u32, u32),
         config: EngineConfig,
-    ) -> Self {
-        let renderer = VulkanRenderer::initialize(window, window_size, config);
-        Self { renderer }
+    ) -> eros::Result<Self> {
+        let renderer = VulkanRenderer::initialize(window, window_size, config)?;
+        Ok(Self { renderer })
     }
 
     pub fn egui_context(&self) -> egui::Context {
@@ -114,7 +114,11 @@ impl Engine {
         over_floating_layer && !ctx.input(|i| i.pointer.any_down())
     }
 
-    pub fn upload_mesh(&mut self, indices: &[u32], vertices: &[Vertex]) -> MeshHandle {
+    pub fn upload_mesh(
+        &mut self,
+        indices: &[u32],
+        vertices: &[Vertex],
+    ) -> eros::Result<MeshHandle> {
         self.renderer.upload_mesh(indices, vertices)
     }
 
@@ -124,7 +128,7 @@ impl Engine {
         width: u32,
         height: u32,
         sampler: SamplerType,
-    ) -> TextureHandle {
+    ) -> eros::Result<TextureHandle> {
         self.renderer.upload_texture(data, width, height, sampler)
     }
 

@@ -15,19 +15,25 @@ use winit::window::{Window, WindowId};
 const WIDTH: u32 = 1280;
 const HEIGHT: u32 = 720;
 
-fn main() {
+fn main() -> eros::Result<()> {
     env_logger::init();
 
-    let event_loop = EventLoop::new().unwrap();
+    let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(Poll);
 
     let mut app = Application::default();
-    event_loop.run_app(&mut app).unwrap();
+    event_loop.run_app(&mut app)?;
+    match app.init_error.take() {
+        Some(err) => Err(err),
+        None => Ok(()),
+    }
 }
 
 struct Application {
     window: Option<Window>,
     engine: Option<Engine>,
+    /// Set when engine initialization fails; reported from `main` after the loop exits.
+    init_error: Option<eros::ErrorUnion>,
     ui: Option<egui_winit::State>,
     camera: Option<Camera>,
     mouse_pos: (i32, i32),
@@ -42,6 +48,7 @@ impl Default for Application {
         Self {
             window: None,
             engine: None,
+            init_error: None,
             ui: None,
             camera: None,
             mouse_pos: (0, 0),
@@ -63,14 +70,21 @@ impl ApplicationHandler for Application {
             .unwrap();
 
         let window_size = (window.inner_size().width, window.inner_size().height);
-        let mut engine = Engine::initialize(
+        let mut engine = match Engine::initialize(
             &window,
             window_size,
             engine::EngineConfig {
                 app_name: "Render Thing".to_string(),
                 ..Default::default()
             },
-        );
+        ) {
+            Ok(engine) => engine,
+            Err(err) => {
+                self.init_error = Some(err);
+                event_loop.exit();
+                return;
+            }
+        };
 
         let ui = egui_winit::State::new(
             engine.egui_context(),
@@ -81,7 +95,13 @@ impl ApplicationHandler for Application {
             None,
         );
 
-        self.scene = scene::load_gltf(&mut engine, "assets/models/downloaded/abbey.glb");
+        self.scene = match scene::load_gltf(&mut engine, "assets/models/downloaded/abbey.glb") {
+            Ok(scene) => Some(scene),
+            Err(err) => {
+                log::error!("Starting without a scene: {err:?}");
+                None
+            }
+        };
         self.engine = Some(engine);
         self.ui = Some(ui);
         self.window = Some(window);
@@ -94,6 +114,9 @@ impl ApplicationHandler for Application {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
+        if self.engine.is_none() {
+            return;
+        }
         let window = self.window.as_ref().unwrap();
         let ui = self.ui.as_mut().unwrap();
         let engine = self.engine.as_mut().unwrap();
@@ -191,9 +214,10 @@ impl ApplicationHandler for Application {
     fn exiting(&mut self, _: &ActiveEventLoop) {
         // This is guaranteed to be the last code run before the event-loop will exit, so the engine
         // is dropped here because it needs to be gone before the event-loop exits.
-        let mut engine = self.engine.take().unwrap();
-        engine.stop();
-        // This drop is not needed but makes the intention here explicit
-        drop(engine)
+        if let Some(mut engine) = self.engine.take() {
+            engine.stop();
+            // This drop is not needed but makes the intention here explicit
+            drop(engine)
+        }
     }
 }

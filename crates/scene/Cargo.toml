@@ -11,6 +11,7 @@ egui = ["dep:egui"]
 [dependencies]
 engine.workspace = true
 gltf.workspace = true
+eros.workspace = true
 nalgebra-glm.workspace = true
 
 [dependencies.egui]

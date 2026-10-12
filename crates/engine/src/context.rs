@@ -1,14 +1,12 @@
-use crate::debug::{
-    check_validation_layer_support, get_layer_names_and_pointers, setup_debug_messenger,
-};
+use crate::debug::{check_validation_layer_support, layer_name_pointers, setup_debug_messenger};
 use crate::swapchain;
 use ash::Instance;
 use ash::ext::debug_utils;
 use ash::khr::surface;
 use ash::{Device, Entry, vk};
+use eros::{Context, ensure};
 use itertools::Itertools;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-use std::error::Error;
 use std::ffi::CStr;
 use std::sync::Arc;
 
@@ -31,35 +29,38 @@ impl VkContext {
     pub(crate) fn initialize(
         window: &(impl HasDisplayHandle + HasWindowHandle),
         app_name: &str,
-    ) -> (Self, QueueData, Arc<vk_mem::Allocator>) {
+    ) -> eros::Result<(Self, QueueData, Arc<vk_mem::Allocator>)> {
         log::trace!("Creating vulkan context");
-        let vulkan_fn = unsafe { Entry::load().expect("Failed to create ash entrypoint") };
-        let instance = Self::create_instance(&vulkan_fn, window, app_name).unwrap();
+        let vulkan_fn = unsafe { Entry::load() }.context("Loading the Vulkan library")?;
+        let instance = Self::create_instance(&vulkan_fn, window, app_name)
+            .context("Creating Vulkan instance")?;
 
-        let debug_report_callback = setup_debug_messenger(&vulkan_fn, &instance);
+        let debug_report_callback = setup_debug_messenger(&vulkan_fn, &instance)?;
 
         let surface_fn = surface::Instance::new(&vulkan_fn, &instance);
         let surface = unsafe {
             ash_window::create_surface(
                 &vulkan_fn,
                 &instance,
-                window.display_handle().unwrap().as_raw(),
-                window.window_handle().unwrap().as_raw(),
+                window.display_handle()?.as_raw(),
+                window.window_handle()?.as_raw(),
                 None,
             )
         }
-        .unwrap();
+        .context("Creating window surface")?;
 
         let (physical_device, device, graphics_queue, _) =
-            Self::initialize_vulkan_device(&instance, &surface_fn, surface);
+            Self::initialize_vulkan_device(&instance, &surface_fn, surface)
+                .context("Creating logical device")?;
 
         let mut alloc_info = vk_mem::AllocatorCreateInfo::new(&instance, &device, physical_device);
         alloc_info.vulkan_api_version = vk::make_api_version(0, 1, 3, 0);
         alloc_info.flags |= vk_mem::AllocatorCreateFlags::BUFFER_DEVICE_ADDRESS;
 
-        let allocator = unsafe { vk_mem::Allocator::new(alloc_info) }.unwrap();
+        let allocator =
+            unsafe { vk_mem::Allocator::new(alloc_info) }.context("Creating VMA allocator")?;
 
-        (
+        Ok((
             Self {
                 _vulkan_fn: vulkan_fn,
                 instance,
@@ -71,14 +72,14 @@ impl VkContext {
             },
             graphics_queue,
             Arc::new(allocator),
-        )
+        ))
     }
 
     fn create_instance(
         vulkan_fn: &Entry,
         window: &impl HasDisplayHandle,
         app_name: &str,
-    ) -> Result<Instance, Box<dyn Error>> {
+    ) -> eros::Result<Instance> {
         let app_name = std::ffi::CString::new(app_name).unwrap_or_default();
         let engine_name = c"No Engine";
         let app_info = vk::ApplicationInfo::default()
@@ -89,9 +90,7 @@ impl VkContext {
             .api_version(vk::make_api_version(0, 1, 3, 0));
 
         let mut extension_names =
-            ash_window::enumerate_required_extensions(window.display_handle().unwrap().as_raw())
-                .unwrap()
-                .to_vec();
+            ash_window::enumerate_required_extensions(window.display_handle()?.as_raw())?.to_vec();
 
         if cfg!(debug_assertions) {
             extension_names.push(debug_utils::NAME.as_ptr());
@@ -108,7 +107,7 @@ impl VkContext {
             })
         };
 
-        assert!(
+        ensure!(
             has_extension(ash::khr::get_surface_capabilities2::NAME),
             "VK_KHR_get_surface_capabilities2 is required (driver too old?)"
         );
@@ -124,36 +123,41 @@ impl VkContext {
         .into_iter()
         .filter(|name| has_extension(name))
         .collect_vec();
-        assert!(
+        ensure!(
             !surface_maintenance1.is_empty(),
             "VK_KHR/EXT_surface_maintenance1 is required (driver too old?)"
         );
         extension_names.extend(surface_maintenance1.iter().map(|name| name.as_ptr()));
 
-        let (_layer_names, layer_names_ptrs) = get_layer_names_and_pointers();
+        let layer_names_ptrs = layer_name_pointers();
 
         let mut instance_create_info = vk::InstanceCreateInfo::default()
             .application_info(&app_info)
             .enabled_extension_names(&extension_names);
 
         if cfg!(debug_assertions) {
-            check_validation_layer_support(vulkan_fn);
+            check_validation_layer_support(vulkan_fn)?;
             instance_create_info = instance_create_info.enabled_layer_names(&layer_names_ptrs);
         }
 
-        unsafe { Ok(vulkan_fn.create_instance(&instance_create_info, None)?) }
+        Ok(unsafe { vulkan_fn.create_instance(&instance_create_info, None) }?)
     }
 
     fn initialize_vulkan_device(
         instance: &Instance,
         surface_fn: &surface::Instance,
         surface: vk::SurfaceKHR,
-    ) -> (vk::PhysicalDevice, Device, QueueData, vk::Queue) {
+    ) -> eros::Result<(vk::PhysicalDevice, Device, QueueData, vk::Queue)> {
         // Select a physical device
-        let available_devices = unsafe { instance.enumerate_physical_devices() }.unwrap();
-        let selected_device = available_devices
+        let available_devices = unsafe { instance.enumerate_physical_devices() }?;
+        let mut suitable_devices = Vec::new();
+        for device in available_devices {
+            if Self::is_device_suitable(instance, surface_fn, surface, device)? {
+                suitable_devices.push(device);
+            }
+        }
+        let selected_device = suitable_devices
             .into_iter()
-            .filter(|d| Self::is_device_suitable(instance, surface_fn, surface, *d))
             .max_by_key(|d| {
                 let props = unsafe { instance.get_physical_device_properties(*d) };
                 match props.device_type {
@@ -162,7 +166,7 @@ impl VkContext {
                     _ => 0,
                 }
             })
-            .expect("No suitable physical device found.");
+            .ok_or_else(|| eros::error!("No suitable physical device found"))?;
 
         let props = unsafe { instance.get_physical_device_properties(selected_device) };
         log::debug!("Selected physical device: {:?}", unsafe {
@@ -171,10 +175,12 @@ impl VkContext {
 
         // Queue families for graphics and present queue
         let (graphics, present) =
-            Self::find_queue_families(instance, surface_fn, surface, selected_device);
+            Self::find_queue_families(instance, surface_fn, surface, selected_device)?;
         let queue_family_indices = QueueFamilyIndices {
-            graphics_index: graphics.unwrap(),
-            present_index: present.unwrap(),
+            graphics_index: graphics
+                .ok_or_else(|| eros::error!("Selected device has no graphics queue family"))?,
+            present_index: present
+                .ok_or_else(|| eros::error!("Selected device has no present queue family"))?,
         };
 
         // Create logical vulkan device
@@ -200,8 +206,8 @@ impl VkContext {
                 .collect_vec()
         };
 
-        let device_extensions = Self::select_device_extensions(instance, selected_device)
-            .expect("selected device is missing required extensions");
+        let device_extensions = Self::select_device_extensions(instance, selected_device)?
+            .ok_or_else(|| eros::error!("Selected device is missing required extensions"))?;
         let device_extensions_ptrs = device_extensions
             .iter()
             .map(|ext| ext.as_ptr())
@@ -236,8 +242,7 @@ impl VkContext {
             .push_next(&mut device_features13)
             .push_next(&mut swapchain_maintenance1_features);
 
-        let device = unsafe { instance.create_device(selected_device, &device_create_info, None) }
-            .expect("Failed to create logical device.");
+        let device = unsafe { instance.create_device(selected_device, &device_create_info, None) }?;
 
         // graphics and present queue are created but not retrieved yet
         let graphics_queue =
@@ -250,32 +255,34 @@ impl VkContext {
             family_index: queue_family_indices.graphics_index,
         };
 
-        (selected_device, device, graphics_queue_data, present_queue)
+        Ok((selected_device, device, graphics_queue_data, present_queue))
     }
+
     fn is_device_suitable(
         instance: &Instance,
         surface_fn: &surface::Instance,
         surface: vk::SurfaceKHR,
         physical_device: vk::PhysicalDevice,
-    ) -> bool {
+    ) -> eros::Result<bool> {
         let (graphics, present) =
-            Self::find_queue_families(instance, surface_fn, surface, physical_device);
+            Self::find_queue_families(instance, surface_fn, surface, physical_device)?;
 
-        let extension_support = Self::select_device_extensions(instance, physical_device).is_some();
+        let extension_support =
+            Self::select_device_extensions(instance, physical_device)?.is_some();
 
         let is_swapchain_usable = {
             let details =
-                swapchain::SwapchainSupportDetails::new(physical_device, surface_fn, surface);
+                swapchain::SwapchainSupportDetails::new(physical_device, surface_fn, surface)?;
             !details.formats.is_empty() && !details.present_modes.is_empty()
         };
         let features = unsafe { instance.get_physical_device_features(physical_device) };
-        graphics.is_some()
+        Ok(graphics.is_some()
             && present.is_some()
             && extension_support
             && is_swapchain_usable
             && features.sampler_anisotropy == vk::TRUE
             && features.multi_draw_indirect == vk::TRUE
-            && features.draw_indirect_first_instance == vk::TRUE
+            && features.draw_indirect_first_instance == vk::TRUE)
     }
 
     /// Device extensions to enable, or None if the device is missing any.
@@ -284,9 +291,9 @@ impl VkContext {
     fn select_device_extensions(
         instance: &Instance,
         physical_device: vk::PhysicalDevice,
-    ) -> Option<Vec<&'static CStr>> {
+    ) -> eros::Result<Option<Vec<&'static CStr>>> {
         let extension_properties =
-            unsafe { instance.enumerate_device_extension_properties(physical_device) }.unwrap();
+            unsafe { instance.enumerate_device_extension_properties(physical_device) }?;
         let has_extension = |name: &CStr| {
             extension_properties.iter().any(|ext| {
                 let ext_name = unsafe { CStr::from_ptr(ext.extension_name.as_ptr()) };
@@ -295,16 +302,18 @@ impl VkContext {
         };
 
         if !has_extension(ash::khr::swapchain::NAME) {
-            return None;
+            return Ok(None);
         }
-        let maintenance1 = [
+        let Some(maintenance1) = [
             SWAPCHAIN_MAINTENANCE1_KHR,
             ash::ext::swapchain_maintenance1::NAME,
         ]
         .into_iter()
-        .find(|name| has_extension(name))?;
+        .find(|name| has_extension(name)) else {
+            return Ok(None);
+        };
 
-        Some(vec![ash::khr::swapchain::NAME, maintenance1])
+        Ok(Some(vec![ash::khr::swapchain::NAME, maintenance1]))
     }
 
     /// Find a queue family with at least one graphics queue and one with
@@ -318,7 +327,7 @@ impl VkContext {
         surface_fn: &surface::Instance,
         surface: vk::SurfaceKHR,
         physical_device: vk::PhysicalDevice,
-    ) -> (Option<u32>, Option<u32>) {
+    ) -> eros::Result<(Option<u32>, Option<u32>)> {
         let mut graphics = None;
         let mut present = None;
 
@@ -334,8 +343,7 @@ impl VkContext {
 
             let present_support = unsafe {
                 surface_fn.get_physical_device_surface_support(physical_device, index, surface)
-            }
-            .unwrap();
+            }?;
 
             if present_support && present.is_none() {
                 present = Some(index);
@@ -346,7 +354,7 @@ impl VkContext {
             }
         }
 
-        (graphics, present)
+        Ok((graphics, present))
     }
 }
 

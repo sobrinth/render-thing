@@ -59,7 +59,7 @@ impl LayoutBuilder<'_> {
         device: &Device,
         stage_flags: vk::ShaderStageFlags,
         create_flags: Option<vk::DescriptorSetLayoutCreateFlags>,
-    ) -> DescriptorSetLayout {
+    ) -> eros::Result<DescriptorSetLayout> {
         self.bindings
             .iter_mut()
             .for_each(|binding| binding.stage_flags |= stage_flags);
@@ -70,8 +70,8 @@ impl LayoutBuilder<'_> {
             info = info.flags(flags);
         }
 
-        let layout = unsafe { device.create_descriptor_set_layout(&info, None) }.unwrap();
-        DescriptorSetLayout::new(layout, device.clone())
+        let layout = unsafe { device.create_descriptor_set_layout(&info, None) }?;
+        Ok(DescriptorSetLayout::new(layout, device.clone()))
     }
 
     pub(crate) fn build_with_binding_flags(
@@ -80,7 +80,7 @@ impl LayoutBuilder<'_> {
         stage_flags: vk::ShaderStageFlags,
         binding_flags: &[vk::DescriptorBindingFlags],
         create_flags: vk::DescriptorSetLayoutCreateFlags,
-    ) -> DescriptorSetLayout {
+    ) -> eros::Result<DescriptorSetLayout> {
         assert_eq!(
             binding_flags.len(),
             self.bindings.len(),
@@ -98,8 +98,8 @@ impl LayoutBuilder<'_> {
             .flags(create_flags)
             .push_next(&mut flags_info);
 
-        let layout = unsafe { device.create_descriptor_set_layout(&info, None) }.unwrap();
-        DescriptorSetLayout::new(layout, device.clone())
+        let layout = unsafe { device.create_descriptor_set_layout(&info, None) }?;
+        Ok(DescriptorSetLayout::new(layout, device.clone()))
     }
 }
 
@@ -113,7 +113,7 @@ impl Allocator {
         device: &Device,
         max_sets: u32,
         pool_ratios: Vec<PoolSizeRatio>,
-    ) -> Self {
+    ) -> eros::Result<Self> {
         let pool_sizes = pool_ratios
             .iter()
             .map(|p| {
@@ -128,24 +128,24 @@ impl Allocator {
             .max_sets(max_sets)
             .pool_sizes(&pool_sizes);
 
-        let pool = unsafe { device.create_descriptor_pool(&pool_info, None) }.unwrap();
+        let pool = unsafe { device.create_descriptor_pool(&pool_info, None) }?;
 
-        Self {
+        Ok(Self {
             pool,
             device: device.clone(),
-        }
+        })
     }
 
     pub(crate) fn allocate(
         &self,
         device: &Device,
         layout: vk::DescriptorSetLayout,
-    ) -> vk::DescriptorSet {
+    ) -> eros::Result<vk::DescriptorSet> {
         let alloc_info = vk::DescriptorSetAllocateInfo::default()
             .descriptor_pool(self.pool)
             .set_layouts(core::slice::from_ref(&layout));
 
-        unsafe { device.allocate_descriptor_sets(&alloc_info) }.unwrap()[0]
+        Ok(unsafe { device.allocate_descriptor_sets(&alloc_info) }?[0])
     }
 }
 

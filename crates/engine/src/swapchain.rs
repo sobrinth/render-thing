@@ -2,7 +2,6 @@ use crate::context::VkContext;
 use crate::sync::{Fence, Semaphore};
 use ash::khr::surface;
 use ash::{Device, vk};
-use itertools::Itertools;
 
 pub(crate) struct Swapchain {
     pub(crate) properties: SwapchainProperties,
@@ -17,7 +16,7 @@ pub(crate) struct Swapchain {
 }
 
 impl Swapchain {
-    pub(crate) fn create(vk_context: &VkContext, dimensions: [u32; 2]) -> Self {
+    pub(crate) fn create(vk_context: &VkContext, dimensions: [u32; 2]) -> eros::Result<Self> {
         Self::create_impl(vk_context, dimensions, vk::SwapchainKHR::null())
     }
 
@@ -25,7 +24,7 @@ impl Swapchain {
         vk_context: &VkContext,
         dimensions: [u32; 2],
         old_swapchain: vk::SwapchainKHR,
-    ) -> Self {
+    ) -> eros::Result<Self> {
         Self::create_impl(vk_context, dimensions, old_swapchain)
     }
 
@@ -33,12 +32,12 @@ impl Swapchain {
         vk_context: &VkContext,
         dimensions: [u32; 2],
         old_swapchain: vk::SwapchainKHR,
-    ) -> Self {
+    ) -> eros::Result<Self> {
         let details = SwapchainSupportDetails::new(
             vk_context.physical_device,
             &vk_context.surface_fn,
             vk_context.surface,
-        );
+        )?;
 
         let swapchain_properties = details.get_ideal_swapchain_properties(dimensions);
 
@@ -84,8 +83,8 @@ impl Swapchain {
 
         let swapchain_fn =
             ash::khr::swapchain::Device::new(&vk_context.instance, &vk_context.device);
-        let swapchain = unsafe { swapchain_fn.create_swapchain(&create_info, None) }.unwrap();
-        let swapchain_images = unsafe { swapchain_fn.get_swapchain_images(swapchain) }.unwrap();
+        let swapchain = unsafe { swapchain_fn.create_swapchain(&create_info, None) }?;
+        let swapchain_images = unsafe { swapchain_fn.get_swapchain_images(swapchain) }?;
 
         let swapchain_image_views = swapchain_images
             .iter()
@@ -102,22 +101,22 @@ impl Swapchain {
                         layer_count: 1,
                     });
 
-                unsafe { vk_context.device.create_image_view(&create_info, None) }.unwrap()
+                unsafe { vk_context.device.create_image_view(&create_info, None) }
             })
-            .collect_vec();
+            .collect::<Result<Vec<_>, _>>()?;
 
         let swapchain_semaphore = swapchain_images
             .iter()
             .map(|_i| Semaphore::new(&vk_context.device))
-            .collect_vec();
+            .collect::<eros::Result<Vec<_>>>()?;
 
         // Created signaled: the first present of each image has no predecessor to wait for.
         let present_fences = swapchain_images
             .iter()
             .map(|_i| Fence::new_signaled(&vk_context.device))
-            .collect_vec();
+            .collect::<eros::Result<Vec<_>>>()?;
 
-        Self {
+        Ok(Self {
             properties: swapchain_properties,
             swapchain_fn,
             swapchain,
@@ -126,7 +125,7 @@ impl Swapchain {
             present_fences,
             image_views: swapchain_image_views,
             device: vk_context.device.clone(),
-        }
+        })
     }
 }
 
@@ -170,23 +169,20 @@ impl SwapchainSupportDetails {
         device: vk::PhysicalDevice,
         surface_fn: &surface::Instance,
         surface: vk::SurfaceKHR,
-    ) -> Self {
+    ) -> eros::Result<Self> {
         let capabilities =
-            unsafe { surface_fn.get_physical_device_surface_capabilities(device, surface) }
-                .unwrap();
+            unsafe { surface_fn.get_physical_device_surface_capabilities(device, surface) }?;
 
-        let formats =
-            unsafe { surface_fn.get_physical_device_surface_formats(device, surface) }.unwrap();
+        let formats = unsafe { surface_fn.get_physical_device_surface_formats(device, surface) }?;
 
         let present_modes =
-            unsafe { surface_fn.get_physical_device_surface_present_modes(device, surface) }
-                .unwrap();
+            unsafe { surface_fn.get_physical_device_surface_present_modes(device, surface) }?;
 
-        Self {
+        Ok(Self {
             capabilities,
             formats,
             present_modes,
-        }
+        })
     }
 
     fn get_ideal_swapchain_properties(

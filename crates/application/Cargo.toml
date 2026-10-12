@@ -12,4 +12,6 @@ egui.workspace = true
 egui-winit.workspace = true
 winit.workspace = true
 env_logger.workspace = true
+log.workspace = true
+eros.workspace = true
 nalgebra-glm.workspace = true

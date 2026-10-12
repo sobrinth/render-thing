@@ -8,6 +8,7 @@ use crate::swapchain::SwapchainProperties;
 use ash::Device;
 use ash::vk::{CommandBuffer, Extent2D};
 use egui::{ClippedPrimitive, Context, TextureId};
+use eros::Context as _;
 use std::sync::Arc;
 use vk_mem::Allocator;
 
@@ -36,7 +37,7 @@ impl UiContext {
         device: &Device,
         allocator: &Arc<Allocator>,
         swapchain_properties: SwapchainProperties,
-    ) -> Self {
+    ) -> eros::Result<Self> {
         let egui_renderer = Renderer::new(
             allocator.clone(),
             device.clone(),
@@ -49,14 +50,14 @@ impl UiContext {
                 ..Default::default()
             },
         )
-        .expect("Failed to create egui renderer");
+        .context("Creating egui renderer")?;
 
-        UiContext {
+        Ok(UiContext {
             renderer: Some(egui_renderer),
             ctx: Context::default(),
             scale_factor: 1.0,
             textures_to_free: Default::default(),
-        }
+        })
     }
 }
 

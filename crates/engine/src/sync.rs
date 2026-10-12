@@ -6,21 +6,21 @@ pub(crate) struct Fence {
 }
 
 impl Fence {
-    pub(crate) fn new(device: &Device) -> Self {
+    pub(crate) fn new(device: &Device) -> eros::Result<Self> {
         Self::create(device, &vk::FenceCreateInfo::default())
     }
 
-    pub(crate) fn new_signaled(device: &Device) -> Self {
+    pub(crate) fn new_signaled(device: &Device) -> eros::Result<Self> {
         let info = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
         Self::create(device, &info)
     }
 
-    fn create(device: &Device, info: &vk::FenceCreateInfo) -> Self {
-        let handle = unsafe { device.create_fence(info, None) }.unwrap();
-        Self {
+    fn create(device: &Device, info: &vk::FenceCreateInfo) -> eros::Result<Self> {
+        let handle = unsafe { device.create_fence(info, None) }?;
+        Ok(Self {
             handle,
             device: device.clone(),
-        }
+        })
     }
 
     pub(crate) fn handle(&self) -> vk::Fence {
@@ -56,13 +56,13 @@ pub(crate) struct Semaphore {
 }
 
 impl Semaphore {
-    pub(crate) fn new(device: &Device) -> Self {
+    pub(crate) fn new(device: &Device) -> eros::Result<Self> {
         let info = vk::SemaphoreCreateInfo::default();
-        let handle = unsafe { device.create_semaphore(&info, None) }.unwrap();
-        Self {
+        let handle = unsafe { device.create_semaphore(&info, None) }?;
+        Ok(Self {
             handle,
             device: device.clone(),
-        }
+        })
     }
 
     pub(crate) fn handle(&self) -> vk::Semaphore {
@@ -82,16 +82,16 @@ pub(crate) struct TimelineSemaphore {
 }
 
 impl TimelineSemaphore {
-    pub(crate) fn new(device: &Device) -> Self {
+    pub(crate) fn new(device: &Device) -> eros::Result<Self> {
         let mut type_info = vk::SemaphoreTypeCreateInfo::default()
             .semaphore_type(vk::SemaphoreType::TIMELINE)
             .initial_value(0);
         let info = vk::SemaphoreCreateInfo::default().push_next(&mut type_info);
-        let handle = unsafe { device.create_semaphore(&info, None) }.unwrap();
-        Self {
+        let handle = unsafe { device.create_semaphore(&info, None) }?;
+        Ok(Self {
             handle,
             device: device.clone(),
-        }
+        })
     }
 
     pub(crate) fn handle(&self) -> vk::Semaphore {

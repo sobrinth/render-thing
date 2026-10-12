@@ -12,7 +12,7 @@ raw-window-handle.workspace = true
 egui.workspace = true
 itertools.workspace = true
 log.workspace = true
-thiserror.workspace = true
+eros.workspace = true
 vk-mem.workspace = true
 nalgebra-glm.workspace = true
 

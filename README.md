@@ -11,7 +11,7 @@ Let's see where this will lead...
 To be able to run you need to have the Vulkan SDK installed or another way to compile the shaders located in `assets/shaders`
 
 The targets currently try to load the 'Sponza' scene from the `assets/models/downloaded/sponza/` directory.
-The application will start without them present but just shows nothing :)
+The application will start without them present, log an error, and just show nothing :)
 
 To change you'd have the calls to `scene::load_gltf()` in the respective main.rs files of the crates
 

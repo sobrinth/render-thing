@@ -23,17 +23,23 @@ const LOOK_SENSITIVITY: f32 = 0.003;
 const PHYSICS_DT: f32 = 1.0 / 60.0;
 const TARGET_FRAME_TIME: std::time::Duration = std::time::Duration::from_micros(16_000); // ~60 fps
 
-fn main() {
+fn main() -> eros::Result<()> {
     env_logger::init();
-    let event_loop = EventLoop::new().unwrap();
+    let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = GameApp::default();
-    event_loop.run_app(&mut app).unwrap();
+    event_loop.run_app(&mut app)?;
+    match app.init_error.take() {
+        Some(err) => Err(err),
+        None => Ok(()),
+    }
 }
 
 struct GameApp {
     window: Option<Window>,
     engine: Option<Engine>,
+    /// Set when engine or level setup fails; reported from `main` after the loop exits.
+    init_error: Option<eros::ErrorUnion>,
     ui: Option<egui_winit::State>,
     player: Option<Player>,
     level: Option<Level>,
@@ -51,6 +57,7 @@ impl Default for GameApp {
         Self {
             window: None,
             engine: None,
+            init_error: None,
             ui: None,
             player: None,
             level: None,
@@ -75,14 +82,21 @@ impl ApplicationHandler for GameApp {
             .unwrap();
 
         let window_size = (window.inner_size().width, window.inner_size().height);
-        let mut engine = Engine::initialize(
+        let mut engine = match Engine::initialize(
             &window,
             window_size,
             engine::EngineConfig {
                 app_name: "Game".to_string(),
                 ..Default::default()
             },
-        );
+        ) {
+            Ok(engine) => engine,
+            Err(err) => {
+                self.init_error = Some(err);
+                event_loop.exit();
+                return;
+            }
+        };
 
         let ui = egui_winit::State::new(
             engine.egui_context(),
@@ -93,7 +107,15 @@ impl ApplicationHandler for GameApp {
             None,
         );
 
-        let level = build_level(&mut engine);
+        let level = match build_level(&mut engine) {
+            Ok(level) => level,
+            Err(err) => {
+                self.init_error = Some(err);
+                engine.stop();
+                event_loop.exit();
+                return;
+            }
+        };
 
         self.engine = Some(engine);
         self.ui = Some(ui);
@@ -190,9 +212,10 @@ impl ApplicationHandler for GameApp {
     }
 
     fn exiting(&mut self, _: &ActiveEventLoop) {
-        let mut engine = self.engine.take().unwrap();
-        engine.stop();
-        drop(engine);
+        if let Some(mut engine) = self.engine.take() {
+            engine.stop();
+            drop(engine);
+        }
     }
 }
 
@@ -258,7 +281,7 @@ impl GameApp {
     }
 }
 
-fn build_level(engine: &mut Engine) -> Level {
+fn build_level(engine: &mut Engine) -> eros::Result<Level> {
     let cube_vertices = vec![
         // -Z face (normal [0, 0, -1])
         engine::Vertex {
@@ -439,7 +462,7 @@ fn build_level(engine: &mut Engine) -> Level {
         0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7, 8, 9, 10, 8, 10, 11, 12, 13, 14, 12, 14, 15, 16, 17,
         18, 16, 18, 19, 20, 21, 22, 20, 22, 23,
     ];
-    let box_mesh = engine.upload_mesh(&cube_indices, &cube_vertices);
+    let box_mesh = engine.upload_mesh(&cube_indices, &cube_vertices)?;
 
     let yellow_material = engine.create_material_colored(
         MaterialConstants {
@@ -477,13 +500,13 @@ fn build_level(engine: &mut Engine) -> Level {
     // Each mesh is generated at its final size to avoid non-uniform scaling
     // (which would corrupt normals without inverse-transpose correction).
     let (verts, idx) = geometry::hex_prism_mesh(4.0, 0.5);
-    let hex_mesh_1 = engine.upload_mesh(&idx, &verts);
+    let hex_mesh_1 = engine.upload_mesh(&idx, &verts)?;
 
     let (verts, idx) = geometry::hex_prism_mesh(3.0, 0.5);
-    let hex_mesh_2 = engine.upload_mesh(&idx, &verts);
+    let hex_mesh_2 = engine.upload_mesh(&idx, &verts)?;
 
     let (verts, idx) = geometry::hex_prism_mesh(2.0, 0.5);
-    let hex_mesh_3 = engine.upload_mesh(&idx, &verts);
+    let hex_mesh_3 = engine.upload_mesh(&idx, &verts)?;
 
     let p1 = build_hex_platform(
         &mut scene,
@@ -537,9 +560,12 @@ fn build_level(engine: &mut Engine) -> Level {
         90.0f32.to_radians(),
         &glm::vec3(0.0, 1.0, 0.0),
     );
-    if let Some(gltf) = scene::load_gltf(engine, "assets/models/downloaded/sponza/Sponza.gltf") {
-        let sponza_root = scene.add_child(floor_root, "sponza", world);
-        scene.adopt(sponza_root, gltf);
+    match scene::load_gltf(engine, "assets/models/downloaded/sponza/Sponza.gltf") {
+        Ok(gltf) => {
+            let sponza_root = scene.add_child(floor_root, "sponza", world);
+            scene.adopt(sponza_root, gltf);
+        }
+        Err(err) => log::error!("Continuing without the Sponza scene: {err:?}"),
     }
 
     let mut level = Level::new(scene, collision_boxes);
@@ -565,5 +591,5 @@ fn build_level(engine: &mut Engine) -> Level {
             mesh_height: 0.5,
         },
     );
-    level
+    Ok(level)
 }

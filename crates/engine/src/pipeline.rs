@@ -63,7 +63,7 @@ impl<'a> PipelineBuilder<'a> {
         }
     }
 
-    pub(crate) fn build(&mut self, device: &Device) -> vk::Pipeline {
+    pub(crate) fn build(&mut self, device: &Device) -> eros::Result<vk::Pipeline> {
         // Only a single viewport and scissor is supported
         let viewport_state = vk::PipelineViewportStateCreateInfo::default()
             .scissor_count(1)
@@ -95,11 +95,11 @@ impl<'a> PipelineBuilder<'a> {
             .layout(self.pipeline_layout)
             .dynamic_state(&dynamic_info);
 
-        unsafe {
-            device
-                .create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
-                .unwrap()[0]
+        let pipelines = unsafe {
+            device.create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
         }
+        .map_err(|(_, err)| err)?;
+        Ok(pipelines[0])
     }
 
     pub(crate) fn set_shaders(

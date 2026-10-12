@@ -15,7 +15,7 @@ use crate::swapchain::Swapchain;
 use crate::sync::{Fence, Semaphore, TimelineSemaphore};
 use crate::ui::UiContext;
 use ash::{Device, vk};
-use itertools::Itertools;
+use eros::Context;
 use nalgebra_glm as glm;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::mem::ManuallyDrop;
@@ -106,20 +106,27 @@ impl VulkanRenderer {
         window: &(impl HasDisplayHandle + HasWindowHandle),
         window_size: (u32, u32),
         config: crate::EngineConfig,
-    ) -> Self {
-        let (context, graphics_queue, gpu_alloc) = VkContext::initialize(window, &config.app_name);
+    ) -> eros::Result<Self> {
+        let (context, graphics_queue, gpu_alloc) = VkContext::initialize(window, &config.app_name)
+            .context("Initializing Vulkan context")?;
 
-        let swapchain = Swapchain::create(&context, [window_size.0, window_size.1]);
-        let ui = UiContext::initialize(&context.device, &gpu_alloc, swapchain.properties);
+        let swapchain = Swapchain::create(&context, [window_size.0, window_size.1])
+            .context("Creating swapchain")?;
+        let ui = UiContext::initialize(&context.device, &gpu_alloc, swapchain.properties)
+            .context("Initializing UI")?;
 
-        let mut upload_batch = Self::create_upload_batch(&context, &graphics_queue);
+        let mut upload_batch = Self::create_upload_batch(&context, &graphics_queue)
+            .context("Creating upload batch")?;
 
-        let scene_data_layout = Self::init_scene_data(&context);
+        let scene_data_layout =
+            Self::init_scene_data(&context).context("Creating scene data layout")?;
 
         let (frames, frame_descriptor_pool) =
-            Self::create_framedata(&context, &gpu_alloc, &graphics_queue, &scene_data_layout);
+            Self::create_framedata(&context, &gpu_alloc, &graphics_queue, &scene_data_layout)
+                .context("Creating per-frame data")?;
 
-        let bindless = crate::bindless::BindlessResources::new(&context.device, &gpu_alloc);
+        let bindless = crate::bindless::BindlessResources::new(&context.device, &gpu_alloc)
+            .context("Creating bindless resources")?;
 
         let draw_image = AllocatedImage::create(
             &context,
@@ -132,7 +139,8 @@ impl VulkanRenderer {
                 | vk::ImageUsageFlags::COLOR_ATTACHMENT,
             vk::ImageAspectFlags::COLOR,
             false,
-        );
+        )
+        .context("Creating draw image")?;
 
         let depth_image = AllocatedImage::create(
             &context,
@@ -142,10 +150,11 @@ impl VulkanRenderer {
             vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
             vk::ImageAspectFlags::DEPTH,
             false,
-        );
+        )
+        .context("Creating depth image")?;
 
         let (descriptor_allocator, draw_image_descriptor_layout, draw_image_descriptors) =
-            Self::init_descriptors(&context, &draw_image);
+            Self::init_descriptors(&context, &draw_image).context("Creating draw descriptors")?;
 
         let metal_rough_material = GltfMetallicRoughness::build_pipelines(
             &context,
@@ -153,16 +162,17 @@ impl VulkanRenderer {
             depth_image.format,
             &scene_data_layout.layout,
             &bindless.layout.layout,
-        );
+        )
+        .context("Building material pipelines")?;
 
         let gradient_shader_module =
-            Self::create_shader_module(&context.device, "assets/shaders/gradient.comp.spv");
+            Self::create_shader_module(&context.device, "assets/shaders/gradient.comp.spv")?;
 
         let gradient_color_shader_module =
-            Self::create_shader_module(&context.device, "assets/shaders/gradient_color.comp.spv");
+            Self::create_shader_module(&context.device, "assets/shaders/gradient_color.comp.spv")?;
 
         let sky_shader_module =
-            Self::create_shader_module(&context.device, "assets/shaders/sky.comp.spv");
+            Self::create_shader_module(&context.device, "assets/shaders/sky.comp.spv")?;
 
         let (effects, effect_pipeline_layout) = Self::initialize_effect_pipelines(
             &context,
@@ -172,7 +182,8 @@ impl VulkanRenderer {
                 (gradient_color_shader_module, "gradient"),
                 (sky_shader_module, "sky"),
             ],
-        );
+        )
+        .context("Creating background effect pipelines")?;
         unsafe {
             context
                 .device
@@ -185,7 +196,7 @@ impl VulkanRenderer {
                 .destroy_shader_module(gradient_color_shader_module, None);
         };
 
-        let cull_pipeline = Self::init_cull_pipeline(&context);
+        let cull_pipeline = Self::init_cull_pipeline(&context).context("Creating cull pipeline")?;
 
         // default data
         const WHITE: u32 = u32::from_le_bytes([255, 255, 255, 255]);
@@ -208,7 +219,7 @@ impl VulkanRenderer {
                 aspect_flags: vk::ImageAspectFlags::COLOR,
                 mip_mapped: false,
             },
-        ));
+        )?);
 
         let grey_image = Arc::new(AllocatedImage::create_from_data(
             &gpu_alloc,
@@ -223,7 +234,7 @@ impl VulkanRenderer {
                 aspect_flags: vk::ImageAspectFlags::COLOR,
                 mip_mapped: false,
             },
-        ));
+        )?);
 
         let black_image = Arc::new(AllocatedImage::create_from_data(
             &gpu_alloc,
@@ -238,7 +249,7 @@ impl VulkanRenderer {
                 aspect_flags: vk::ImageAspectFlags::COLOR,
                 mip_mapped: false,
             },
-        ));
+        )?);
 
         let mut checkerboard_data = [0u32; 16 * 16];
         for x in 0..16 {
@@ -264,7 +275,7 @@ impl VulkanRenderer {
                 aspect_flags: vk::ImageAspectFlags::COLOR,
                 mip_mapped: false,
             },
-        ));
+        )?);
 
         let metal_rough_image = Arc::new(AllocatedImage::create_from_data(
             &gpu_alloc,
@@ -279,7 +290,7 @@ impl VulkanRenderer {
                 aspect_flags: vk::ImageAspectFlags::COLOR,
                 mip_mapped: false,
             },
-        ));
+        )?);
 
         let max_sampler_anisotropy = unsafe {
             context
@@ -295,7 +306,7 @@ impl VulkanRenderer {
             .mipmap_mode(vk::SamplerMipmapMode::NEAREST)
             .max_lod(vk::LOD_CLAMP_NONE);
 
-        let nearest_handle = unsafe { context.device.create_sampler(&sampler, None) }.unwrap();
+        let nearest_handle = unsafe { context.device.create_sampler(&sampler, None) }?;
         let default_sampler_nearest =
             Arc::new(Sampler::new(nearest_handle, context.device.clone()));
 
@@ -307,12 +318,12 @@ impl VulkanRenderer {
             .anisotropy_enable(true)
             .max_anisotropy(max_sampler_anisotropy);
 
-        let linear_handle = unsafe { context.device.create_sampler(&sampler, None) }.unwrap();
+        let linear_handle = unsafe { context.device.create_sampler(&sampler, None) }?;
         let default_sampler_linear = Arc::new(Sampler::new(linear_handle, context.device.clone()));
 
-        let frame_timeline = TimelineSemaphore::new(&context.device);
+        let frame_timeline = TimelineSemaphore::new(&context.device)?;
 
-        let index_pool = IndexPool::new(&gpu_alloc);
+        let index_pool = IndexPool::new(&gpu_alloc)?;
 
         let mut renderer = Self {
             resources: ManuallyDrop::new(RendererResources {
@@ -399,7 +410,9 @@ impl VulkanRenderer {
 
         // Create gizmo resources: a unit box mesh shared across three axis materials (R/G/B).
         let (gizmo_idx, gizmo_verts) = Self::unit_cube_mesh();
-        let gizmo_mesh = renderer.upload_mesh(&gizmo_idx, &gizmo_verts);
+        let gizmo_mesh = renderer
+            .upload_mesh(&gizmo_idx, &gizmo_verts)
+            .context("Uploading gizmo mesh")?;
 
         let make_gizmo_mat = |r: &mut VulkanRenderer, color: [f32; 4]| -> crate::MaterialHandle {
             let c = crate::material::MaterialConstants {
@@ -418,7 +431,7 @@ impl VulkanRenderer {
         renderer.resources.gizmo_mesh = gizmo_mesh;
         renderer.resources.gizmo_materials = [x_pos, y_pos, z_pos, x_neg, y_neg, z_neg, origin];
 
-        renderer
+        Ok(renderer)
     }
 
     fn unit_cube_mesh() -> (Vec<u32>, Vec<Vertex>) {
@@ -492,7 +505,7 @@ impl VulkanRenderer {
         &mut self,
         indices: &[u32],
         vertices: &[Vertex],
-    ) -> crate::MeshHandle {
+    ) -> eros::Result<crate::MeshHandle> {
         use crate::meshes::Bounds;
         // Deref ManuallyDrop once so field borrows stay disjoint.
         let resources = &mut *self.resources;
@@ -504,7 +517,7 @@ impl VulkanRenderer {
             &mut resources.index_pool,
             indices,
             vertices,
-        );
+        )?;
         let mut min = glm::vec3(f32::MAX, f32::MAX, f32::MAX);
         let mut max = glm::vec3(f32::MIN, f32::MIN, f32::MIN);
         for v in vertices {
@@ -530,7 +543,7 @@ impl VulkanRenderer {
             bounds,
             index_count,
         });
-        crate::MeshHandle(idx)
+        Ok(crate::MeshHandle(idx))
     }
 
     pub(crate) fn upload_texture(
@@ -539,7 +552,7 @@ impl VulkanRenderer {
         width: u32,
         height: u32,
         sampler_type: crate::SamplerType,
-    ) -> crate::TextureHandle {
+    ) -> eros::Result<crate::TextureHandle> {
         // Deref ManuallyDrop once so field borrows stay disjoint.
         let resources = &mut *self.resources;
         let image = AllocatedImage::create_from_bytes(
@@ -557,7 +570,7 @@ impl VulkanRenderer {
                 aspect_flags: vk::ImageAspectFlags::COLOR,
                 mip_mapped: true,
             },
-        );
+        )?;
         let (filter, mipmap_mode) = match sampler_type {
             crate::SamplerType::Linear => (vk::Filter::LINEAR, vk::SamplerMipmapMode::LINEAR),
             crate::SamplerType::Nearest => (vk::Filter::NEAREST, vk::SamplerMipmapMode::NEAREST),
@@ -569,10 +582,9 @@ impl VulkanRenderer {
             .max_lod(vk::LOD_CLAMP_NONE)
             .anisotropy_enable(filter == vk::Filter::LINEAR)
             .max_anisotropy(self.resources.max_sampler_anisotropy);
-        let vk_sampler =
-            unsafe { self.context.device.create_sampler(&sampler_info, None) }.unwrap();
+        let vk_sampler = unsafe { self.context.device.create_sampler(&sampler_info, None) }?;
         let sampler = Arc::new(Sampler::new(vk_sampler, self.context.device.clone()));
-        self.register_texture(Arc::new(image), sampler)
+        Ok(self.register_texture(Arc::new(image), sampler))
     }
 
     pub(crate) fn create_material(
@@ -609,13 +621,15 @@ impl VulkanRenderer {
         self.create_material(white, metal_rough, constants, pass)
     }
 
-    fn create_upload_batch(context: &VkContext, graphics_queue: &QueueData) -> UploadBatch {
+    fn create_upload_batch(
+        context: &VkContext,
+        graphics_queue: &QueueData,
+    ) -> eros::Result<UploadBatch> {
         let commandpool_info = vk::CommandPoolCreateInfo::default()
             .queue_family_index(graphics_queue.family_index)
             .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
 
-        let command_pool =
-            unsafe { context.device.create_command_pool(&commandpool_info, None) }.unwrap();
+        let command_pool = unsafe { context.device.create_command_pool(&commandpool_info, None) }?;
 
         let commandbuffer_info = vk::CommandBufferAllocateInfo::default()
             .command_pool(command_pool)
@@ -623,14 +637,14 @@ impl VulkanRenderer {
             .level(vk::CommandBufferLevel::PRIMARY);
 
         let command_buffer =
-            unsafe { context.device.allocate_command_buffers(&commandbuffer_info) }.unwrap()[0];
+            unsafe { context.device.allocate_command_buffers(&commandbuffer_info) }?[0];
 
-        UploadBatch::new(
+        Ok(UploadBatch::new(
             command_pool,
             command_buffer,
-            Fence::new_signaled(&context.device),
+            Fence::new_signaled(&context.device)?,
             context.device.clone(),
-        )
+        ))
     }
 
     fn create_framedata(
@@ -638,7 +652,7 @@ impl VulkanRenderer {
         gpu_alloc: &Arc<vk_mem::Allocator>,
         graphics_queue: &QueueData,
         scene_data_layout: &DescriptorSetLayout,
-    ) -> (Vec<FrameData>, descriptor::Allocator) {
+    ) -> eros::Result<(Vec<FrameData>, descriptor::Allocator)> {
         let commandpool_info = vk::CommandPoolCreateInfo::default()
             .queue_family_index(graphics_queue.family_index)
             .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
@@ -651,13 +665,12 @@ impl VulkanRenderer {
                 descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
                 ratio: 1.0,
             }],
-        );
+        )?;
 
         let mut frames = Vec::with_capacity(FRAME_OVERLAP as usize);
 
         for _ in 0..FRAME_OVERLAP {
-            let pool =
-                unsafe { context.device.create_command_pool(&commandpool_info, None) }.unwrap();
+            let pool = unsafe { context.device.create_command_pool(&commandpool_info, None) }?;
 
             let commandbuffer_info = vk::CommandBufferAllocateInfo::default()
                 .command_pool(pool)
@@ -665,9 +678,9 @@ impl VulkanRenderer {
                 .level(vk::CommandBufferLevel::PRIMARY);
 
             let buffer =
-                unsafe { context.device.allocate_command_buffers(&commandbuffer_info) }.unwrap()[0];
+                unsafe { context.device.allocate_command_buffers(&commandbuffer_info) }?[0];
 
-            let swapchain_semaphore = Semaphore::new(&context.device);
+            let swapchain_semaphore = Semaphore::new(&context.device)?;
 
             let scene_buffer = AllocatedBuffer::create(
                 gpu_alloc,
@@ -678,7 +691,7 @@ impl VulkanRenderer {
                     vk_mem::AllocationCreateFlags::MAPPED
                         | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
                 ),
-            );
+            )?;
 
             let object_buffer = AllocatedBuffer::create(
                 gpu_alloc,
@@ -689,7 +702,7 @@ impl VulkanRenderer {
                     vk_mem::AllocationCreateFlags::MAPPED
                         | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
                 ),
-            );
+            )?;
             let address_info = vk::BufferDeviceAddressInfo::default().buffer(object_buffer.buffer);
             let object_buffer_address =
                 unsafe { context.device.get_buffer_device_address(&address_info) };
@@ -703,7 +716,7 @@ impl VulkanRenderer {
                     vk_mem::AllocationCreateFlags::MAPPED
                         | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
                 ),
-            );
+            )?;
 
             let opaque_command_buffer = AllocatedBuffer::create(
                 gpu_alloc,
@@ -713,7 +726,7 @@ impl VulkanRenderer {
                     | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
                 vk_mem::MemoryUsage::AutoPreferDevice,
                 None,
-            );
+            )?;
             let address_info =
                 vk::BufferDeviceAddressInfo::default().buffer(opaque_command_buffer.buffer);
             let opaque_command_buffer_address =
@@ -728,7 +741,7 @@ impl VulkanRenderer {
                     | vk::BufferUsageFlags::TRANSFER_DST,
                 vk_mem::MemoryUsage::AutoPreferDevice,
                 None,
-            );
+            )?;
             let address_info =
                 vk::BufferDeviceAddressInfo::default().buffer(cull_stats_buffer.buffer);
             let cull_stats_buffer_address =
@@ -743,14 +756,14 @@ impl VulkanRenderer {
                     vk_mem::AllocationCreateFlags::MAPPED
                         | vk_mem::AllocationCreateFlags::HOST_ACCESS_RANDOM,
                 ),
-            );
+            )?;
             // Frames 0 and 1 read this slot before any GPU copy has landed.
             let readback_ptr = stats_readback_buffer.info.mapped_data as *mut u8;
             unsafe { readback_ptr.write_bytes(0, size_of::<GPUCullStats>()) };
 
-            let scene_set = scene_set_pool.allocate(&context.device, scene_data_layout.layout);
+            let scene_set = scene_set_pool.allocate(&context.device, scene_data_layout.layout)?;
             let gizmo_scene_set =
-                scene_set_pool.allocate(&context.device, scene_data_layout.layout);
+                scene_set_pool.allocate(&context.device, scene_data_layout.layout)?;
 
             let mut writer = DescriptorWriter::new();
             writer.write_buffer(
@@ -790,7 +803,7 @@ impl VulkanRenderer {
             );
             frames.push(frame);
         }
-        (frames, scene_set_pool)
+        Ok((frames, scene_set_pool))
     }
 
     pub(crate) fn wait_gpu_idle(&self) {
@@ -807,23 +820,23 @@ impl VulkanRenderer {
     fn init_descriptors(
         context: &VkContext,
         draw_image: &AllocatedImage,
-    ) -> (
+    ) -> eros::Result<(
         descriptor::Allocator,
         DescriptorSetLayout,
         vk::DescriptorSet,
-    ) {
+    )> {
         let pool_sizes = [PoolSizeRatio {
             descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
             ratio: 1f32,
         }];
-        let pool = descriptor::Allocator::init_pool(&context.device, 10, pool_sizes.to_vec());
+        let pool = descriptor::Allocator::init_pool(&context.device, 10, pool_sizes.to_vec())?;
 
         let mut builder = LayoutBuilder::new();
         builder.add_binding(0, vk::DescriptorType::STORAGE_IMAGE);
-        let layout = builder.build(&context.device, vk::ShaderStageFlags::COMPUTE, None);
+        let layout = builder.build(&context.device, vk::ShaderStageFlags::COMPUTE, None)?;
         builder.clear();
 
-        let draw_image_descriptors = pool.allocate(&context.device, layout.layout);
+        let draw_image_descriptors = pool.allocate(&context.device, layout.layout)?;
 
         let mut writer = DescriptorWriter::new();
 
@@ -837,26 +850,31 @@ impl VulkanRenderer {
 
         writer.update_set(&context.device, draw_image_descriptors);
 
-        (pool, layout, draw_image_descriptors)
+        Ok((pool, layout, draw_image_descriptors))
     }
 
-    fn read_shader_from_file<P: AsRef<Path>>(path: P) -> Vec<u32> {
-        log::debug!("Loading shader file {}", path.as_ref().display());
-        let mut file = std::fs::File::open(path).unwrap();
-        ash::util::read_spv(&mut file).unwrap()
+    fn read_shader_from_file(path: &Path) -> eros::Result<Vec<u32>> {
+        log::debug!("Loading shader file {}", path.display());
+        let mut file = std::fs::File::open(path)
+            .with_context(|| format!("Opening shader {}", path.display()))?;
+        Ok(ash::util::read_spv(&mut file)
+            .with_context(|| format!("Parsing SPIR-V in {}", path.display()))?)
     }
 
-    fn create_shader_module<P: AsRef<Path>>(device: &Device, path: P) -> vk::ShaderModule {
-        let source = Self::read_shader_from_file(path);
+    fn create_shader_module<P: AsRef<Path>>(
+        device: &Device,
+        path: P,
+    ) -> eros::Result<vk::ShaderModule> {
+        let source = Self::read_shader_from_file(path.as_ref())?;
         let create_info = vk::ShaderModuleCreateInfo::default().code(&source);
-        unsafe { device.create_shader_module(&create_info, None) }.unwrap()
+        Ok(unsafe { device.create_shader_module(&create_info, None) }?)
     }
 
     fn initialize_effect_pipelines(
         context: &VkContext,
         image_dsl: &vk::DescriptorSetLayout,
         shaders: &[(vk::ShaderModule, &'static str)],
-    ) -> (Vec<ComputeEffect>, PipelineLayout) {
+    ) -> eros::Result<(Vec<ComputeEffect>, PipelineLayout)> {
         let push_constants = &[vk::PushConstantRange::default()
             .offset(0)
             .size(size_of::<ComputePushConstants>() as u32)
@@ -866,42 +884,42 @@ impl VulkanRenderer {
             .set_layouts(core::slice::from_ref(image_dsl))
             .push_constant_ranges(push_constants);
 
-        let layout = unsafe { context.device.create_pipeline_layout(&layout_info, None) }.unwrap();
+        let layout = unsafe { context.device.create_pipeline_layout(&layout_info, None) }?;
 
-        (
-            shaders
-                .iter()
-                .map(|(shader, name)| {
-                    let pipeline = Self::initialize_shader_pipeline(context, shader, &layout);
-                    let mut effect = ComputeEffect {
-                        name,
-                        pipeline,
-                        data: ComputePushConstants {
-                            data1: [1.0, 0.0, 0.0, 1.0],
-                            data2: [0.0, 0.0, 1.0, 1.0],
-                            data3: [0.0; 4],
-                            data4: [0.0; 4],
-                        },
-                    };
-                    if *name == "sky" {
-                        effect.data.data1 = [0.1, 0.2, 0.4, 0.97];
-                    }
-                    effect
-                })
-                .collect_vec(),
-            PipelineLayout::new(layout, context.device.clone()),
-        )
+        let effects = shaders
+            .iter()
+            .map(|(shader, name)| {
+                let pipeline = Self::initialize_shader_pipeline(context, shader, &layout)
+                    .with_context(|| format!("Creating '{name}' effect pipeline"))?;
+                let mut effect = ComputeEffect {
+                    name,
+                    pipeline,
+                    data: ComputePushConstants {
+                        data1: [1.0, 0.0, 0.0, 1.0],
+                        data2: [0.0, 0.0, 1.0, 1.0],
+                        data3: [0.0; 4],
+                        data4: [0.0; 4],
+                    },
+                };
+                if *name == "sky" {
+                    effect.data.data1 = [0.1, 0.2, 0.4, 0.97];
+                }
+                Ok(effect)
+            })
+            .collect::<eros::Result<Vec<_>>>()?;
+
+        Ok((effects, PipelineLayout::new(layout, context.device.clone())))
     }
 
-    fn init_cull_pipeline(context: &VkContext) -> Pipeline {
+    fn init_cull_pipeline(context: &VkContext) -> eros::Result<Pipeline> {
         let push_range = &[vk::PushConstantRange::default()
             .offset(0)
             .size(size_of::<GPUCullPushConstants>() as u32)
             .stage_flags(vk::ShaderStageFlags::COMPUTE)];
         let layout_info = vk::PipelineLayoutCreateInfo::default().push_constant_ranges(push_range);
-        let layout = unsafe { context.device.create_pipeline_layout(&layout_info, None) }.unwrap();
+        let layout = unsafe { context.device.create_pipeline_layout(&layout_info, None) }?;
 
-        let module = Self::create_shader_module(&context.device, "assets/shaders/cull.comp.spv");
+        let module = Self::create_shader_module(&context.device, "assets/shaders/cull.comp.spv")?;
         let shader_stage_info = vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::COMPUTE)
             .module(module)
@@ -914,19 +932,19 @@ impl VulkanRenderer {
                 .device
                 .create_compute_pipelines(vk::PipelineCache::null(), pipeline_info, None)
         }
-        .unwrap()[0];
+        .map_err(|(_, err)| err)?[0];
         unsafe { context.device.destroy_shader_module(module, None) };
 
         // Owns its layout (unlike the effect pipelines' shared one), so
         // Pipeline::drop destroying both is correct.
-        Pipeline::new(pipeline, layout, context.device.clone())
+        Ok(Pipeline::new(pipeline, layout, context.device.clone()))
     }
 
     fn initialize_shader_pipeline(
         context: &VkContext,
         shader_module: &vk::ShaderModule,
         pipeline_layout: &vk::PipelineLayout,
-    ) -> Pipeline {
+    ) -> eros::Result<Pipeline> {
         let shader_stage_info = vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::COMPUTE)
             .module(*shader_module)
@@ -941,11 +959,15 @@ impl VulkanRenderer {
                 .device
                 .create_compute_pipelines(vk::PipelineCache::null(), pipeline_info, None)
         }
-        .unwrap()[0];
+        .map_err(|(_, err)| err)?[0];
 
         // Layout is shared across all compute effects and owned by effect_pipeline_layout;
         // passing null here so Pipeline::drop skips layout destruction (no-op per Vulkan spec).
-        Pipeline::new(pipeline, vk::PipelineLayout::null(), context.device.clone())
+        Ok(Pipeline::new(
+            pipeline,
+            vk::PipelineLayout::null(),
+            context.device.clone(),
+        ))
     }
 
     pub(crate) fn resize_swapchain(&mut self) -> bool {
@@ -961,13 +983,14 @@ impl VulkanRenderer {
             &self.context,
             [self.resources.window_size.0, self.resources.window_size.1],
             old_handle,
-        );
+        )
+        .expect("Failed to recreate swapchain");
 
         self.resources.resize_requested = false;
         false
     }
 
-    fn init_scene_data(context: &VkContext) -> DescriptorSetLayout {
+    fn init_scene_data(context: &VkContext) -> eros::Result<DescriptorSetLayout> {
         let mut builder = LayoutBuilder::new();
         builder.add_binding(0, vk::DescriptorType::UNIFORM_BUFFER);
         builder.build(

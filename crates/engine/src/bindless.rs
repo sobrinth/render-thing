@@ -33,7 +33,7 @@ pub(crate) struct BindlessResources {
 }
 
 impl BindlessResources {
-    pub(crate) fn new(device: &Device, gpu_alloc: &Arc<vk_mem::Allocator>) -> Self {
+    pub(crate) fn new(device: &Device, gpu_alloc: &Arc<vk_mem::Allocator>) -> eros::Result<Self> {
         let mut builder = LayoutBuilder::new();
         builder.add_binding_array(0, vk::DescriptorType::COMBINED_IMAGE_SAMPLER, MAX_TEXTURES);
         builder.add_binding(1, vk::DescriptorType::STORAGE_BUFFER);
@@ -46,7 +46,7 @@ impl BindlessResources {
                 vk::DescriptorBindingFlags::empty(),
             ],
             vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL,
-        );
+        )?;
 
         let pool_sizes = [
             vk::DescriptorPoolSize::default()
@@ -60,12 +60,12 @@ impl BindlessResources {
             .flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND)
             .max_sets(1)
             .pool_sizes(&pool_sizes);
-        let pool = unsafe { device.create_descriptor_pool(&pool_info, None) }.unwrap();
+        let pool = unsafe { device.create_descriptor_pool(&pool_info, None) }?;
 
         let alloc_info = vk::DescriptorSetAllocateInfo::default()
             .descriptor_pool(pool)
             .set_layouts(core::slice::from_ref(&layout.layout));
-        let set = unsafe { device.allocate_descriptor_sets(&alloc_info) }.unwrap()[0];
+        let set = unsafe { device.allocate_descriptor_sets(&alloc_info) }?[0];
 
         let material_buffer = AllocatedBuffer::create(
             gpu_alloc,
@@ -76,7 +76,7 @@ impl BindlessResources {
                 vk_mem::AllocationCreateFlags::MAPPED
                     | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
             ),
-        );
+        )?;
 
         let buffer_info = vk::DescriptorBufferInfo {
             buffer: material_buffer.buffer,
@@ -90,13 +90,13 @@ impl BindlessResources {
             .buffer_info(core::slice::from_ref(&buffer_info));
         unsafe { device.update_descriptor_sets(core::slice::from_ref(&write), &[]) };
 
-        Self {
+        Ok(Self {
             layout,
             pool,
             set,
             material_buffer,
             device: device.clone(),
-        }
+        })
     }
 
     /// Write texture `index` into the global array. Safe to call while the set is
