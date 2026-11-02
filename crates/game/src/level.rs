@@ -1,5 +1,5 @@
 use crate::physics::Aabb;
-use engine::{MaterialHandle, MeshHandle};
+use kachelkram::{MaterialHandle, MeshHandle};
 use nalgebra_glm as glm;
 use scene::SceneGraph;
 use std::f32::consts::PI;
@@ -74,7 +74,7 @@ impl Level {
     }
 
     /// Collects visible draws into `out`, reusing its capacity. Clears `out` first.
-    pub fn all_draws_into(&self, out: &mut Vec<engine::DrawCall>) {
+    pub fn all_draws_into(&self, out: &mut Vec<kachelkram::DrawCall>) {
         self.scene.flatten_visible_into(out);
     }
 }
@@ -116,7 +116,7 @@ pub fn build_hex_platform(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use engine::{MaterialHandle, MeshHandle};
+    use kachelkram::{MaterialHandle, MeshHandle};
     use nalgebra_glm as glm;
     use scene::SceneGraph;
 

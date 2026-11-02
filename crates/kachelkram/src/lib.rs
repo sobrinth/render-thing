@@ -72,7 +72,7 @@ pub struct EngineConfig {
 impl Default for EngineConfig {
     fn default() -> Self {
         Self {
-            app_name: "Vulkan Application".to_string(),
+            app_name: "Kachelkram".to_string(),
             max_render_resolution: (2560, 1440),
             initial_render_scale: 1.0,
             validation: if cfg!(debug_assertions) {

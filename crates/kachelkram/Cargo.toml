@@ -1,5 +1,5 @@
 [package]
-name = "engine"
+name = "kachelkram"
 version = "0.0.0"
 authors.workspace = true
 edition.workspace = true

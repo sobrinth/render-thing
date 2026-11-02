@@ -2,7 +2,7 @@
 resolver = "3"
 
 members = ["crates/*"]
-default-members = ["crates/application"]
+default-members = ["crates/viewer"]
 
 [workspace.package]
 version = "0.1.0"
@@ -24,7 +24,7 @@ unimplemented = "deny"
 # Workspace member crates
 #
 
-engine = { path = "crates/engine" }
+kachelkram = { path = "crates/kachelkram" }
 scene = { path = "crates/scene" }
 
 #

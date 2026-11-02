@@ -12,7 +12,7 @@ egui = ["dep:egui"]
 workspace = true
 
 [dependencies]
-engine.workspace = true
+kachelkram.workspace = true
 gltf.workspace = true
 eros.workspace = true
 nalgebra-glm.workspace = true

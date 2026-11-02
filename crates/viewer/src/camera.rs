@@ -1,4 +1,4 @@
-use engine::input::{ElementState, Key, MouseButton, NamedKey};
+use kachelkram::input::{ElementState, Key, MouseButton, NamedKey};
 use nalgebra_glm as glm;
 
 pub struct Camera {

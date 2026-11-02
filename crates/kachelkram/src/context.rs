@@ -95,7 +95,7 @@ impl VkContext {
         validation: Validation,
     ) -> eros::Result<(Instance, Validation, bool)> {
         let app_name = std::ffi::CString::new(app_name).unwrap_or_default();
-        let engine_name = c"No Engine";
+        let engine_name = c"Kachelkram";
         let app_info = vk::ApplicationInfo::default()
             .application_name(&app_name)
             .application_version(vk::make_api_version(0, 1, 0, 0))

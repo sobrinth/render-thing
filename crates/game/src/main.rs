@@ -3,9 +3,9 @@ mod level;
 mod physics;
 mod player;
 
-use engine::input::{self as einput, ElementState};
-use engine::{CameraView, Engine, MaterialConstants, MaterialPass};
 use eros::Context;
+use kachelkram::input::{self as einput, ElementState};
+use kachelkram::{CameraView, Engine, MaterialConstants, MaterialPass};
 use level::{Level, OrbitParams, build_box, build_hex_platform};
 use nalgebra_glm as glm;
 use player::Player;
@@ -54,7 +54,7 @@ struct Game {
     cursor_captured: bool,
     scene_panel: scene::ScenePanel,
     /// Reused across frames to avoid re-allocating the draw list.
-    draw_buffer: Vec<engine::DrawCall>,
+    draw_buffer: Vec<kachelkram::DrawCall>,
     window: Window,
 }
 
@@ -72,7 +72,7 @@ impl Game {
         let mut engine = Engine::initialize(
             &window,
             window_size,
-            engine::EngineConfig {
+            kachelkram::EngineConfig {
                 app_name: "Game".to_string(),
                 ..Default::default()
             },
@@ -288,28 +288,28 @@ impl ApplicationHandler for GameApp {
 fn build_level(engine: &mut Engine) -> eros::Result<Level> {
     let cube_vertices = vec![
         // -Z face (normal [0, 0, -1])
-        engine::Vertex {
+        kachelkram::Vertex {
             position: [-0.5, -0.5, -0.5],
             normal: [0.0, 0.0, -1.0],
             color: [1.0, 1.0, 1.0, 1.0],
             uv_x: 0.0,
             uv_y: 1.0,
         },
-        engine::Vertex {
+        kachelkram::Vertex {
             position: [0.5, -0.5, -0.5],
             normal: [0.0, 0.0, -1.0],
             color: [1.0, 1.0, 1.0, 1.0],
             uv_x: 1.0,
             uv_y: 1.0,
         },
-        engine::Vertex {
+        kachelkram::Vertex {
             position: [0.5, 0.5, -0.5],
             normal: [0.0, 0.0, -1.0],
             color: [1.0, 1.0, 1.0, 1.0],
             uv_x: 1.0,
             uv_y: 0.0,
         },
-        engine::Vertex {
+        kachelkram::Vertex {
             position: [-0.5, 0.5, -0.5],
             normal: [0.0, 0.0, -1.0],
             color: [1.0, 1.0, 1.0, 1.0],
@@ -317,28 +317,28 @@ fn build_level(engine: &mut Engine) -> eros::Result<Level> {
             uv_y: 0.0,
         },
         // +Z face (normal [0, 0, 1])
-        engine::Vertex {
+        kachelkram::Vertex {
             position: [0.5, -0.5, 0.5],
             normal: [0.0, 0.0, 1.0],
             color: [1.0, 1.0, 1.0, 1.0],
             uv_x: 0.0,
             uv_y: 1.0,
         },
-        engine::Vertex {
+        kachelkram::Vertex {
             position: [-0.5, -0.5, 0.5],
             normal: [0.0, 0.0, 1.0],
             color: [1.0, 1.0, 1.0, 1.0],
             uv_x: 1.0,
             uv_y: 1.0,
         },
-        engine::Vertex {
+        kachelkram::Vertex {
             position: [-0.5, 0.5, 0.5],
             normal: [0.0, 0.0, 1.0],
             color: [1.0, 1.0, 1.0, 1.0],
             uv_x: 1.0,
             uv_y: 0.0,
         },
-        engine::Vertex {
+        kachelkram::Vertex {
             position: [0.5, 0.5, 0.5],
             normal: [0.0, 0.0, 1.0],
             color: [1.0, 1.0, 1.0, 1.0],
@@ -346,28 +346,28 @@ fn build_level(engine: &mut Engine) -> eros::Result<Level> {
             uv_y: 0.0,
         },
         // -X face (normal [-1, 0, 0])
-        engine::Vertex {
+        kachelkram::Vertex {
             position: [-0.5, -0.5, 0.5],
             normal: [-1.0, 0.0, 0.0],
             color: [1.0, 1.0, 1.0, 1.0],
             uv_x: 0.0,
             uv_y: 1.0,
         },
-        engine::Vertex {
+        kachelkram::Vertex {
             position: [-0.5, -0.5, -0.5],
             normal: [-1.0, 0.0, 0.0],
             color: [1.0, 1.0, 1.0, 1.0],
             uv_x: 1.0,
             uv_y: 1.0,
         },
-        engine::Vertex {
+        kachelkram::Vertex {
             position: [-0.5, 0.5, -0.5],
             normal: [-1.0, 0.0, 0.0],
             color: [1.0, 1.0, 1.0, 1.0],
             uv_x: 1.0,
             uv_y: 0.0,
         },
-        engine::Vertex {
+        kachelkram::Vertex {
             position: [-0.5, 0.5, 0.5],
             normal: [-1.0, 0.0, 0.0],
             color: [1.0, 1.0, 1.0, 1.0],
@@ -375,28 +375,28 @@ fn build_level(engine: &mut Engine) -> eros::Result<Level> {
             uv_y: 0.0,
         },
         // +X face (normal [1, 0, 0])
-        engine::Vertex {
+        kachelkram::Vertex {
             position: [0.5, -0.5, -0.5],
             normal: [1.0, 0.0, 0.0],
             color: [1.0, 1.0, 1.0, 1.0],
             uv_x: 0.0,
             uv_y: 1.0,
         },
-        engine::Vertex {
+        kachelkram::Vertex {
             position: [0.5, -0.5, 0.5],
             normal: [1.0, 0.0, 0.0],
             color: [1.0, 1.0, 1.0, 1.0],
             uv_x: 1.0,
             uv_y: 1.0,
         },
-        engine::Vertex {
+        kachelkram::Vertex {
             position: [0.5, 0.5, 0.5],
             normal: [1.0, 0.0, 0.0],
             color: [1.0, 1.0, 1.0, 1.0],
             uv_x: 1.0,
             uv_y: 0.0,
         },
-        engine::Vertex {
+        kachelkram::Vertex {
             position: [0.5, 0.5, -0.5],
             normal: [1.0, 0.0, 0.0],
             color: [1.0, 1.0, 1.0, 1.0],
@@ -404,28 +404,28 @@ fn build_level(engine: &mut Engine) -> eros::Result<Level> {
             uv_y: 0.0,
         },
         // -Y face (normal [0, -1, 0])
-        engine::Vertex {
+        kachelkram::Vertex {
             position: [-0.5, -0.5, 0.5],
             normal: [0.0, -1.0, 0.0],
             color: [1.0, 1.0, 1.0, 1.0],
             uv_x: 0.0,
             uv_y: 1.0,
         },
-        engine::Vertex {
+        kachelkram::Vertex {
             position: [0.5, -0.5, 0.5],
             normal: [0.0, -1.0, 0.0],
             color: [1.0, 1.0, 1.0, 1.0],
             uv_x: 1.0,
             uv_y: 1.0,
         },
-        engine::Vertex {
+        kachelkram::Vertex {
             position: [0.5, -0.5, -0.5],
             normal: [0.0, -1.0, 0.0],
             color: [1.0, 1.0, 1.0, 1.0],
             uv_x: 1.0,
             uv_y: 0.0,
         },
-        engine::Vertex {
+        kachelkram::Vertex {
             position: [-0.5, -0.5, -0.5],
             normal: [0.0, -1.0, 0.0],
             color: [1.0, 1.0, 1.0, 1.0],
@@ -433,28 +433,28 @@ fn build_level(engine: &mut Engine) -> eros::Result<Level> {
             uv_y: 0.0,
         },
         // +Y face (normal [0, 1, 0])
-        engine::Vertex {
+        kachelkram::Vertex {
             position: [-0.5, 0.5, -0.5],
             normal: [0.0, 1.0, 0.0],
             color: [1.0, 1.0, 1.0, 1.0],
             uv_x: 0.0,
             uv_y: 1.0,
         },
-        engine::Vertex {
+        kachelkram::Vertex {
             position: [0.5, 0.5, -0.5],
             normal: [0.0, 1.0, 0.0],
             color: [1.0, 1.0, 1.0, 1.0],
             uv_x: 1.0,
             uv_y: 1.0,
         },
-        engine::Vertex {
+        kachelkram::Vertex {
             position: [0.5, 0.5, 0.5],
             normal: [0.0, 1.0, 0.0],
             color: [1.0, 1.0, 1.0, 1.0],
             uv_x: 1.0,
             uv_y: 0.0,
         },
-        engine::Vertex {
+        kachelkram::Vertex {
             position: [-0.5, 0.5, 0.5],
             normal: [0.0, 1.0, 0.0],
             color: [1.0, 1.0, 1.0, 1.0],

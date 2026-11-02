@@ -1,6 +1,6 @@
-use engine::input::{self as einput};
-use engine::{CameraView, Engine};
 use eros::Context;
+use kachelkram::input::{self as einput};
+use kachelkram::{CameraView, Engine};
 use nalgebra_glm as glm;
 use winit::application::ApplicationHandler;
 
@@ -45,7 +45,7 @@ struct Viewer {
     scene: Option<scene::SceneGraph>,
     scene_panel: scene::ScenePanel,
     /// Reused across frames to avoid re-allocating the draw list.
-    draw_buffer: Vec<engine::DrawCall>,
+    draw_buffer: Vec<kachelkram::DrawCall>,
     window: Window,
 }
 
@@ -54,7 +54,7 @@ impl Viewer {
         let window = event_loop
             .create_window(
                 Window::default_attributes()
-                    .with_title("Render Thing")
+                    .with_title("Kachelkram")
                     .with_inner_size(PhysicalSize::new(WIDTH, HEIGHT)),
             )
             .context("Creating window")?;
@@ -63,8 +63,8 @@ impl Viewer {
         let mut engine = Engine::initialize(
             &window,
             window_size,
-            engine::EngineConfig {
-                app_name: "Render Thing".to_string(),
+            kachelkram::EngineConfig {
+                app_name: "Kachelkram Viewer".to_string(),
                 ..Default::default()
             },
         )?;

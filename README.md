@@ -1,4 +1,4 @@
-﻿# Vulkan Renderer
+﻿# Kachelkram
 
 Where I try to write a renderer in Rust using [Ash][0].
 
@@ -20,8 +20,8 @@ scripts/fetch-assets.sh FlightHelmet DamagedHelmet
 It does a shallow, sparse clone so only the named models are downloaded. They land in
 `assets/models/downloaded/glTF-Sample-Assets/Models/<name>` (gitignored).
 
-The `application` crate loads `assets/models/downloaded/abbey.glb`, which isn't part of the sample assets.
-The application will start without its scene present, log an error, and just show nothing :)
+The `viewer` crate loads `assets/models/downloaded/abbey.glb`, which isn't part of the sample assets.
+The viewer will start without its scene present, log an error, and just show nothing :)
 
 To change you'd have the calls to `scene::load_gltf()` in the respective main.rs files of the crates
 
@@ -33,7 +33,7 @@ There are currently two different crates you can run:
 Simple application with a simple moving player and some moving meshes
 
 ```cargo run --release -p game```
-#### 'application' crate
+#### 'viewer' crate
 Just a simple application with a flying camera
 
 ``` cargo run --release```

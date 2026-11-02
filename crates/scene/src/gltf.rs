@@ -1,6 +1,6 @@
 use crate::graph::{NodeId, SceneGraph};
-use engine::Engine;
 use eros::context;
+use kachelkram::Engine;
 use nalgebra_glm as glm;
 use std::borrow::Cow;
 
@@ -9,7 +9,7 @@ use std::borrow::Cow;
 pub fn load_gltf(engine: &mut Engine, path: &str) -> eros::Result<SceneGraph> {
     let (doc, buffers, images) = gltf::import(path)?;
 
-    let mut texture_handles: Vec<engine::TextureHandle> = Vec::new();
+    let mut texture_handles: Vec<kachelkram::TextureHandle> = Vec::new();
     for image in &images {
         let data: Cow<[u8]> = match image.format {
             gltf::image::Format::R8G8B8A8 => Cow::Borrowed(&image.pixels),
@@ -27,14 +27,14 @@ pub fn load_gltf(engine: &mut Engine, path: &str) -> eros::Result<SceneGraph> {
             &data,
             image.width,
             image.height,
-            engine::SamplerType::Linear,
+            kachelkram::SamplerType::Linear,
         )?;
         texture_handles.push(handle);
     }
 
     let white = engine.white_texture();
 
-    let mut material_handles: Vec<engine::MaterialHandle> = Vec::new();
+    let mut material_handles: Vec<kachelkram::MaterialHandle> = Vec::new();
     for material in doc.materials() {
         let pbr = material.pbr_metallic_roughness();
         let color_tex = pbr
@@ -46,14 +46,14 @@ pub fn load_gltf(engine: &mut Engine, path: &str) -> eros::Result<SceneGraph> {
             .and_then(|t| texture_handles.get(t.texture().source().index()).copied())
             .unwrap_or(white);
         let [r, g, b, a] = pbr.base_color_factor();
-        let constants = engine::MaterialConstants {
+        let constants = kachelkram::MaterialConstants {
             color_factors: [r, g, b, a],
             metal_rough_factors: [pbr.metallic_factor(), pbr.roughness_factor(), 0.0, 0.0],
         };
         let pass = if material.alpha_mode() == gltf::material::AlphaMode::Blend {
-            engine::MaterialPass::Transparent
+            kachelkram::MaterialPass::Transparent
         } else {
-            engine::MaterialPass::MainColor
+            kachelkram::MaterialPass::MainColor
         };
         material_handles.push(engine.create_material(color_tex, mr_tex, constants, pass)?);
     }
@@ -61,8 +61,8 @@ pub fn load_gltf(engine: &mut Engine, path: &str) -> eros::Result<SceneGraph> {
     let default_material = engine.create_material(
         white,
         white,
-        engine::MaterialConstants::default(),
-        engine::MaterialPass::MainColor,
+        kachelkram::MaterialConstants::default(),
+        kachelkram::MaterialPass::MainColor,
     )?;
 
     let mut scene = SceneGraph::new();
@@ -100,8 +100,8 @@ fn traverse(
     gltf_node: &gltf::Node,
     buffers: &[gltf::buffer::Data],
     engine: &mut Engine,
-    material_handles: &[engine::MaterialHandle],
-    default_material: engine::MaterialHandle,
+    material_handles: &[kachelkram::MaterialHandle],
+    default_material: kachelkram::MaterialHandle,
 ) -> eros::Result<()> {
     let local = node_to_mat4(gltf_node);
     let name = gltf_node.name().unwrap_or("node").to_string();
@@ -120,11 +120,11 @@ fn traverse(
 
             // Build vertices in one pass: positions establish the vec with
             // attribute defaults, then each present attribute fills in place.
-            let mut vertices: Vec<engine::Vertex> = reader
+            let mut vertices: Vec<kachelkram::Vertex> = reader
                 .read_positions()
                 .map(|positions| {
                     positions
-                        .map(|position| engine::Vertex {
+                        .map(|position| kachelkram::Vertex {
                             position,
                             uv_x: 0.0,
                             normal: [1.0, 0.0, 0.0],
