@@ -42,6 +42,7 @@ mod context;
 mod debug;
 mod descriptor;
 mod egui_renderer;
+mod features;
 pub mod input;
 mod material;
 mod meshes;
@@ -52,6 +53,7 @@ mod swapchain;
 mod sync;
 mod ui;
 
+pub use debug::Validation;
 pub use material::{MaterialConstants, MaterialPass};
 pub use primitives::Vertex;
 
@@ -62,6 +64,9 @@ pub struct EngineConfig {
     pub max_render_resolution: (u32, u32),
     /// Starting render scale in [0.1, 1.0].
     pub initial_render_scale: f32,
+    /// Validation layer checks, if the layer is installed. Defaults to `Full` in
+    /// debug builds and `Off` in release.
+    pub validation: Validation,
 }
 
 impl Default for EngineConfig {
@@ -70,6 +75,11 @@ impl Default for EngineConfig {
             app_name: "Vulkan Application".to_string(),
             max_render_resolution: (2560, 1440),
             initial_render_scale: 1.0,
+            validation: if cfg!(debug_assertions) {
+                Validation::Full
+            } else {
+                Validation::Off
+            },
         }
     }
 }

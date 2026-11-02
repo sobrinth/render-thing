@@ -34,6 +34,10 @@ impl Fence {
         }?)
     }
 
+    pub(crate) fn is_signaled(&self) -> eros::Result<bool> {
+        Ok(unsafe { self.device.get_fence_status(self.handle) }?)
+    }
+
     pub(crate) fn reset(&self) -> eros::Result<()> {
         Ok(unsafe { self.device.reset_fences(&[self.handle]) }?)
     }

@@ -564,7 +564,10 @@ fn build_level(engine: &mut Engine) -> eros::Result<Level> {
         90.0f32.to_radians(),
         &glm::vec3(0.0, 1.0, 0.0),
     );
-    match scene::load_gltf(engine, "assets/models/downloaded/sponza/Sponza.gltf") {
+    match scene::load_gltf(
+        engine,
+        "assets/models/downloaded/glTF-Sample-Assets/Models/Sponza/glTF/Sponza.gltf",
+    ) {
         Ok(gltf) => {
             let sponza_root = scene.add_child(floor_root, "sponza", world);
             scene.adopt(sponza_root, gltf);

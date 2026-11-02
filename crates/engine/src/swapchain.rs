@@ -59,6 +59,10 @@ impl Swapchain {
             image_count,
         );
 
+        let swapchain_present_modes = [swapchain_properties.present_mode];
+        let mut present_modes_info = vk::SwapchainPresentModesCreateInfoEXT::default()
+            .present_modes(&swapchain_present_modes);
+
         let create_info = {
             let default = vk::SwapchainCreateInfoKHR::default()
                 .surface(vk_context.surface)
@@ -71,7 +75,7 @@ impl Swapchain {
                     vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::COLOR_ATTACHMENT,
                 );
 
-            // TODO: db: Handle image sharing mode if graphics / present queue are different
+            // EXCLUSIVE: graphics and present share one queue family (see `context::evaluate`).
 
             default
                 .pre_transform(details.capabilities.current_transform)
@@ -79,6 +83,7 @@ impl Swapchain {
                 .present_mode(swapchain_properties.present_mode)
                 .clipped(true)
                 .old_swapchain(old_swapchain)
+                .push_next(&mut present_modes_info)
         };
 
         let swapchain_fn =
@@ -116,6 +121,23 @@ impl Swapchain {
             .map(|_i| Fence::new_signaled(&vk_context.device))
             .collect::<eros::Result<Vec<_>>>()?;
 
+        let debug = &vk_context.debug;
+        for (i, image) in swapchain_images.iter().enumerate() {
+            debug.set_object_name(*image, &format!("Swapchain image {i}"));
+            debug.set_object_name(
+                swapchain_image_views[i],
+                &format!("Swapchain image view {i}"),
+            );
+            debug.set_object_name(
+                swapchain_semaphore[i].handle(),
+                &format!("Swapchain render-finished semaphore {i}"),
+            );
+            debug.set_object_name(
+                present_fences[i].handle(),
+                &format!("Swapchain present fence {i}"),
+            );
+        }
+
         Ok(Self {
             properties: swapchain_properties,
             swapchain_fn,
@@ -126,6 +148,36 @@ impl Swapchain {
             image_views: swapchain_image_views,
             device: vk_context.device.clone(),
         })
+    }
+}
+
+impl Swapchain {
+    pub(crate) fn current_extent(
+        vk_context: &VkContext,
+        dimensions: [u32; 2],
+    ) -> eros::Result<vk::Extent2D> {
+        let capabilities = unsafe {
+            vk_context
+                .surface_fn
+                .get_physical_device_surface_capabilities(
+                    vk_context.physical_device,
+                    vk_context.surface,
+                )
+        }?;
+        Ok(SwapchainSupportDetails::choose_swapchain_extent(
+            capabilities,
+            dimensions,
+        ))
+    }
+
+    /// True once the presentation engine is done with every present from this swapchain.
+    pub(crate) fn is_retirable(&self) -> eros::Result<bool> {
+        for fence in &self.present_fences {
+            if !fence.is_signaled()? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 }
 

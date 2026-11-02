@@ -49,6 +49,9 @@ pub(crate) struct RendererResources {
     pub(crate) ui_context: UiContext,
     pub(crate) gpu_alloc: Arc<vk_mem::Allocator>,
     pub(crate) swapchain: Swapchain,
+    /// Replaced swapchains whose presents may still be in flight; destroyed by
+    /// `destroy_retired_swapchains` once their present fences have signaled.
+    pub(crate) retired_swapchains: Vec<Swapchain>,
     pub(crate) frames: Vec<FrameData>,
     /// Signaled with value N+1 by frame N's submit; frame pacing waits on it.
     pub(crate) frame_timeline: TimelineSemaphore,
@@ -108,8 +111,9 @@ impl VulkanRenderer {
         window_size: (u32, u32),
         config: crate::EngineConfig,
     ) -> eros::Result<Self> {
-        let (context, graphics_queue, gpu_alloc) = VkContext::initialize(window, &config.app_name)
-            .context("Initializing Vulkan context")?;
+        let (context, graphics_queue, gpu_alloc) =
+            VkContext::initialize(window, &config.app_name, config.validation)
+                .context("Initializing Vulkan context")?;
 
         let swapchain = Swapchain::create(&context, [window_size.0, window_size.1])
             .context("Creating swapchain")?;
@@ -142,6 +146,12 @@ impl VulkanRenderer {
             false,
         )
         .context("Creating draw image")?;
+        context
+            .debug
+            .set_object_name(draw_image.image, "Draw image");
+        context
+            .debug
+            .set_object_name(draw_image.view, "Draw image view");
 
         let depth_image = AllocatedImage::create(
             &context,
@@ -153,6 +163,12 @@ impl VulkanRenderer {
             false,
         )
         .context("Creating depth image")?;
+        context
+            .debug
+            .set_object_name(depth_image.image, "Depth image");
+        context
+            .debug
+            .set_object_name(depth_image.view, "Depth image view");
 
         let (descriptor_allocator, draw_image_descriptor_layout, draw_image_descriptors) =
             Self::init_descriptors(&context, &draw_image).context("Creating draw descriptors")?;
@@ -198,6 +214,9 @@ impl VulkanRenderer {
         };
 
         let cull_pipeline = Self::init_cull_pipeline(&context).context("Creating cull pipeline")?;
+        context
+            .debug
+            .set_object_name(cull_pipeline.pipeline, "Cull pipeline");
 
         // default data
         const WHITE: u32 = u32::from_le_bytes([255, 255, 255, 255]);
@@ -293,6 +312,16 @@ impl VulkanRenderer {
             },
         )?);
 
+        for (image, name) in [
+            (&white_image, "Default white texture"),
+            (&grey_image, "Default grey texture"),
+            (&black_image, "Default black texture"),
+            (&checkerboard_image, "Default checkerboard texture"),
+            (&metal_rough_image, "Default metal-rough texture"),
+        ] {
+            context.debug.set_object_name(image.image, name);
+        }
+
         let max_sampler_anisotropy = unsafe {
             context
                 .instance
@@ -323,6 +352,9 @@ impl VulkanRenderer {
         let default_sampler_linear = Arc::new(Sampler::new(linear_handle, context.device.clone()));
 
         let frame_timeline = TimelineSemaphore::new(&context.device)?;
+        context
+            .debug
+            .set_object_name(frame_timeline.handle(), "Frame timeline");
 
         let index_pool = IndexPool::new(&gpu_alloc)?;
 
@@ -337,6 +369,7 @@ impl VulkanRenderer {
                 ui_context: ui,
                 gpu_alloc,
                 swapchain,
+                retired_swapchains: Vec::new(),
                 frames,
                 frame_timeline,
                 frame_descriptor_pool,
@@ -672,7 +705,7 @@ impl VulkanRenderer {
 
         let mut frames = Vec::with_capacity(FRAME_OVERLAP as usize);
 
-        for _ in 0..FRAME_OVERLAP {
+        for slot in 0..FRAME_OVERLAP {
             let pool = unsafe { context.device.create_command_pool(&commandpool_info, None) }?;
 
             let commandbuffer_info = vk::CommandBufferAllocateInfo::default()
@@ -763,6 +796,24 @@ impl VulkanRenderer {
             // Frames 0 and 1 read this slot before any GPU copy has landed.
             let readback_ptr = stats_readback_buffer.info.mapped_data as *mut u8;
             unsafe { readback_ptr.write_bytes(0, size_of::<GPUCullStats>()) };
+
+            let debug = &context.debug;
+            debug.set_object_name(pool, &format!("Frame {slot} command pool"));
+            debug.set_object_name(buffer, &format!("Frame {slot} command buffer"));
+            debug.set_object_name(
+                swapchain_semaphore.handle(),
+                &format!("Frame {slot} acquire semaphore"),
+            );
+            for (handle, name) in [
+                (scene_buffer.buffer, "scene"),
+                (object_buffer.buffer, "objects"),
+                (indirect_buffer.buffer, "indirect commands"),
+                (opaque_command_buffer.buffer, "opaque commands"),
+                (cull_stats_buffer.buffer, "cull stats"),
+                (stats_readback_buffer.buffer, "stats readback"),
+            ] {
+                debug.set_object_name(handle, &format!("Frame {slot} {name} buffer"));
+            }
 
             let scene_set = scene_set_pool.allocate(&context.device, scene_data_layout.layout)?;
             let gizmo_scene_set =
@@ -973,23 +1024,41 @@ impl VulkanRenderer {
         ))
     }
 
+    /// Recreates the swapchain. Returns true if the window currently has no area.
     pub(crate) fn resize_swapchain(&mut self) -> eros::Result<bool> {
-        if self.resources.window_size.0 == 0 || self.resources.window_size.1 == 0 {
+        let dimensions = [self.resources.window_size.0, self.resources.window_size.1];
+        let extent = Swapchain::current_extent(&self.context, dimensions)?;
+        if extent.width == 0 || extent.height == 0 {
             return Ok(true);
         }
 
         let old_handle = self.resources.swapchain.swapchain;
-        // Reassignment drops the old swapchain, whose Drop blocks on its present
-        // fences — unlike the device_wait_idle this replaces, that actually
-        // covers the presentation engine (see spec, "Safety argument").
-        self.resources.swapchain = Swapchain::recreate(
-            &self.context,
-            [self.resources.window_size.0, self.resources.window_size.1],
-            old_handle,
-        )?;
+        let new = Swapchain::recreate(&self.context, dimensions, old_handle)?;
+        let old = std::mem::replace(&mut self.resources.swapchain, new);
+        self.resources.retired_swapchains.push(old);
 
         self.resources.resize_requested = false;
         Ok(false)
+    }
+
+    /// Destroys retired swapchains whose presents have completed. Non-blocking
+    pub(crate) fn destroy_retired_swapchains(&mut self) -> eros::Result<()> {
+        const MAX_RETIRED: usize = 8;
+
+        let retired = &mut self.resources.retired_swapchains;
+        let mut index = 0;
+        while index < retired.len() {
+            if retired[index].is_retirable()? {
+                drop(retired.swap_remove(index));
+            } else {
+                index += 1;
+            }
+        }
+        if retired.len() > MAX_RETIRED {
+            // Drop blocks on the remaining present fences.
+            drop(retired.remove(0));
+        }
+        Ok(())
     }
 
     fn init_scene_data(context: &VkContext) -> eros::Result<DescriptorSetLayout> {

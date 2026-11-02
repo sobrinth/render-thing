@@ -124,6 +124,7 @@ impl VulkanRenderer {
             .replace(frame_start)
             .map(|prev| prev.elapsed().as_secs_f32() * 1000.0)
             .unwrap_or(0.0);
+        self.destroy_retired_swapchains()?;
         if self.resources.resize_requested {
             let minimized = self.resize_swapchain()?;
             if minimized {
@@ -187,9 +188,20 @@ impl VulkanRenderer {
         };
 
         let image_index = match res {
-            Ok((image_index, _)) => image_index as usize,
+            Ok((image_index, suboptimal)) => {
+                // Still usable this frame; rebuild before the next one.
+                self.resources.resize_requested |= suboptimal;
+                image_index as usize
+            }
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
                 self.resources.resize_requested = true;
+                return Ok(egui::PlatformOutput::default());
+            }
+            // No image became available in time, e.g. a Wayland compositor holding on
+            // to buffers during an interactive resize. Not fatal: skip this frame. The
+            // acquire semaphore wasn't signaled, so the slot is reusable as is.
+            Err(vk::Result::TIMEOUT | vk::Result::NOT_READY) => {
+                log::debug!("Swapchain image acquire timed out; skipping frame");
                 return Ok(egui::PlatformOutput::default());
             }
             Err(err) => return Err(err.into()),
@@ -242,6 +254,8 @@ impl VulkanRenderer {
             &self.context.device,
             vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
         )?;
+        // Own copy so labels can be recorded around calls that borrow `self` mutably.
+        let debug = self.context.debug.clone();
 
         // transition the main draw image to Layout::GENERAL so we can draw into it.
         // we will overwrite the contents, so we don't care about the old layout.
@@ -260,7 +274,9 @@ impl VulkanRenderer {
             BarrierScope::COMPUTE_STORAGE_RW,
         );
 
+        debug.begin_label(cmd.handle(), c"Background");
         self.draw_background(cmd.handle(), &self.context.device, draw_extent);
+        debug.end_label(cmd.handle());
 
         transition_image(
             &self.context.device,
@@ -284,6 +300,7 @@ impl VulkanRenderer {
         );
 
         let t0 = Instant::now();
+        debug.begin_label(cmd.handle(), c"Geometry");
         let draw_stats = self.draw_geometry(
             frame_index,
             cmd.handle(),
@@ -291,12 +308,14 @@ impl VulkanRenderer {
             &mut draw_ctx,
             camera.position,
         )?;
+        debug.end_label(cmd.handle());
         let draw_time_ms = t0.elapsed().as_secs_f32() * 1000.0;
         self.resources.draw_ctx = draw_ctx;
 
         let gizmo_base_index = (self.resources.draw_ctx.opaque_surfaces.len()
             + self.resources.draw_ctx.transparent_surfaces.len())
             as u32;
+        debug.begin_label(cmd.handle(), c"Dev overlay");
         self.draw_dev_overlay(
             frame_index,
             cmd.handle(),
@@ -304,7 +323,9 @@ impl VulkanRenderer {
             &camera.view_matrix,
             gizmo_base_index,
         )?;
+        debug.end_label(cmd.handle());
 
+        debug.begin_label(cmd.handle(), c"Blit to swapchain");
         // transition the draw image and the swapchain image into their correct transfer layouts.
         transition_image(
             &self.context.device,
@@ -340,7 +361,9 @@ impl VulkanRenderer {
             self.resources.swapchain.properties.extent,
         );
 
-        // DO THE UI RENDER
+        debug.end_label(cmd.handle());
+
+        debug.begin_label(cmd.handle(), c"UI");
 
         transition_image(
             &self.context.device,
@@ -380,6 +403,7 @@ impl VulkanRenderer {
         )?;
 
         unsafe { self.context.device.cmd_end_rendering(cmd.handle()) }
+        debug.end_label(cmd.handle());
 
         // set the swapchain image to Layout::PRESENT so we can present it.
         // dst is NONE: visibility to the presentation engine is handled by the
@@ -476,7 +500,7 @@ impl VulkanRenderer {
         };
 
         match res {
-            Ok(_) => {}
+            Ok(suboptimal) => self.resources.resize_requested |= suboptimal,
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
                 self.resources.resize_requested = true;
             }
@@ -668,6 +692,7 @@ impl VulkanRenderer {
         let opaque_count = ctx.opaque_surfaces.len() as u32;
         let frame = &self.resources.frames[frame_index];
         let stats_buffer = frame.cull_stats_buffer.buffer;
+        self.context.debug.begin_label(cmd, c"Cull");
         unsafe {
             self.context
                 .device
@@ -732,6 +757,7 @@ impl VulkanRenderer {
                 copy,
             );
         }
+        self.context.debug.end_label(cmd);
 
         let color_attachment = vk::RenderingAttachmentInfo::default()
             .image_view(self.resources.draw_image.view)

@@ -10,12 +10,20 @@ Let's see where this will lead...
 ## Run it
 To be able to run you need to have the Vulkan SDK installed or another way to compile the shaders located in `assets/shaders`
 
-The targets currently try to load the 'Sponza' scene from the `assets/models/downloaded/sponza/` directory.
-The application will start without them present, log an error, and just show nothing :)
+The `game` crate loads the 'Sponza' scene from the [glTF sample assets][3]. Fetch it with
+
+```sh
+scripts/fetch-assets.sh                          # Sponza
+scripts/fetch-assets.sh FlightHelmet DamagedHelmet
+```
+
+It does a shallow, sparse clone so only the named models are downloaded. They land in
+`assets/models/downloaded/glTF-Sample-Assets/Models/<name>` (gitignored).
+
+The `application` crate loads `assets/models/downloaded/abbey.glb`, which isn't part of the sample assets.
+The application will start without its scene present, log an error, and just show nothing :)
 
 To change you'd have the calls to `scene::load_gltf()` in the respective main.rs files of the crates
-
-You can download them (and more) from this [Repo][3]
 
 When "running" use F1-F4 to bring up some debug windows and scene information
 
@@ -32,9 +40,11 @@ Just a simple application with a flying camera
 ## Credits
 - The initial Vulkan 1.0 version is based on the good old [Vulkan Tutorial][1] by Alexander Overvoorde and specifically [this Rust implementation][2] by Adrien Ben
 - "Newer" version with dynamic rendering based on [VkGuide][4]
+- The book Mastering Graphics Programming with Vulkan (2nd Ed) & [Associated Code][5]
 
 [0]: https://github.com/MaikKlein/ash
 [1]: https://vulkan-tutorial.com/Introduction
 [2]: https://github.com/adrien-ben/vulkan-tutorial-rs
 [3]: https://github.com/KhronosGroup/glTF-Sample-Assets
 [4]: https://vkguide.dev/
+[5]: https://github.com/PacktPublishing/Mastering-Graphics-Programming-With-Vulkan-2nd-Edition

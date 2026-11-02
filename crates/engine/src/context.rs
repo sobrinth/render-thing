@@ -1,13 +1,14 @@
-use crate::debug::{check_validation_layer_support, layer_name_pointers, setup_debug_messenger};
+use crate::debug::{self, DebugUtils, Validation, setup_debug_messenger};
+use crate::features::FeatureChain;
 use crate::swapchain;
 use ash::Instance;
-use ash::ext::debug_utils;
+use ash::ext::{debug_utils, layer_settings};
 use ash::khr::surface;
 use ash::{Device, Entry, vk};
 use eros::{Context, ensure};
 use itertools::Itertools;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-use std::ffi::CStr;
+use std::ffi::{CStr, c_char};
 use std::sync::Arc;
 
 // KHR promotions of the maintenance1 extensions (aliases of the EXT variants);
@@ -23,19 +24,26 @@ pub(crate) struct VkContext {
     pub(crate) surface: vk::SurfaceKHR,
     pub(crate) physical_device: vk::PhysicalDevice,
     pub(crate) device: Device,
+    pub(crate) debug: DebugUtils,
 }
 
 impl VkContext {
     pub(crate) fn initialize(
         window: &(impl HasDisplayHandle + HasWindowHandle),
         app_name: &str,
+        validation: Validation,
     ) -> eros::Result<(Self, QueueData, Arc<vk_mem::Allocator>)> {
         log::trace!("Creating vulkan context");
         let vulkan_fn = unsafe { Entry::load() }.context("Loading the Vulkan library")?;
-        let instance = Self::create_instance(&vulkan_fn, window, app_name)
-            .context("Creating Vulkan instance")?;
+        let (instance, validation, debug_utils_available) =
+            Self::create_instance(&vulkan_fn, window, app_name, validation)
+                .context("Creating Vulkan instance")?;
 
-        let debug_report_callback = setup_debug_messenger(&vulkan_fn, &instance)?;
+        let debug_report_callback = if validation != Validation::Off && debug_utils_available {
+            Some(setup_debug_messenger(&vulkan_fn, &instance)?)
+        } else {
+            None
+        };
 
         let surface_fn = surface::Instance::new(&vulkan_fn, &instance);
         let surface = unsafe {
@@ -49,9 +57,13 @@ impl VkContext {
         }
         .context("Creating window surface")?;
 
-        let (physical_device, device, graphics_queue, _) =
+        let (physical_device, device, graphics_queue) =
             Self::initialize_vulkan_device(&instance, &surface_fn, surface)
                 .context("Creating logical device")?;
+
+        let debug = DebugUtils::new(
+            debug_utils_available.then(|| debug_utils::Device::new(&instance, &device)),
+        );
 
         let mut alloc_info = vk_mem::AllocatorCreateInfo::new(&instance, &device, physical_device);
         alloc_info.vulkan_api_version = vk::make_api_version(0, 1, 3, 0);
@@ -69,6 +81,7 @@ impl VkContext {
                 surface,
                 physical_device,
                 device,
+                debug,
             },
             graphics_queue,
             Arc::new(allocator),
@@ -79,7 +92,8 @@ impl VkContext {
         vulkan_fn: &Entry,
         window: &impl HasDisplayHandle,
         app_name: &str,
-    ) -> eros::Result<Instance> {
+        validation: Validation,
+    ) -> eros::Result<(Instance, Validation, bool)> {
         let app_name = std::ffi::CString::new(app_name).unwrap_or_default();
         let engine_name = c"No Engine";
         let app_info = vk::ApplicationInfo::default()
@@ -89,12 +103,8 @@ impl VkContext {
             .engine_version(vk::make_api_version(0, 1, 0, 0))
             .api_version(vk::make_api_version(0, 1, 3, 0));
 
-        let mut extension_names =
+        let mut extension_names: Vec<*const c_char> =
             ash_window::enumerate_required_extensions(window.display_handle()?.as_raw())?.to_vec();
-
-        if cfg!(debug_assertions) {
-            extension_names.push(debug_utils::NAME.as_ptr());
-        }
 
         // Instance-level dependencies of VK_(KHR|EXT)_swapchain_maintenance1.
         // Hard requirement: drivers are assumed end-of-2025 or newer (see spec).
@@ -129,232 +139,96 @@ impl VkContext {
         );
         extension_names.extend(surface_maintenance1.iter().map(|name| name.as_ptr()));
 
-        let layer_names_ptrs = layer_name_pointers();
+        // Always useful (also release). Names show in RenderDoc / Nsight
+        let debug_utils_available = has_extension(debug_utils::NAME);
+        if debug_utils_available {
+            extension_names.push(debug_utils::NAME.as_ptr());
+        }
+
+        let validation = if validation != Validation::Off
+            && !debug::has_layer(vulkan_fn, debug::VALIDATION_LAYER)?
+        {
+            log::warn!("Validation requested, but VK_LAYER_KHRONOS_validation is not installed");
+            Validation::Off
+        } else {
+            validation
+        };
+        let layer_names_ptrs: Vec<*const c_char> = if validation != Validation::Off {
+            vec![debug::VALIDATION_LAYER.as_ptr()]
+        } else {
+            Vec::new()
+        };
+
+        let layer_settings = if validation != Validation::Off
+            && debug::layer_has_extension(vulkan_fn, debug::VALIDATION_LAYER, layer_settings::NAME)?
+        {
+            extension_names.push(layer_settings::NAME.as_ptr());
+            debug::layer_settings(validation)
+        } else {
+            if validation != Validation::Off {
+                log::warn!(
+                    "VK_EXT_layer_settings unavailable; validation runs with layer defaults"
+                );
+            }
+            Vec::new()
+        };
+        let mut layer_settings_info =
+            vk::LayerSettingsCreateInfoEXT::default().settings(&layer_settings);
 
         let mut instance_create_info = vk::InstanceCreateInfo::default()
             .application_info(&app_info)
-            .enabled_extension_names(&extension_names);
-
-        if cfg!(debug_assertions) {
-            check_validation_layer_support(vulkan_fn)?;
-            instance_create_info = instance_create_info.enabled_layer_names(&layer_names_ptrs);
+            .enabled_extension_names(&extension_names)
+            .enabled_layer_names(&layer_names_ptrs);
+        if !layer_settings.is_empty() {
+            instance_create_info = instance_create_info.push_next(&mut layer_settings_info);
         }
+        log::info!("Validation: {validation:?}");
 
-        Ok(unsafe { vulkan_fn.create_instance(&instance_create_info, None) }?)
+        let instance = unsafe { vulkan_fn.create_instance(&instance_create_info, None) }?;
+        Ok((instance, validation, debug_utils_available))
     }
 
     fn initialize_vulkan_device(
         instance: &Instance,
         surface_fn: &surface::Instance,
         surface: vk::SurfaceKHR,
-    ) -> eros::Result<(vk::PhysicalDevice, Device, QueueData, vk::Queue)> {
-        // Select a physical device
-        let available_devices = unsafe { instance.enumerate_physical_devices() }?;
-        let mut suitable_devices = Vec::new();
-        for device in available_devices {
-            if Self::is_device_suitable(instance, surface_fn, surface, device)? {
-                suitable_devices.push(device);
-            }
-        }
-        let selected_device = suitable_devices
-            .into_iter()
-            .max_by_key(|d| {
-                let props = unsafe { instance.get_physical_device_properties(*d) };
-                match props.device_type {
-                    vk::PhysicalDeviceType::DISCRETE_GPU => 2,
-                    vk::PhysicalDeviceType::INTEGRATED_GPU => 1,
-                    _ => 0,
-                }
-            })
-            .ok_or_else(|| eros::error!("No suitable physical device found"))?;
+    ) -> eros::Result<(vk::PhysicalDevice, Device, QueueData)> {
+        let candidate = pick_physical_device(instance, surface_fn, surface)?;
 
-        let props = unsafe { instance.get_physical_device_properties(selected_device) };
-        log::debug!("Selected physical device: {:?}", unsafe {
-            CStr::from_ptr(props.device_name.as_ptr())
-        });
+        let props = unsafe { instance.get_physical_device_properties(candidate.physical_device) };
+        log::debug!(
+            "Selected physical device: {:?}",
+            props.device_name_as_c_str().unwrap_or(c"<unknown>")
+        );
 
-        // Queue families for graphics and present queue
-        let (graphics, present) =
-            Self::find_queue_families(instance, surface_fn, surface, selected_device)?;
-        let queue_family_indices = QueueFamilyIndices {
-            graphics_index: graphics
-                .ok_or_else(|| eros::error!("Selected device has no graphics queue family"))?,
-            present_index: present
-                .ok_or_else(|| eros::error!("Selected device has no present queue family"))?,
-        };
-
-        // Create logical vulkan device
         let queue_priorities = [1.0_f32];
-        let queue_create_infos = {
-            // Vulkan spec does not allow passing an array containing duplicated family indices.
-            // And since the family for graphics and presentation could be the same, we need to dedup it.
-            let mut indices = vec![
-                queue_family_indices.graphics_index,
-                queue_family_indices.present_index,
-            ];
-            indices.dedup();
+        let queue_create_infos = [vk::DeviceQueueCreateInfo::default()
+            .queue_family_index(candidate.queue_family)
+            .queue_priorities(&queue_priorities)];
 
-            // Now we build an array of `DeviceQueueCreateInfo`.
-            // One for each different family index.
-            indices
-                .iter()
-                .map(|index| {
-                    vk::DeviceQueueCreateInfo::default()
-                        .queue_family_index(*index)
-                        .queue_priorities(&queue_priorities)
-                })
-                .collect_vec()
-        };
-
-        let device_extensions = Self::select_device_extensions(instance, selected_device)?
-            .ok_or_else(|| eros::error!("Selected device is missing required extensions"))?;
-        let device_extensions_ptrs = device_extensions
+        let device_extensions_ptrs = candidate
+            .extensions
             .iter()
             .map(|ext| ext.as_ptr())
             .collect_vec();
 
-        let device_features = vk::PhysicalDeviceFeatures::default()
-            .sampler_anisotropy(true)
-            .multi_draw_indirect(true)
-            .draw_indirect_first_instance(true);
-
-        let mut device_features12 = vk::PhysicalDeviceVulkan12Features::default()
-            .buffer_device_address(true)
-            .descriptor_indexing(true)
-            .descriptor_binding_partially_bound(true)
-            .descriptor_binding_sampled_image_update_after_bind(true)
-            .timeline_semaphore(true)
-            .draw_indirect_count(true);
-
-        let mut device_features13 = vk::PhysicalDeviceVulkan13Features::default()
-            .dynamic_rendering(true)
-            .synchronization2(true);
-
-        let mut swapchain_maintenance1_features =
-            vk::PhysicalDeviceSwapchainMaintenance1FeaturesEXT::default()
-                .swapchain_maintenance1(true);
-
+        let mut features = FeatureChain::required();
+        let mut features2 = features.features2();
         let device_create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&queue_create_infos)
             .enabled_extension_names(&device_extensions_ptrs)
-            .enabled_features(&device_features)
-            .push_next(&mut device_features12)
-            .push_next(&mut device_features13)
-            .push_next(&mut swapchain_maintenance1_features);
+            .push_next(&mut features2);
 
-        let device = unsafe { instance.create_device(selected_device, &device_create_info, None) }?;
+        let device = unsafe {
+            instance.create_device(candidate.physical_device, &device_create_info, None)
+        }?;
 
-        // graphics and present queue are created but not retrieved yet
-        let graphics_queue =
-            unsafe { device.get_device_queue(queue_family_indices.graphics_index, 0) };
-        let present_queue =
-            unsafe { device.get_device_queue(queue_family_indices.present_index, 0) };
-
-        let graphics_queue_data = QueueData {
-            queue: graphics_queue,
-            family_index: queue_family_indices.graphics_index,
+        let graphics_queue = QueueData {
+            queue: unsafe { device.get_device_queue(candidate.queue_family, 0) },
+            family_index: candidate.queue_family,
         };
 
-        Ok((selected_device, device, graphics_queue_data, present_queue))
-    }
-
-    fn is_device_suitable(
-        instance: &Instance,
-        surface_fn: &surface::Instance,
-        surface: vk::SurfaceKHR,
-        physical_device: vk::PhysicalDevice,
-    ) -> eros::Result<bool> {
-        let (graphics, present) =
-            Self::find_queue_families(instance, surface_fn, surface, physical_device)?;
-
-        let extension_support =
-            Self::select_device_extensions(instance, physical_device)?.is_some();
-
-        let is_swapchain_usable = {
-            let details =
-                swapchain::SwapchainSupportDetails::new(physical_device, surface_fn, surface)?;
-            !details.formats.is_empty() && !details.present_modes.is_empty()
-        };
-        let features = unsafe { instance.get_physical_device_features(physical_device) };
-        Ok(graphics.is_some()
-            && present.is_some()
-            && extension_support
-            && is_swapchain_usable
-            && features.sampler_anisotropy == vk::TRUE
-            && features.multi_draw_indirect == vk::TRUE
-            && features.draw_indirect_first_instance == vk::TRUE)
-    }
-
-    /// Device extensions to enable, or None if the device is missing any.
-    /// swapchain_maintenance1 prefers the KHR name, falling back to the EXT
-    /// alias (older Mesa advertises only EXT; NVIDIA advertises only KHR).
-    fn select_device_extensions(
-        instance: &Instance,
-        physical_device: vk::PhysicalDevice,
-    ) -> eros::Result<Option<Vec<&'static CStr>>> {
-        let extension_properties =
-            unsafe { instance.enumerate_device_extension_properties(physical_device) }?;
-        let has_extension = |name: &CStr| {
-            extension_properties.iter().any(|ext| {
-                let ext_name = unsafe { CStr::from_ptr(ext.extension_name.as_ptr()) };
-                ext_name == name
-            })
-        };
-
-        if !has_extension(ash::khr::swapchain::NAME) {
-            return Ok(None);
-        }
-        let Some(maintenance1) = [
-            SWAPCHAIN_MAINTENANCE1_KHR,
-            ash::ext::swapchain_maintenance1::NAME,
-        ]
-        .into_iter()
-        .find(|name| has_extension(name)) else {
-            return Ok(None);
-        };
-
-        Ok(Some(vec![ash::khr::swapchain::NAME, maintenance1]))
-    }
-
-    /// Find a queue family with at least one graphics queue and one with
-    /// at least one presentation queue from `device`.
-    ///
-    /// #Returns
-    ///
-    /// Return a tuple (Option<graphics_family_index>, Option<present_family_index>).
-    fn find_queue_families(
-        instance: &Instance,
-        surface_fn: &surface::Instance,
-        surface: vk::SurfaceKHR,
-        physical_device: vk::PhysicalDevice,
-    ) -> eros::Result<(Option<u32>, Option<u32>)> {
-        let mut graphics = None;
-        let mut present = None;
-
-        let props =
-            unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
-
-        for (index, family) in props.iter().filter(|f| f.queue_count > 0).enumerate() {
-            let index = index as u32;
-
-            if family.queue_flags.contains(vk::QueueFlags::GRAPHICS) && graphics.is_none() {
-                graphics = Some(index);
-            }
-
-            let present_support = unsafe {
-                surface_fn.get_physical_device_surface_support(physical_device, index, surface)
-            }?;
-
-            if present_support && present.is_none() {
-                present = Some(index);
-            }
-
-            if graphics.is_some() && present.is_some() {
-                break;
-            }
-        }
-
-        Ok((graphics, present))
+        Ok((candidate.physical_device, device, graphics_queue))
     }
 }
 
@@ -379,8 +253,116 @@ pub(crate) struct QueueData {
     pub(crate) family_index: u32,
 }
 
-#[derive(Clone, Copy)]
-struct QueueFamilyIndices {
-    graphics_index: u32,
-    present_index: u32,
+struct Candidate {
+    physical_device: vk::PhysicalDevice,
+    /// It is assumed the queue supports both graphics and present
+    queue_family: u32,
+    extensions: Vec<&'static CStr>,
+    score: u32,
+}
+
+fn pick_physical_device(
+    instance: &Instance,
+    surface_fn: &surface::Instance,
+    surface: vk::SurfaceKHR,
+) -> eros::Result<Candidate> {
+    let mut rejections = Vec::new();
+    let mut best: Option<Candidate> = None;
+
+    for physical_device in unsafe { instance.enumerate_physical_devices() }? {
+        let properties = unsafe { instance.get_physical_device_properties(physical_device) };
+        let name = properties
+            .device_name_as_c_str()
+            .unwrap_or(c"<unknown>")
+            .to_string_lossy()
+            .into_owned();
+
+        match evaluate(instance, surface_fn, surface, physical_device, &properties)? {
+            Ok(candidate) => {
+                log::debug!("Suitable device: {name}");
+                if best.as_ref().is_none_or(|b| candidate.score > b.score) {
+                    best = Some(candidate);
+                }
+            }
+            Err(reason) => {
+                log::debug!("Rejected device {name}: {reason}");
+                rejections.push(format!("{name}: {reason}"));
+            }
+        }
+    }
+
+    best.ok_or_else(|| eros::error!("No suitable GPU found:\n  {}", rejections.join("\n  ")))
+}
+
+fn evaluate(
+    instance: &Instance,
+    surface_fn: &surface::Instance,
+    surface: vk::SurfaceKHR,
+    physical_device: vk::PhysicalDevice,
+    properties: &vk::PhysicalDeviceProperties,
+) -> eros::Result<Result<Candidate, String>> {
+    // One family that does graphics and present: presenting happens on the graphics
+    // queue and swapchain images are EXCLUSIVE, so split families aren't supported.
+    let families = unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
+    let mut queue_family = None;
+    for (index, family) in families.iter().enumerate() {
+        let index = index as u32;
+        if family.queue_count == 0 || !family.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
+            continue;
+        }
+        let presents = unsafe {
+            surface_fn.get_physical_device_surface_support(physical_device, index, surface)
+        }?;
+        if presents {
+            queue_family = Some(index);
+            break;
+        }
+    }
+    let Some(queue_family) = queue_family else {
+        return Ok(Err(
+            "no queue family supports both graphics and present".into()
+        ));
+    };
+
+    let available = unsafe { instance.enumerate_device_extension_properties(physical_device) }?;
+    let has_extension = |name: &CStr| {
+        available
+            .iter()
+            .any(|ext| ext.extension_name_as_c_str() == Ok(name))
+    };
+    if !has_extension(ash::khr::swapchain::NAME) {
+        return Ok(Err("VK_KHR_swapchain missing".into()));
+    }
+    // Prefer the KHR name, falling back to the EXT alias
+    let Some(swapchain_maintenance1) = [
+        SWAPCHAIN_MAINTENANCE1_KHR,
+        ash::ext::swapchain_maintenance1::NAME,
+    ]
+    .into_iter()
+    .find(|name| has_extension(name)) else {
+        return Ok(Err("VK_KHR/EXT_swapchain_maintenance1 missing".into()));
+    };
+
+    let details = swapchain::SwapchainSupportDetails::new(physical_device, surface_fn, surface)?;
+    if details.formats.is_empty() || details.present_modes.is_empty() {
+        return Ok(Err("surface reports no formats or present modes".into()));
+    }
+
+    let missing = FeatureChain::supported(instance, physical_device).missing_required();
+    if !missing.is_empty() {
+        return Ok(Err(format!("missing features: {}", missing.join(", "))));
+    }
+
+    let score = match properties.device_type {
+        vk::PhysicalDeviceType::DISCRETE_GPU => 2,
+        vk::PhysicalDeviceType::INTEGRATED_GPU => 1,
+        _ => 0,
+    };
+
+    Ok(Ok(Candidate {
+        physical_device,
+        queue_family,
+        extensions: vec![ash::khr::swapchain::NAME, swapchain_maintenance1],
+        score,
+    }))
 }
