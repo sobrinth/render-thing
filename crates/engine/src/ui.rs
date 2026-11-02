@@ -47,8 +47,7 @@ impl UiContext {
             },
             Options {
                 in_flight_frames: FRAME_OVERLAP as usize,
-                srgb_framebuffer: swapchain_properties.format.format
-                    == vk::Format::B8G8R8A8_SRGB,
+                srgb_framebuffer: swapchain_properties.format.format == vk::Format::B8G8R8A8_SRGB,
                 ..Default::default()
             },
         )

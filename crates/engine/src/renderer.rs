@@ -137,7 +137,7 @@ impl VulkanRenderer {
             &context,
             &gpu_alloc,
             config.max_render_resolution,
-            vk::Format::B8G8R8A8_SRGB,
+            vk::Format::R16G16B16A16_SFLOAT,
             vk::ImageUsageFlags::TRANSFER_SRC
                 | vk::ImageUsageFlags::TRANSFER_DST
                 | vk::ImageUsageFlags::STORAGE
@@ -774,7 +774,8 @@ impl VulkanRenderer {
                 vk::BufferUsageFlags::STORAGE_BUFFER
                     | vk::BufferUsageFlags::INDIRECT_BUFFER
                     | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
-                    | vk::BufferUsageFlags::TRANSFER_DST,
+                    | vk::BufferUsageFlags::TRANSFER_DST
+                    | vk::BufferUsageFlags::TRANSFER_SRC,
                 vk_mem::MemoryUsage::AutoPreferDevice,
                 None,
             )?;
